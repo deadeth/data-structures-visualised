@@ -16,6 +16,7 @@ export class Recorder<S> implements Rec {
   private nodeMarks = new Map<string, Tone>();
   private cellMarks = new Map<string, Tone>();
   private edgeMarks = new Map<string, Tone>();
+  private anchors: string[] = [];
 
   constructor(
     private readonly state: S,
@@ -25,6 +26,10 @@ export class Recorder<S> implements Rec {
 
   count(counter: string, by = 1): void {
     this.counters[counter] = (this.counters[counter] ?? 0) + by;
+  }
+
+  line(...anchors: string[]): void {
+    if (this.recording) this.anchors = anchors;
   }
 
   mark(nodeId: string, tone: Tone): void {
@@ -87,7 +92,7 @@ export class Recorder<S> implements Rec {
       const tone = this.edgeMarks.get(e.id);
       if (tone) e.tone = tone;
     }
-    this.frames.push({ scene, message, probe: extra.probe, compare: extra.compare, counters: { ...this.counters } });
+    this.frames.push({ scene, message, probe: extra.probe, compare: extra.compare, counters: { ...this.counters }, lines: this.anchors.length ? [...this.anchors] : undefined });
   }
 }
 

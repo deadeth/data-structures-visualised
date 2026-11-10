@@ -1,6 +1,8 @@
 import { boxWidth, tidyTree } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Rec, Scene, SceneEdge, SceneNode, StructureDef } from '../../core/types';
+import java from './code/BPlusTree.java?raw';
+import python from './code/b_plus_tree.py?raw';
 
 /**
  * B+ tree of integers.
@@ -73,6 +75,7 @@ function descend(s: BPlusState, key: number, rec: Rec, label = String(key)): { l
   let node = s.root;
   rec.count('reads');
   rec.mark(nid(node), 'path');
+  rec.line('start');
   rec.step(
     node.leaf
       ? `The tree is a single leaf. Read it.`
@@ -85,6 +88,7 @@ function descend(s: BPlusState, key: number, rec: Rec, label = String(key)): { l
       const k = node.keys[i];
       const probe = { text: label, at: nid(node), cell: i };
       rec.markCell(nid(node), i, 'compare');
+      rec.line('separator');
       if (key < k) {
         rec.compare(key, '<', k, `take the pointer to the left of ${k}`, { probe });
         rec.markCell(nid(node), i, 'path');
@@ -100,6 +104,7 @@ function descend(s: BPlusState, key: number, rec: Rec, label = String(key)): { l
     node = child;
     rec.count('reads');
     rec.mark(nid(node), 'path');
+    rec.line('down');
     rec.step(
       node.leaf ? `Reached a leaf. Leaves hold the real keys, in sorted order.` : `Follow the pointer down one level and read that node.`,
       { probe: { text: label, at: nid(node) } },
@@ -114,6 +119,7 @@ function scanLeaf(leaf: BNode, key: number, rec: Rec): { found: boolean; pos: nu
     const k = leaf.keys[i];
     const probe = { text: String(key), at: nid(leaf), cell: i };
     rec.markCell(nid(leaf), i, 'compare');
+    rec.line('scan');
     if (key === k) {
       rec.compare(key, '=', k, `match`, { probe });
       return { found: true, pos: i };
@@ -144,6 +150,7 @@ function markKey(s: BPlusState, key: number, rec: Rec): void {
 export function search(s: BPlusState, key: number, rec: Rec): boolean {
   const { leaf } = descend(s, key, rec);
   const { found, pos } = scanLeaf(leaf, key, rec);
+  rec.line('result');
   if (found) {
     rec.markCell(nid(leaf), pos, 'ok');
     rec.mark(nid(leaf), 'ok');
@@ -162,6 +169,7 @@ export function insert(s: BPlusState, key: number, rec: Rec): boolean {
   const { found, pos } = scanLeaf(leaf, key, rec);
   if (found) {
     rec.markCell(nid(leaf), pos, 'ok');
+    rec.line('duplicate');
     rec.step(`${key} is already stored. Nothing to do.`);
     return false;
   }
@@ -171,6 +179,7 @@ export function insert(s: BPlusState, key: number, rec: Rec): boolean {
   rec.clearMarks();
   rec.mark(nid(leaf), 'ok');
   rec.markCell(nid(leaf), pos, 'key');
+  rec.line('place');
   rec.step(`Slot ${key} into the leaf, keeping the keys sorted.`);
 
   let node = leaf;
@@ -179,6 +188,7 @@ export function insert(s: BPlusState, key: number, rec: Rec): boolean {
     right.origin = node.id;
     let sep: number;
     let why: string;
+    const how = node.leaf ? 'split_leaf' : 'split_inner';
     if (node.leaf) {
       const mid = Math.ceil(node.keys.length / 2);
       right.keys = node.keys.splice(mid);
@@ -209,6 +219,7 @@ export function insert(s: BPlusState, key: number, rec: Rec): boolean {
       rec.count('writes');
       rec.mark(nid(root), 'ok');
       markKey(s, key, rec);
+      rec.line(how, 'new_root');
       rec.step(`${why} There was no parent, so a new root is created. This is the only way the tree grows taller, which keeps every leaf at the same depth.`);
       break;
     }
@@ -217,11 +228,13 @@ export function insert(s: BPlusState, key: number, rec: Rec): boolean {
     rec.count('writes');
     rec.markCell(nid(up.node), up.idx, 'ok');
     markKey(s, key, rec);
+    rec.line(how, 'push_up');
     rec.step(why);
     node = up.node;
   }
   rec.clearMarks();
   markKey(s, key, rec);
+  rec.line('done');
   rec.step(`${key} is stored. The tree is ${height(s)} ${height(s) === 1 ? 'level' : 'levels'} deep and holds ${s.size} keys.`);
   return true;
 }
@@ -231,10 +244,12 @@ export function remove(s: BPlusState, key: number, rec: Rec): boolean {
   const { found, pos } = scanLeaf(leaf, key, rec);
   if (!found) {
     rec.mark(nid(leaf), 'bad');
+    rec.line('missing');
     rec.step(`${key} is not in the tree, so there is nothing to delete.`);
     return false;
   }
   rec.markCell(nid(leaf), pos, 'bad');
+  rec.line('remove');
   rec.step(`Found ${key}. Remove it from the leaf.`, { probe: { text: String(key), at: nid(leaf), cell: pos } });
   leaf.keys.splice(pos, 1);
   s.size--;
@@ -251,6 +266,7 @@ export function remove(s: BPlusState, key: number, rec: Rec): boolean {
         s.root = node.kids[0];
         rec.clearMarks();
         rec.mark(nid(s.root), 'ok');
+        rec.line('shrink');
         rec.step(`The root has no separators left and a single child, so that child becomes the root. The tree is one level shorter.`);
       }
       break;
@@ -263,6 +279,7 @@ export function remove(s: BPlusState, key: number, rec: Rec): boolean {
     const right = idx < p.kids.length - 1 ? p.kids[idx + 1] : null;
     rec.clearMarks();
     rec.mark(nid(node), 'bad');
+    rec.line('underfull');
     rec.step(
       `This node has ${node.keys.length} ${node.keys.length === 1 ? 'key' : 'keys'}, below the minimum of ${min}. It must borrow from a sibling, or merge with one.`,
     );
@@ -284,6 +301,7 @@ export function remove(s: BPlusState, key: number, rec: Rec): boolean {
       rec.mark(nid(node), 'ok');
       rec.mark(nid(left), 'path');
       rec.markCell(nid(p), idx - 1, 'ok');
+      rec.line('borrow_left');
       rec.step(
         node.leaf
           ? `The left sibling has a key to spare. Borrow ${moved} and update the separator in the parent to ${moved}.`
@@ -309,6 +327,7 @@ export function remove(s: BPlusState, key: number, rec: Rec): boolean {
       rec.mark(nid(node), 'ok');
       rec.mark(nid(right), 'path');
       rec.markCell(nid(p), idx, 'ok');
+      rec.line('borrow_right');
       rec.step(
         node.leaf
           ? `The right sibling has a key to spare. Borrow ${moved} and update the separator in the parent to ${p.keys[idx]}.`
@@ -335,6 +354,7 @@ export function remove(s: BPlusState, key: number, rec: Rec): boolean {
     rec.count('merges');
     rec.clearMarks();
     rec.mark(nid(into), 'ok');
+    rec.line('merge');
     rec.step(
       into.leaf
         ? `Neither sibling can spare a key, so the two leaves merge. The separator ${sep} is removed from the parent.`
@@ -343,6 +363,7 @@ export function remove(s: BPlusState, key: number, rec: Rec): boolean {
     node = p;
   }
   rec.clearMarks();
+  rec.line('done');
   rec.step(`${key} is deleted. The tree is ${height(s)} ${height(s) === 1 ? 'level' : 'levels'} deep and holds ${s.size} keys.`);
   return true;
 }
@@ -361,16 +382,19 @@ export function range(s: BPlusState, a: number, b: number, rec: Rec): number[] {
       const probe = { text: label, at: nid(node), cell: i };
       if (k < lo) {
         rec.markCell(nid(node), i, 'compare');
+        rec.line('before');
         rec.compare(lo, '>', k, `${k} is before the range, skip it`, { probe });
         rec.markCell(nid(node), i, 'dim');
         continue;
       }
       rec.markCell(nid(node), i, 'compare');
       if (k > hi) {
+        rec.line('past');
         rec.compare(hi, '<', k, `${k} is past the end of the range, stop`, { probe });
         rec.markCell(nid(node), i, 'idle');
         break scan;
       }
+      rec.line('collect');
       rec.compare(hi, '≥', k, `${k} is in the range, collect it`, { probe });
       rec.markCell(nid(node), i, 'ok');
       out.push(k);
@@ -381,11 +405,13 @@ export function range(s: BPlusState, a: number, b: number, rec: Rec): number[] {
     rec.count('reads');
     rec.mark(nid(next), 'path');
     leaves++;
+    rec.line('next_leaf');
     rec.step(`End of this leaf. Follow its next pointer to the neighbouring leaf. No need to go back up the tree.`, {
       probe: { text: label, at: nid(next) },
     });
     node = next;
   }
+  rec.line('done');
   rec.step(
     out.length
       ? `Range ${lo} to ${hi} returned ${out.length} ${out.length === 1 ? 'key' : 'keys'}: ${out.join(', ')}. One trip down the tree, then ${leaves} ${leaves === 1 ? 'leaf' : 'leaves'} read in order.`
@@ -447,9 +473,9 @@ const def: StructureDef<BPlusState> = {
   create: (params) => create(params.order ?? 4),
   seed: [12, 27, 35, 41, 48, 56, 63, 70, 84, 91].map((k) => ['insert', k] as [string, number]),
   ops: [
-    { id: 'insert', label: 'Insert', intent: 'primary', args: [KEY], run: (s, [k], rec) => void insert(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
-    { id: 'search', label: 'Search', args: [KEY], run: (s, [k], rec) => void search(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
-    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], run: (s, [k], rec) => void remove(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
+    { id: 'insert', label: 'Insert', intent: 'primary', args: [KEY], code: ['insert', 'split', 'find_leaf', 'position'], run: (s, [k], rec) => void insert(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
+    { id: 'search', label: 'Search', args: [KEY], code: ['search', 'find_leaf', 'position'], run: (s, [k], rec) => void search(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
+    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], code: ['delete', 'rebalance', 'find_leaf', 'position'], run: (s, [k], rec) => void remove(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
     {
       id: 'range',
       label: 'Range scan',
@@ -457,6 +483,7 @@ const def: StructureDef<BPlusState> = {
         { name: 'from', label: 'From', kind: 'int', min: 0, max: 999 },
         { name: 'to', label: 'To', kind: 'int', min: 0, max: 999 },
       ],
+      code: ['range', 'find_leaf'],
       run: (s, [a, b], rec) => void range(s, Number(a), Number(b), rec),
       suggest: (s) => {
         const keys = allKeys(s);
@@ -493,6 +520,7 @@ const def: StructureDef<BPlusState> = {
       { label: 'B+ tree, 64 children per node', params: { order: 64 } },
     ],
   },
+  source: { python, java },
   info: {
     summary:
       'A B+ tree keeps keys sorted in wide, shallow nodes. Internal nodes only steer the search; every key lives in a leaf, and the leaves are chained together. Wide nodes mean few levels, and few levels mean few disk reads.',

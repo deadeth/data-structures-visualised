@@ -58,12 +58,37 @@ Leave about 44px of clear space above any node the probe will visit (`PROBE_H + 
 - `bench`: optional, `{ insert, search }` op ids if the structure can take integer keys for the head-to-head page
 - `info`: the written content. Be specific: name real systems and what they use the structure for, and write interview points someone could say out loud. Check facts; do not guess.
 
+## Example code
+
+Every structure ships a real implementation in Python and in Java, shown beside the canvas when the reader picks Code. The line being executed is highlighted in step with the animation. `src/structures/b-plus-tree/` is the reference: read `code/b_plus_tree.py`, `code/BPlusTree.java` and the `rec.line(...)` calls in `index.ts`.
+
+**One real file per language**, in `src/structures/<id>/code/`, imported as text (`import python from './code/name.py?raw'`) and passed as `source: { python, java }` on the definition. The files must run: check the Python with `python3` and the Java with `javac` and `java` (both are installed) against a simple model under thousands of random operations. Keep the test harness outside the repo; only the implementation is shown.
+
+**Regions and anchors.** Two kinds of comment mark the file up and are never shown:
+
+```
+# region insert          // region insert          start of a named block
+# endregion              // endregion              end of it
+node = self.root  #@start      Node node = root; //@start      this line is the "start" anchor
+```
+
+An operation lists the regions to show, most important first: `code: ['insert', 'split', 'find_leaf']`. The same region and anchor names must exist in both languages. An anchor can sit on several lines, and a line can carry several (`#@scan,found`).
+
+**Frames name anchors.** Call `rec.line('anchor')` before the step or comparison that executes that line. It is sticky: it applies to every frame until the next call, so set it whenever the algorithm moves on. Pass several names to light several places at once (`rec.line('split_leaf', 'push_up')`). Every frame of an operation must name at least one anchor that its listing has.
+
+**Write the code to match the animation**, not the other way round. If the animation compares the key with each separator in turn, the listing has a loop that does exactly that, so each comparison frame can point at it. Do not show a cleverer algorithm than the one being animated (say so in a short comment if a real implementation would differ, such as binary search inside a node).
+
+**Keep it readable in a narrow panel.** Lines at most 80 characters after the region is dedented, and most under 60. Short comments only, and only where the code alone would not say why. One-line docstrings and Javadoc. Idiomatic names for each language (`find_leaf` in Python, `findLeaf` in Java). No imports, logging or test code inside regions.
+
+`src/core/code-contract.test.ts` checks all of this for every structure: each operation has a listing in both languages, both carry the same anchors, and every frame of the tour and of a dozen suggested runs names anchors that exist.
+
 ## Checking your work
 
 ```
 npx vitest run src/structures/<id>      # logic and invariants
 npx tsc --noEmit                        # types
 npm run shot -- <id>                    # screenshots of every tour step into .shots/
+npm run shot -- <id> --code             # the same with the Python listing showing (--java for Java)
 ```
 
 Open the screenshots and look at them: nothing overlapping, the probe sitting where the comparison is, highlights that match the sentence in the readout. A test file should check the structure's invariants under a few thousand random operations against a simple model (a `Set`, a sorted array), check that counters match with recording on and off, and run the seed and tour through the definition.
