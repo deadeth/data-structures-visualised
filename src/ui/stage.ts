@@ -1,3 +1,5 @@
+import type { Source } from '../core/code';
+import { CodePanel } from './code-panel';
 import { h } from '../core/dom';
 import { Player, SPEEDS } from '../core/player';
 import { Renderer } from '../core/renderer';
@@ -67,6 +69,19 @@ export interface StageOptions {
   name?: string;
   /** Announce steps to screen readers when the reader moves through them. Off for the home demo. */
   live?: boolean;
+  /** Offer the example code as an alternative to the step log. */
+  code?: boolean;
+}
+
+type SideView = 'steps' | 'code';
+const VIEW_STORE = 'dsv.side';
+
+function savedView(): SideView {
+  try {
+    return localStorage.getItem(VIEW_STORE) === 'code' ? 'code' : 'steps';
+  } catch {
+    return 'steps';
+  }
 }
 
 /**
@@ -86,6 +101,9 @@ export class Stage {
   private msg: HTMLElement;
   private status: HTMLElement | null = null;
   private logWrap: HTMLDetailsElement | null = null;
+  private code: CodePanel | null = null;
+  private view: SideView = 'steps';
+  private viewBtns = new Map<SideView, HTMLButtonElement>();
   private logSummary: HTMLElement | null = null;
   private log: HTMLOListElement | null = null;
   private logItems: HTMLLIElement[] = [];
@@ -195,6 +213,19 @@ export class Stage {
       this.log = h('ol.log', { 'aria-label': 'Steps in this operation', onkeydown: (e: KeyboardEvent) => this.logKey(e) });
       this.logSummary = h('summary.log-title', null, 'Steps');
       this.logWrap = h('details.log-wrap', null, this.logSummary, this.log);
+      if (opts.code) {
+        // The side panel shows the steps or the code, never both: one thing to read beside the canvas.
+        this.code = new CodePanel();
+        const tabs = h('div.side-tabs', { role: 'group', 'aria-label': 'Show beside the diagram' });
+        for (const [id, label] of [['steps', 'Steps'], ['code', 'Code']] as [SideView, string][]) {
+          const b = h('button.side-tab', { type: 'button', 'aria-pressed': 'false', onclick: () => this.setView(id) }, label) as HTMLButtonElement;
+          this.viewBtns.set(id, b);
+          tabs.append(b);
+        }
+        this.logSummary.after(tabs);
+        this.logWrap.append(this.code.root);
+        this.setView(savedView(), false);
+      }
       this.logSummary.addEventListener('click', (e) => {
         // Beside the canvas the log is a fixed panel, not a disclosure.
         if (this.beside.matches) e.preventDefault();
@@ -312,6 +343,31 @@ export class Stage {
     this.player.setSpeed(s);
     if (persist) saveSpeed(s);
     this.speedBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(SPEEDS[i] === s)));
+  }
+
+  /** Choose what the side panel shows. */
+  setView(view: SideView, persist = true): void {
+    if (!this.code || !this.logWrap) return;
+    this.view = view;
+    this.logWrap.dataset.view = view;
+    this.root.classList.toggle('with-code', view === 'code');
+    for (const [id, b] of this.viewBtns) b.setAttribute('aria-pressed', String(id === view));
+    if (persist) {
+      try {
+        localStorage.setItem(VIEW_STORE, view);
+      } catch {
+        // Not being able to remember the choice is harmless.
+      }
+    }
+    if (view === 'steps') {
+      if (this.player as Player | undefined) this.scrollLog();
+    }
+    else if (this.player as Player | undefined) this.code.show(this.player.frames[this.player.index]?.lines);
+  }
+
+  /** The example code for the operation about to play. Pass no regions when it has none. */
+  setCode(source: Source | undefined, regions: string[] | undefined, note?: string): void {
+    this.code?.load(source, regions, note);
   }
 
   /** Show a resting picture with a line of narration. */
@@ -486,7 +542,7 @@ export class Stage {
   private syncLogPlacement(changed: boolean): void {
     if (!this.logWrap || !this.logSummary) return;
     const beside = this.beside.matches;
-    this.logSummary.textContent = beside ? 'Steps' : 'All steps';
+    this.logSummary.textContent = beside ? 'Steps' : this.code ? 'Steps and code' : 'All steps';
     this.logSummary.tabIndex = beside ? -1 : 0;
     // Open beside the canvas; under it, open on a laptop and folded away on a phone.
     if (beside || !changed) this.logWrap.open = beside || !matchMedia(NARROW).matches;
@@ -621,6 +677,7 @@ export class Stage {
       });
       this.scrollLog();
     }
+    if (this.view === 'code') this.code?.show(frame.lines);
 
     // Speak only when the reader is moving through the steps, not on every frame of playback.
     const moved = p.index !== this.lastIndex;

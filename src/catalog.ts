@@ -89,6 +89,27 @@ export const CATALOG: CatalogEntry[] = [
     cheat: { lookup: 'O(1) at the head', insert: 'O(1)', remove: 'O(1)', ordered: 'By arrival', pick: 'Bounded buffers between a producer and a consumer.' },
   },
   {
+    id: 'stack',
+    name: 'Stack',
+    group: 'Foundations',
+    blurb: 'Last in, first out. Everything happens at one end.',
+    cheat: { lookup: 'O(1) at the top', insert: 'O(1) amortised', remove: 'O(1)', ordered: 'Newest first', pick: 'Undo, call stacks, parsing, depth-first search.' },
+  },
+  {
+    id: 'fifo-queue',
+    name: 'Queue',
+    group: 'Foundations',
+    blurb: 'First in, first out. Join at the back, leave from the front.',
+    cheat: { lookup: 'O(1) at the front', insert: 'O(1)', remove: 'O(1)', ordered: 'By arrival', pick: 'Work that must be handled in the order it arrived.' },
+  },
+  {
+    id: 'priority-queue',
+    name: 'Priority queue',
+    group: 'Foundations',
+    blurb: 'The most urgent item leaves first, whenever it arrived.',
+    cheat: { lookup: 'O(1) for the most urgent', insert: 'O(n) sorted array, O(log n) heap', remove: 'O(1) sorted array, O(log n) heap', ordered: 'By priority', pick: 'Schedulers, timers, shortest-path search.' },
+  },
+  {
     id: 'linked-list',
     name: 'Linked list',
     group: 'Foundations',

@@ -7,6 +7,7 @@
  * running counters. Because every frame is complete, the player can step
  * backwards, scrub and change speed without re-running any logic.
  */
+import type { Source } from './code';
 
 /**
  * Colour meaning, shared by every structure. Keep to these meanings:
@@ -120,6 +121,8 @@ export interface Frame {
   compare?: Compare;
   /** Running totals at this frame. */
   counters: Record<string, number>;
+  /** Anchors in the example code that this step is executing. See src/core/code.ts. */
+  lines?: string[];
 }
 
 export interface ArgDef {
@@ -136,6 +139,12 @@ export interface Rec {
   step(message: string, extra?: { probe?: Probe; compare?: Compare }): void;
   compare(left: string | number, op: Compare['op'], right: string | number, verdict: string, extra?: { probe?: Probe; message?: string }): void;
   count(counter: string, by?: number): void;
+  /**
+   * Name the code anchors the next frames belong to. Sticky: it applies to
+   * every frame recorded from now until it is called again. Call it with no
+   * arguments to clear it.
+   */
+  line(...anchors: string[]): void;
   mark(nodeId: string, tone: Tone): void;
   markCell(nodeId: string, cell: number, tone: Tone): void;
   markEdge(edgeId: string, tone: Tone): void;
@@ -153,6 +162,8 @@ export interface OpDef<S> {
   suggest?(state: S): (number | string)[];
   /** Visual weight of the button. */
   intent?: 'primary' | 'neutral' | 'danger';
+  /** Regions of the structure's source files to show beside this operation, in order. */
+  code?: string[];
 }
 
 export interface ParamDef {
@@ -210,5 +221,7 @@ export interface StructureDef<S = any> {
     /** Run more than once with different params, e.g. a narrow and a wide node. */
     variants?: { label: string; params: Record<string, number> }[];
   };
+  /** Example implementations, one real file per language, marked up as described in src/core/code.ts. */
+  source?: Source;
   info: Info;
 }

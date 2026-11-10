@@ -3,6 +3,7 @@
 //   npm run shot -- <structure-id>     rest state, plus the middle and last frame of every tour step
 //   npm run shot -- home | compare     those pages
 //   npm run shot -- <id> --mobile      same, at phone width
+//   npm run shot -- <id> --code        same, with the Python listing beside the canvas (--java for Java)
 //
 // Images land in .shots/. Console errors from the page are printed and make the script exit 1.
 import { mkdirSync } from 'node:fs';
@@ -12,7 +13,9 @@ import puppeteer from 'puppeteer-core';
 const args = process.argv.slice(2);
 const target = args.find((a) => !a.startsWith('--')) ?? 'home';
 const mobile = args.includes('--mobile');
-const suffix = mobile ? '-mobile' : '';
+const code = args.includes('--code') || args.includes('--java');
+const java = args.includes('--java');
+const suffix = (code ? (java ? '-java' : '-code') : '') + (mobile ? '-mobile' : '');
 
 const server = await createServer({ server: { port: 0, host: '127.0.0.1' }, logLevel: 'error' });
 await server.listen();
@@ -28,6 +31,14 @@ await page.setViewport(mobile ? { width: 390, height: 844, deviceScaleFactor: 2 
 const errors = [];
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
 page.on('pageerror', (e) => errors.push(String(e)));
+
+if (code) {
+  // Show the example code beside the canvas instead of the step log.
+  await page.evaluateOnNewDocument((lang) => {
+    localStorage.setItem('dsv.side', 'code');
+    localStorage.setItem('dsv.code.lang', lang);
+  }, java ? 'java' : 'python');
+}
 
 mkdirSync('.shots', { recursive: true });
 const snap = async (name, fullPage = false) => {

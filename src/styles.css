@@ -1626,3 +1626,177 @@ td.num {
   white-space: nowrap;
   border: 0;
 }
+
+/* ---- example code beside the stage ------------------------------------- */
+
+.side-tabs,
+.code-langs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.side-tabs {
+  height: 40px;
+  padding: 0 12px;
+}
+
+.side-tab,
+.code-lang {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font: 600 0.86rem var(--sans);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.side-tab:hover,
+.code-lang:hover {
+  background: var(--paper);
+}
+
+.side-tab[aria-pressed='true'],
+.code-lang[aria-pressed='true'] {
+  background: var(--ink);
+  color: #fff;
+}
+
+.log-wrap[data-view='code'] > .log,
+.log-wrap[data-view='steps'] > .code-panel {
+  display: none;
+}
+
+/* The language switch shares the row the Steps and Code tabs sit on. */
+.code-panel {
+  display: grid;
+  grid-template-rows: 40px minmax(0, 1fr);
+  margin-top: -40px;
+  pointer-events: none;
+}
+
+.code-langs {
+  justify-self: end;
+  padding-right: 12px;
+  pointer-events: auto;
+}
+
+.code-body {
+  position: relative;
+  pointer-events: auto;
+  overflow: auto;
+  max-height: 380px;
+  border-top: 1px solid var(--rule);
+  scroll-padding-block: 28px;
+}
+
+.code-empty {
+  margin: 0;
+  padding: 18px 20px;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+  max-width: 34ch;
+}
+
+.code {
+  margin: 0;
+  padding: 10px 0 14px;
+  font: 500 0.75rem/1.65 var(--mono);
+  color: var(--ink);
+  tab-size: 4;
+}
+
+/* A line too long for the panel wraps under its own start, so nothing is ever cut off. */
+.code-line {
+  display: grid;
+  grid-template-columns: 3.2ch minmax(0, 1fr);
+  column-gap: 1.4ch;
+  padding: 0 14px 0 0;
+  border-left: 3px solid transparent;
+}
+
+.code-line code {
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-height: 1.6em;
+}
+
+.code-no {
+  text-align: right;
+  color: var(--ink-3);
+  user-select: none;
+}
+
+/* The lines the current step is executing. A bar and a tint, not a state colour. */
+.code-line.on {
+  background: #e4eaf4;
+  border-left-color: var(--ink);
+}
+
+.code-line.on .code-no {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.tok-keyword {
+  font-weight: 700;
+}
+
+.tok-comment {
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.tok-string,
+.tok-number {
+  color: #17605d;
+}
+
+.tok-name {
+  color: #4a34a8;
+  font-weight: 700;
+}
+
+@media (min-width: 1200px) {
+  /* Code needs more room than a list of steps, so the side column widens while it shows. */
+  .stage.with-code:not(.compact) {
+    grid-template-columns: minmax(0, 1fr) minmax(420px, 48%);
+  }
+
+  .log-wrap:has(> .side-tabs) > .log-title {
+    display: none;
+  }
+
+  .log-wrap:has(> .side-tabs) > .log {
+    top: 40px;
+  }
+
+  .code-panel {
+    position: absolute;
+    inset: 0;
+    margin-top: 0;
+  }
+
+  .code-body {
+    max-height: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .side-tab,
+  .code-lang {
+    height: 40px;
+  }
+
+  .side-tabs {
+    height: 48px;
+  }
+
+  .code-panel {
+    grid-template-rows: 48px minmax(0, 1fr);
+    margin-top: -48px;
+  }
+}

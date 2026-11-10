@@ -79,7 +79,7 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
     h('div.under-stage', null, facts, legend()),
   );
   host.append(page);
-  const stage = new Stage(stageHost, { counters: def.counters, name: inSentence(meta.name) });
+  const stage = new Stage(stageHost, { counters: def.counters, name: inSentence(meta.name), code: !!def.source });
 
   const refreshFacts = () => {
     facts.replaceChildren();
@@ -87,6 +87,7 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
   };
 
   const rest = (message: string) => {
+    stage.setCode(undefined, undefined, 'Run an operation to see the code for it here.');
     stage.still(def.layout(state), message);
     refreshFacts();
   };
@@ -114,6 +115,7 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
     op.run(state, args, rec);
     let frames: Frame[] = rec.frames;
     if (!frames.length) frames = [{ scene: def.layout(state), message: `${op.label} finished.`, counters: { ...rec.counters } }];
+    stage.setCode(def.source, op.code, `${op.label} has no code listing.`);
     const done = stage.play(frames);
     if (show) reveal();
     await done;
