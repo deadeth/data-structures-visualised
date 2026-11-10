@@ -391,7 +391,8 @@ function compactLevel(s: LsmState, lv: number, rec: Rec, cost: Cost, why: Compac
           `The ${marks.length === 1 ? 'tombstone' : 'tombstones'} ${list(marks)} must be kept: an older copy could still sit in a deeper level, and only the tombstone hides it.`,
         );
       }
-      rec.line(...(stale.length ? ['stale'] : []), ...(droppedTombs.length || keptTombs.length ? ['tombstone'] : []), ...(droppedTombs.length ? ['dropped'] : []));
+      // The loop finds the smallest head and its older copies, then skips them: in listing order, top to bottom.
+      rec.line('smallest', ...(stale.length ? ['stale'] : []), ...(droppedTombs.length || keptTombs.length ? ['tombstone'] : []), ...(droppedTombs.length ? ['dropped'] : []));
       rec.step(parts.join(' '));
     }
     s.merge.phase = 'run';
@@ -400,7 +401,8 @@ function compactLevel(s: LsmState, lv: number, rec: Rec, cost: Cost, why: Compac
     // The upper inputs stay on the canvas, faded, so the colours in the run can be traced back to them.
     for (const t of upper) rec.mark(tid(t), 'dim');
     // With several inputs the work is in the merge loop. With one, or nothing left, there is no loop to show.
-    rec.line(out.length && groups.length > 1 ? 'smallest' : 'merge');
+    // The loop then writes each smallest entry to the run, further down the listing than the tests before it.
+    rec.line(out.length && groups.length > 1 ? 'emit' : 'merge');
     rec.step(
       !out.length
         ? `Every entry was a stale copy or a spent tombstone, so nothing is left to write.`

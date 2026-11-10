@@ -1,5 +1,6 @@
-import { LABEL_MAX, PROBE_FONT, PROBE_H, SUB_ROOM, TITLE_ROOM, fitScene, neededHeight, overflowsWidth, probeWidth, sceneBounds, type Fit } from './fit';
+import { LABEL_LINE, LABEL_MAX, PROBE_FONT, PROBE_H, SUB_ROOM, TITLE_ROOM, fitScene, labelLines, neededHeight, nodeSpan, overflowsWidth, probeWidth, sceneBounds, type Fit } from './fit';
 import { CELL_GAP, CELL_H, TRAY_PAD, cellCentre, cellWidth, circleRadius, nodeSize, slotX } from './geometry';
+import { ease } from './timing';
 import type { Decor, Frame, Probe, SceneEdge, SceneNode } from './types';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -53,9 +54,11 @@ export interface RendererOptions {
   onRegionLost?: () => void;
 }
 
+/** How long the scene takes to settle into a canvas that changed width because the layout changed. */
+const RESIZE_MS = 240;
+
 const REGION_LABEL = 'Diagram, wider than the view. Left and right arrows scroll it; Space still plays.';
 
-const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
 
 /**
@@ -96,6 +99,7 @@ export class Renderer {
   private ro: ResizeObserver | null = null;
   /** The frames of the current operation, used to size the canvas once for all of them. */
   private planned: Frame[] = [];
+  private span0: { x1: number; x2: number } | null = null;
   private overflowing = false;
   private roRaf = 0;
   /** Sideways scroll tween, driven by the same clock and easing as the nodes and the chip. */
@@ -105,6 +109,8 @@ export class Renderer {
   /** True for the first frame shown after plan(): with nothing to follow, it is framed on the scene's centre. */
   private fresh = true;
   private onScroll = () => this.syncFades();
+  /** Until this time, a change of canvas size glides the scene to its new fit instead of jumping (see easeNextResize). */
+  private easeUntil = 0;
 
   constructor(private readonly host: HTMLElement, private readonly opts: RendererOptions = {}) {
     const label = opts.label ?? 'Animated diagram of the data structure';
@@ -134,6 +140,28 @@ export class Renderer {
     this.resize();
   }
 
+  /**
+   * The canvas is about to change size because the reader changed the layout
+   * (Steps or Code beside it): glide the scene to its new fit over a short
+   * tween rather than jumping. Instant under reduced motion.
+   */
+  easeNextResize(): void {
+    this.easeUntil = performance.now() + 600;
+  }
+
+  /**
+   * Where the chip is heading, in viewport px (top and bottom, tip included),
+   * or null when no chip shows. Read after show(): it is the end of the tween.
+   */
+  probeTarget(): { top: number; bottom: number } | null {
+    const p = this.probe;
+    if (p.to <= 0) return null;
+    const f = this.fitTo;
+    const y = this.host.getBoundingClientRect().top + f.ty + p.ty * f.s;
+    const half = (PROBE_H / 2 + 7) * f.s;
+    return { top: y - half, bottom: y + half };
+  }
+
   destroy(): void {
     cancelAnimationFrame(this.raf);
     cancelAnimationFrame(this.roRaf);
@@ -156,6 +184,12 @@ export class Renderer {
       if (resized) return;
     }
     if (this.last) {
+      const calm = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (performance.now() < this.easeUntil && !this.raf && this.hasFit && !calm) {
+        this.easeUntil = 0;
+        this.show(this.last, RESIZE_MS);
+        return;
+      }
       this.fitTo = this.computeFit(this.last);
       this.sizeSvg(this.fitTo);
       if (!this.raf) {
@@ -175,6 +209,8 @@ export class Renderer {
    */
   plan(frames: Frame[]): void {
     this.planned = frames;
+    // Centred on the nodes of the whole operation, so the view holds still between its steps.
+    this.span0 = nodeSpan(frames.map((f) => f.scene));
     this.fresh = true;
     this.resetProbe();
     this.sizeCanvas();
@@ -320,8 +356,12 @@ export class Renderer {
       if (inView(hot.lo, hot.hi, Math.min(margin, 24))) return null;
       return clamp((hot.lo + hot.hi) / 2 - view / 2);
     }
-    // Nothing to follow: frame the middle of the scene (the root, for a tree).
-    return this.fresh ? clamp((f.w - view) / 2) : null;
+    // Nothing to follow: frame the middle of the scene (the root, for a tree), but never so far
+    // right that a note reading from the left starts out of view.
+    if (!this.fresh) return null;
+    let start = Infinity;
+    for (const d of frame.scene.decor ?? []) if (d.type === 'label' && d.text && (d.anchor ?? 'start') === 'start') start = Math.min(start, f.tx + d.x * f.s);
+    return clamp(Math.min((f.w - view) / 2, start - 16));
   }
 
   /** Show a frame, taking `ms` to get there. Zero jumps straight to it. */
@@ -513,7 +553,14 @@ export class Renderer {
     const { w, h } = size;
     let below = h / 2;
 
-    if (def.shape === 'circle') {
+    if (def.shape === 'tag') {
+      // A named pointer: one style on every page, never a state colour or a hue.
+      g.setAttribute('class', 'node pointer');
+      g.append(el('rect', { x: -w / 2, y: -h / 2, width: w, height: h, rx: 6 }, 'tag'));
+      const t = el('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central' }, 'tag-text');
+      t.textContent = def.cells[0]?.text ?? '';
+      g.append(t);
+    } else if (def.shape === 'circle') {
       const r = circleRadius(def);
       const c = def.cells[0] ?? { text: '' };
       const tone = c.tone ?? def.tone ?? 'idle';
@@ -559,7 +606,7 @@ export class Renderer {
     if (def.caption) {
       // Hangs from just under the node or its subs, so a larger label grows downwards, away from them.
       const t = el('text', { y: below + 4, 'text-anchor': 'middle', 'dominant-baseline': 'hanging' }, 'node-caption');
-      t.textContent = def.caption;
+      setLines(t, def.caption, 0);
       g.append(t);
     }
   }
@@ -653,7 +700,8 @@ export class Renderer {
     } else if (place === 'below') {
       x = cellX;
       const hasSub = def.cells.some((c) => c.sub);
-      y = def.y + target.h / 2 + PROBE_H / 2 + 9 + (hasSub ? SUB_ROOM : 0) + (def.caption ? LABEL_MAX + 4 : 0);
+      const captionLines = labelLines(def.caption).length;
+      y = def.y + target.h / 2 + PROBE_H / 2 + 9 + (hasSub ? SUB_ROOM : 0) + (captionLines ? LABEL_MAX + 4 + (captionLines - 1) * LABEL_LINE : 0);
     } else if (place === 'left') {
       x = def.x - target.w / 2 - w / 2 - 10;
     } else {
@@ -698,7 +746,7 @@ export class Renderer {
         }
       } else {
         const t = el('text', { x: d.x, y: d.y, 'text-anchor': d.anchor ?? 'start', 'dominant-baseline': 'central' }, `decor-label${d.strong ? ' strong' : ''}`);
-        t.textContent = d.text;
+        setLines(t, d.text, d.x);
         this.decorLayer.append(t);
       }
     }
@@ -707,8 +755,22 @@ export class Renderer {
   // ---- fit ----------------------------------------------------------------
 
   private computeFit(frame: Frame): Fit {
-    return fitScene(sceneBounds(frame.scene), this.w, this.h);
+    return fitScene(sceneBounds(frame.scene), this.w, this.h, this.span0, sceneBounds(frame.scene, true));
   }
+}
+
+/** Fill a text element with a label, one tspan per line where a newline breaks it. */
+function setLines(t: SVGTextElement, text: string, x: number): void {
+  const lines = labelLines(text);
+  if (lines.length <= 1) {
+    t.textContent = text;
+    return;
+  }
+  lines.forEach((line, i) => {
+    const span = el('tspan', { x, dy: i === 0 ? 0 : '1.25em' });
+    span.textContent = line;
+    t.append(span);
+  });
 }
 
 /** Distance from a node's centre to its outline along a unit direction. */

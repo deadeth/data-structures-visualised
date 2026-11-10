@@ -210,7 +210,7 @@ export function layout(s: StackState): Scene {
   const nodes: SceneNode[] = [];
   nodes.push({ id: SIZE, x: SIZE_X, y: 0, cells: [{ text: String(s.size), w: SLOT_W }], title: 'size', caption: `of ${s.slots.length}` });
   row(nodes, s.slots, s.gen, 0);
-  if (s.size > 0) nodes.push({ id: TOP, x: (s.size - 1) * PITCH, y: TAG_Y, cells: [{ text: 'top', w: SLOT_W + 4 }], hue: 2 });
+  if (s.size > 0) nodes.push({ id: TOP, x: (s.size - 1) * PITCH, y: TAG_Y, cells: [{ text: 'top', w: SLOT_W + 4 }], shape: 'tag' });
   // An empty label that keeps the room under the array, so the view holds still when a new array appears there.
   const decor: Decor[] = [{ id: 'reserve', type: 'label', x: 0, y: NEXT_LABEL_Y + 10, text: '' }];
   if (s.next) {

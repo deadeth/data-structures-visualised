@@ -216,5 +216,5 @@ class LSMTree:
                 heads[r] += 1  # the newest copy wins  #@stale
             if entry.value is TOMBSTONE and drop_tombstones:  #@tombstone
                 continue  # nothing older is left to hide  #@dropped
-            out.append(entry)
+            out.append(entry)  #@emit
     # endregion

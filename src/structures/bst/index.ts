@@ -170,7 +170,8 @@ function descend(s: BstState, key: number, rec: Rec, mode: 'search' | 'insert' |
       message = `${key} is ${word} than ${k}, but ${k} has no ${side} child. The walk has run out of tree.`;
     }
     // An insert that finds the spot free stops on the test for it; every other move takes the child pointer.
-    rec.line(!next && mode === 'insert' ? `${side}_free` : side);
+    // The `key < node.key` test is lit either way: it is the comparison the readout shows, and the else follows from it.
+    rec.line('less', !next && mode === 'insert' ? `${side}_free` : side);
     rec.compare(key, goLeft ? '<' : '>', k, verdict, { probe, message });
     rec.mark(nid(node), 'path');
     dimSubtree(rec, node, other);

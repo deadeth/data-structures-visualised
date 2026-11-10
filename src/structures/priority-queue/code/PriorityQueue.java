@@ -15,13 +15,12 @@ public class PriorityQueue {
         int lo = 0, hi = size; //@window
         while (lo < hi) { //@meet
             int mid = (lo + hi) / 2; //@mid
-            if (items[mid] == key) {
-                return false; //@duplicate
-            }
-            if (items[mid] > key) {
+            if (key < items[mid]) { //@less
                 lo = mid + 1; //@right
-            } else {
+            } else if (key > items[mid]) { //@more
                 hi = mid; //@left
+            } else { // key == items[mid] //@same
+                return false; //@duplicate
             }
         }
         for (int i = size; i > lo; i--) { // smaller items move right

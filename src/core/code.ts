@@ -29,6 +29,8 @@ export interface Listing {
   lines: string[];
   /** Anchor name to the indexes of the lines that carry it. */
   anchors: Map<string, number[]>;
+  /** Index of the first line of each region, in order. */
+  starts: number[];
 }
 
 const COMMENT: Record<Lang, string> = { python: '#', java: '//' };
@@ -75,6 +77,7 @@ export function listing(source: string, lang: Lang, names: string[]): Listing {
   const all = regions(source, lang);
   const lines: string[] = [];
   const anchors = new Map<string, number[]>();
+  const starts: number[] = [];
   for (const name of names) {
     const block = all.get(name);
     if (!block) throw new Error(`No ${lang} region called "${name}"`);
@@ -86,6 +89,7 @@ export function listing(source: string, lang: Lang, names: string[]): Listing {
     const body = block.slice(from, to);
     const indent = Math.min(...body.filter((l) => l.trim() !== '').map((l) => l.length - l.trimStart().length));
     if (lines.length) lines.push('');
+    starts.push(lines.length);
     for (const raw of body) {
       let text = raw.slice(Number.isFinite(indent) ? Math.min(indent, raw.length - raw.trimStart().length) : 0);
       const mark = p.anchor.exec(text);
@@ -99,7 +103,7 @@ export function listing(source: string, lang: Lang, names: string[]): Listing {
       lines.push(text.replace(/\s+$/, ''));
     }
   }
-  return { lines, anchors };
+  return { lines, anchors, starts };
 }
 
 // ---- highlighting -----------------------------------------------------------

@@ -37,7 +37,7 @@ class BinarySearchTree:
         while node is not None:
             if key == node.key:  #@match
                 return True  #@found
-            if key < node.key:  #@left
+            if key < node.key:  #@less,left
                 node = node.left  #@left
             else:  #@right
                 node = node.right  #@right
@@ -56,7 +56,7 @@ class BinarySearchTree:
         while True:
             if key == node.key:  #@match
                 return False  #@duplicate
-            if key < node.key:  #@left,left_free
+            if key < node.key:  #@less,left,left_free
                 if node.left is None:  #@left,left_free
                     node.left = Node(key)  #@attach_left
                     break
@@ -76,7 +76,7 @@ class BinarySearchTree:
         parent, node = None, self.root  #@start
         while node is not None and key != node.key:  #@match
             parent = node
-            if key < node.key:  #@left
+            if key < node.key:  #@less,left
                 node = node.left  #@left
             else:  #@right
                 node = node.right  #@right

@@ -363,7 +363,7 @@ export function layout(s: HeapState): Scene {
     type: 'label',
     x: arrayX(0) - CELL_W / 2,
     y: ARRAY_Y - CELL_H / 2 - 16,
-    text: 'The same items in array order. The small numbers are indexes.',
+    text: 'Array order. Small numbers are indexes.',
     strong: true,
   });
   return { nodes, edges, decor };

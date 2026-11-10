@@ -8,6 +8,14 @@ import def, { MAX_SIZE, PLACES, create, dequeue, enqueue, layout, peek, toArray,
 const quiet = (s: FifoState) => new Recorder(s, layout, false);
 const loud = (s: FifoState) => new Recorder(s, layout, true);
 
+/** The node (or the null marker) a pointer tag points at: the one it sits under, or over when that node has dropped out of the row. */
+function pointsAt(scene: Scene, name: 'head' | 'tail'): string {
+  const tag = scene.nodes.find((n) => n.shape === 'tag' && n.cells[0].text === name)!;
+  const near = scene.nodes.filter((n) => n.shape !== 'tag' && Math.abs(n.x - tag.x) < nodeSize(n).w);
+  near.sort((a, b) => Math.abs(a.y - tag.y) - Math.abs(b.y - tag.y));
+  return near[0].id;
+}
+
 /** Throws if head, tail, size and the chain of next pointers disagree. */
 function check(s: FifoState): void {
   let count = 0;
@@ -270,17 +278,17 @@ describe('queue on a linked list', () => {
     expect(y[0]).toBeGreaterThan(0);
     expect(y[1]).toBeGreaterThan(0);
     expect(y[2]).toBe(0);
-    expect(put.frames[3].scene.nodes.find((n) => n.id === id)!.title).toBe('tail');
+    expect(pointsAt(put.frames[3].scene, 'tail')).toBe(id);
 
     const take = loud(s);
     expect(dequeue(s, take)).toBe(17);
     expect(take.frames[0].probe?.text).toBe('17');
-    expect(take.frames[0].scene.nodes.find((n) => n.id === take.frames[0].probe!.at)!.title).toBe('head');
+    expect(pointsAt(take.frames[0].scene, 'head')).toBe(take.frames[0].probe!.at);
     // Once head has moved on, the old front drops out of the row and the next node carries the head label.
     const gone = take.frames[1].scene.nodes.find((n) => n.id === take.frames[1].probe!.at)!;
     expect(gone.caption).toBe('unlinked');
     expect(gone.y).toBeGreaterThan(0);
-    expect(take.frames[1].scene.nodes.find((n) => n.title === 'head')!.cells[0].text).toBe('62');
+    expect(take.frames[1].scene.nodes.find((n) => n.id === pointsAt(take.frames[1].scene, 'head'))!.cells[0].text).toBe('62');
     expect(take.frames[take.frames.length - 1].scene.nodes.some((n) => n.cells[0].text === '17')).toBe(false);
   });
 

@@ -12,12 +12,12 @@ class PriorityQueue:
         lo, hi = 0, self.size  #@window
         while lo < hi:  #@meet
             mid = (lo + hi) // 2  #@mid
-            if self.items[mid] == key:
-                return False  #@duplicate
-            if self.items[mid] > key:
+            if key < self.items[mid]:  #@less
                 lo = mid + 1  #@right
-            else:
+            elif key > self.items[mid]:  #@more
                 hi = mid  #@left
+            else:  # key == self.items[mid]  #@same
+                return False  #@duplicate
         i = self.size
         while i > lo:  # smaller items move one slot right
             self.items[i] = self.items[i - 1]  #@shift

@@ -64,7 +64,7 @@ public class Graph {
         stack.push(start); //@begin
         while (!stack.isEmpty()) {
             String u = stack.pop(); //@pop
-            if (visited.contains(u)) { //@stale
+            if (visited.contains(u)) { //@stale,seen
                 continue; // out of date: u has been visited //@stale
             }
             visited.add(u); //@visit

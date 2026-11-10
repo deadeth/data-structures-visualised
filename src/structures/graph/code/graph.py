@@ -42,7 +42,7 @@ class Graph:
         order = []
         while stack:
             u = stack.pop()  #@pop
-            if u in visited:  #@stale
+            if u in visited:  #@stale,seen
                 continue  # out of date: u has been visited  #@stale
             visited.add(u)  #@visit
             order.append(u)  #@visit

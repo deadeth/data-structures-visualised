@@ -36,6 +36,15 @@ export const LABEL_MAX = 12 / MIN_SCALE;
 export const TITLE_ROOM = LABEL_MAX + 4;
 export const SUB_ROOM = LABEL_MAX + 6;
 export const CAPTION_ROOM = LABEL_MAX + 4;
+/** Distance between the lines of a label broken with a newline (1.25em at the largest label size). */
+export const LABEL_LINE = LABEL_MAX * 1.25;
+/** Rough advance of one character of the label face at its largest size, for keeping labels inside the view. */
+export const LABEL_CHAR_W = LABEL_MAX * 0.55;
+
+/** Lines in a label: a newline breaks it. */
+export const labelLines = (text: string | undefined): string[] => (text ? text.split('\n') : []);
+/** Rough drawn width of a label's longest line at the largest label size. */
+export const labelWidth = (text: string | undefined): number => Math.max(0, ...labelLines(text).map((l) => l.length * LABEL_CHAR_W));
 
 export interface Bounds { minX: number; minY: number; bw: number; bh: number }
 
@@ -49,7 +58,7 @@ export interface Fit {
 }
 
 /** The box a scene occupies, including room for the probe chip, titles, subs and captions. */
-export function sceneBounds(scene: Scene): Bounds | null {
+export function sceneBounds(scene: Scene, drawnOnly = false): Bounds | null {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const grow = (x1: number, y1: number, x2: number, y2: number) => {
     if (x1 < minX) minX = x1;
@@ -57,20 +66,37 @@ export function sceneBounds(scene: Scene): Bounds | null {
     if (x2 > maxX) maxX = x2;
     if (y2 > maxY) maxY = y2;
   };
+  const at = new Map<string, { x: number; y: number }>();
   for (const n of scene.nodes) {
     const { w, h } = nodeSize(n);
-    const extraBelow = (n.cells.some((c) => c.sub) ? SUB_ROOM : 0) + (n.caption ? CAPTION_ROOM : 0);
+    at.set(n.id, n);
+    const captionLines = labelLines(n.caption).length;
+    const extraBelow = (n.cells.some((c) => c.sub) ? SUB_ROOM : 0) + (captionLines ? CAPTION_ROOM + (captionLines - 1) * LABEL_LINE : 0);
+    // Titles and captions can be wider than their node: keep them inside the view too.
+    const half = Math.max(w, labelWidth(n.title), labelWidth(n.caption)) / 2;
     // Always leave room above for the probe chip so the view does not jump when it arrives.
-    grow(n.x - w / 2, n.y - h / 2 - PROBE_H - 16 - (n.title ? TITLE_ROOM : 0), n.x + w / 2, n.y + h / 2 + extraBelow);
+    grow(n.x - half, n.y - h / 2 - PROBE_H - 16 - (n.title ? TITLE_ROOM : 0), n.x + half, n.y + h / 2 + extraBelow);
+  }
+  for (const e of scene.edges) {
+    const a = at.get(e.from);
+    const b = at.get(e.to);
+    if (!e.label || !a || !b) continue;
+    const half = labelWidth(e.label) / 2 + 12;
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    grow(mx - half, my - LABEL_MAX - 12, mx + half, my + LABEL_MAX + 12);
   }
   for (const d of scene.decor ?? []) {
+    // Empty labels only pin the scene's size; with drawnOnly they are left out.
+    if (drawnOnly && d.type === 'label' && !d.text) continue;
     if (d.type === 'ring') grow(d.cx - d.r, d.cy - d.r, d.cx + d.r, d.cy + d.r);
     else if (d.type === 'band') grow(d.x, d.y, d.x + d.w, d.y + d.h);
     else {
       // Roughly the advance of the label face at its largest size.
-      const tw = d.text.length * LABEL_MAX * 0.55;
+      const tw = labelWidth(d.text);
       const x1 = d.anchor === 'end' ? d.x - tw : d.anchor === 'middle' ? d.x - tw / 2 : d.x;
-      grow(x1, d.y - LABEL_MAX * 0.65, x1 + tw, d.y + LABEL_MAX * 0.65);
+      const lines = Math.max(1, labelLines(d.text).length);
+      grow(x1, d.y - LABEL_MAX * 0.65, x1 + tw, d.y + (lines - 1) * LABEL_LINE + LABEL_MAX * 0.65);
     }
   }
   if (!isFinite(minX)) return null;
@@ -89,18 +115,31 @@ export function widthScale(b: Bounds, canvasW: number): number {
  * grow past the canvas height (the caller should make the canvas that tall;
  * see neededHeight).
  */
-export function fitScene(b: Bounds | null, canvasW: number, canvasH: number): Fit {
+export function fitScene(b: Bounds | null, canvasW: number, canvasH: number, focus?: { x1: number; x2: number } | null, drawn?: Bounds | null): Fit {
   if (!b) return { s: 1, tx: canvasW / 2, ty: canvasH / 2, w: canvasW, h: canvasH };
   const s = Math.max(MIN_SCALE, Math.min(widthScale(b, canvasW), (canvasH - FIT_PAD * 2) / b.bh));
   const w = Math.max(canvasW, Math.ceil(b.bw * s + FIT_PAD * 2));
   const h = Math.max(canvasH, Math.ceil(b.bh * s + FIT_PAD * 2));
-  return {
-    s,
-    tx: (w - b.bw * s) / 2 - b.minX * s,
-    ty: (h - b.bh * s) / 2 - b.minY * s,
-    w,
-    h,
-  };
+  let tx = (w - b.bw * s) / 2 - b.minX * s;
+  // When the scene fits, centre what is drawn (the nodes) rather than the room kept around them,
+  // as far as the whole scene still fits inside the padding.
+  if (focus && w <= canvasW + 1) {
+    const want = canvasW / 2 - ((focus.x1 + focus.x2) / 2) * s;
+    const c = drawn ?? b;
+    tx = Math.max(FIT_PAD - c.minX * s, Math.min(canvasW - FIT_PAD - (c.minX + c.bw) * s, want));
+  }
+  return { s, tx, ty: (h - b.bh * s) / 2 - b.minY * s, w, h };
+}
+
+/** Left and right edges of the nodes across a set of scenes: what the view centres on when a scene fits. */
+export function nodeSpan(scenes: Scene[]): { x1: number; x2: number } | null {
+  let x1 = Infinity, x2 = -Infinity;
+  for (const sc of scenes) for (const n of sc.nodes) {
+    const { w } = nodeSize(n);
+    x1 = Math.min(x1, n.x - w / 2);
+    x2 = Math.max(x2, n.x + w / 2);
+  }
+  return isFinite(x1) ? { x1, x2 } : null;
 }
 
 /** True when a scene, fitted to this canvas, is wider than it (the canvas scrolls sideways). */
@@ -130,4 +169,14 @@ export function neededHeight(scenes: Scene[], canvasW: number, follow: boolean, 
     floor = Math.max(floor, Math.ceil(b.bh * MIN_SCALE + FIT_PAD * 2 + overflowAtMin));
   }
   return Math.max(minH, floor, Math.min(maxH, need));
+}
+
+/** Narrowest canvas that shows every one of these scenes without scrolling sideways (at MIN_SCALE). */
+export function minCanvasWidth(scenes: Scene[]): number {
+  let need = 0;
+  for (const sc of scenes) {
+    const b = sceneBounds(sc);
+    if (b) need = Math.max(need, Math.ceil(b.bw * MIN_SCALE + FIT_PAD * 2));
+  }
+  return need;
 }

@@ -287,7 +287,7 @@ public class LsmTree {
             if (entry.value() == TOMBSTONE && dropTombstones) { //@tombstone
                 continue; // nothing older is left to hide //@dropped
             }
-            out.add(entry);
+            out.add(entry); //@emit
         }
     }
     // endregion
