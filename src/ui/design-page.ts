@@ -1,6 +1,6 @@
 import './design.css';
 import { h, tableRoles } from '../core/dom';
-import type { Component, Design, Flow } from '../designs/types';
+import { MODES, type Component, type Design, type Flow } from '../designs/types';
 
 const NS = 'http://www.w3.org/2000/svg';
 const W = 1120;
@@ -15,6 +15,8 @@ function el<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, 
   if (cls) e.setAttribute('class', cls);
   return e;
 }
+
+export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const ICON = {
@@ -35,7 +37,7 @@ function icon(name: keyof typeof ICON): SVGSVGElement {
  * A system design as an interactive diagram: a guided tour that follows one
  * URL round the loop, and boxes that open to explain themselves.
  */
-export async function mountDesign(host: HTMLElement, design: Design): Promise<() => void> {
+export async function mountDesign(host: HTMLElement, design: Design, open?: { kind: string; id: string }): Promise<() => void> {
   const byId = new Map(design.components.map((c) => [c.id, c]));
   const flowById = new Map(design.flows.map((f) => [f.id, f]));
 
@@ -51,17 +53,43 @@ export async function mountDesign(host: HTMLElement, design: Design): Promise<()
 
   const f = design.frame;
   svg.append(el('rect', { x: f.x, y: f.y, width: f.w, height: f.h, rx: 16 }, 'hld-frame'));
-  const frameLabel = el('text', { x: f.x + 16, y: f.y + 24 }, 'hld-frame-label');
+  const frameLabel = el('text', { x: f.x + f.w - 14, y: f.y + f.h - 12, 'text-anchor': 'end' }, 'hld-frame-label');
   frameLabel.textContent = f.label;
   svg.append(frameLabel);
 
   const flowEls = new Map<string, SVGPathElement>();
   const flowLayer = el('g');
   const labelLayer = el('g');
+  const hitLayer = el('g');
+  const chipLayer = el('g');
+  const chipEls = new Map<string, SVGGElement>();
+  const nameOf = (id: string) => design.components.find((c) => c.id === id)!.name;
   for (const fl of design.flows) {
-    const p = el('path', { d: fl.d }, `hld-flow${fl.dashed ? ' dashed' : ''}`);
+    const p = el('path', { d: fl.d }, `hld-flow mode-${fl.mode}`);
     flowEls.set(fl.id, p);
     flowLayer.append(p);
+    // A wide invisible stroke makes a thin line easy to hit.
+    const hit = el('path', { d: fl.d }, 'hld-hit');
+    hit.addEventListener('click', () => pickFlow(fl.id, true));
+    hitLayer.append(hit);
+    if (fl.chip != null) {
+      const g = el('g', { tabindex: 0, role: 'button', 'aria-pressed': 'false', 'aria-label': `${nameOf(fl.from)} to ${nameOf(fl.to)}, by ${fl.via}. Show details.` }, `hld-chip mode-${fl.mode}`);
+      const w = Math.max(40, fl.via.length * 7.6 + 18);
+      g.append(el('rect', { x: -w / 2, y: -12, width: w, height: 24, rx: 12 }));
+      const t = el('text', { y: 4.5, 'text-anchor': 'middle' });
+      t.textContent = fl.via;
+      g.append(t);
+      g.addEventListener('click', () => pickFlow(fl.id, true));
+      g.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          pickFlow(fl.id, true);
+        }
+      });
+      chipEls.set(fl.id, g);
+      chipLayer.append(g);
+    }
     if (fl.label && fl.lx != null && fl.ly != null) {
       const t = el('text', { x: fl.lx, y: fl.ly, 'text-anchor': 'middle' }, 'hld-flow-label');
       t.textContent = fl.label;
@@ -69,7 +97,7 @@ export async function mountDesign(host: HTMLElement, design: Design): Promise<()
       labelLayer.append(t);
     }
   }
-  svg.append(flowLayer, labelLayer);
+  svg.append(flowLayer, hitLayer, labelLayer);
 
   const nodeEls = new Map<string, SVGGElement>();
   for (const c of design.components) {
@@ -78,6 +106,8 @@ export async function mountDesign(host: HTMLElement, design: Design): Promise<()
     const g = el('g', { transform: `translate(${c.x - w / 2},${c.y - hh / 2})`, tabindex: 0, role: 'button', 'aria-pressed': 'false', 'aria-label': `${c.name}. ${c.tech}. Show details.` }, `hld-node kind-${c.kind}`);
     g.append(el('rect', { width: w, height: hh, rx: c.kind === 'input' ? 27 : 10 }, 'hld-box'));
     if (c.kind === 'store') g.append(el('path', { d: `M10,${hh - 7} H${w - 10}` }, 'hld-shelf'));
+    // A log is drawn as a row of segments along its lower edge: messages in order.
+    if (c.kind === 'queue') g.append(el('path', { d: Array.from({ length: 9 }, (_, i) => `M${18 + i * ((w - 36) / 8)},${hh - 12} v7`).join(' ') }, 'hld-shelf'));
     const top = c.lines ? 26 : hh / 2 - 3;
     const name = el('text', { x: w / 2, y: top, 'text-anchor': 'middle' }, 'hld-name');
     name.textContent = c.name;
@@ -101,6 +131,8 @@ export async function mountDesign(host: HTMLElement, design: Design): Promise<()
     svg.append(g);
   }
 
+  svg.append(chipLayer);
+
   // The thing being followed: one URL, drawn in the colour this site keeps for the followed key.
   const token = el('g', { 'aria-hidden': 'true' }, 'hld-token');
   const tokenBox = el('rect', { y: -13, height: 26, rx: 13 });
@@ -115,8 +147,9 @@ export async function mountDesign(host: HTMLElement, design: Design): Promise<()
   // ---- tour bar ----------------------------------------------------------------
   const stepTitle = h('h2.hld-step-title', null, 'Take the tour, or open any box');
   const stepText = h('p.hld-step-text', null, design.blurb);
+  const stepVia = h('p.hld-step-via', null);
   const status = h('p.visually-hidden', { role: 'status', 'aria-live': 'polite' });
-  const readout = h('div.hld-readout', null, stepTitle, stepText, status);
+  const readout = h('div.hld-readout', null, stepTitle, stepText, stepVia, status);
 
   const playLabel = h('span', null, 'Play the tour');
   const btn = (name: keyof typeof ICON, label: string, fn: () => void) => h('button.hld-icon', { type: 'button', 'aria-label': label, title: label, onclick: fn }, icon(name));
@@ -146,7 +179,17 @@ export async function mountDesign(host: HTMLElement, design: Design): Promise<()
   const detailBody = h('div.hld-detail-body', null);
   const detail = h('section.hld-detail', { 'aria-label': 'Component details', tabIndex: -1 }, h('h2', null, 'Components'), index, detailBody);
 
-  const stage = h('section.hld', { 'aria-label': 'Interactive design diagram' }, readout, transport, canvas);
+  const sample = (mode: string) => {
+    const s2 = el('svg', { viewBox: '0 0 44 12', width: 44, height: 12, 'aria-hidden': 'true' });
+    s2.append(el('path', { d: 'M2,6 H42' }, `hld-flow mode-${mode} sample`));
+    return s2;
+  };
+  const legend = h(
+    'ul.hld-legend', { 'aria-label': 'How the parts talk' },
+    MODES.map((m) => h('li', { title: m.note }, sample(m.id), h('span', null, m.label))),
+  );
+
+  const stage = h('section.hld', { 'aria-label': 'Interactive design diagram' }, readout, transport, canvas, legend);
 
   // ---- written sections ------------------------------------------------------------
   const list = (items: string[]) => h('ul', null, items.map((t) => h('li', null, t)));
@@ -172,8 +215,29 @@ export async function mountDesign(host: HTMLElement, design: Design): Promise<()
       h('div.hld-framings', null, design.framings.map((x) => h('div', null, h('h3', null, x.name), h('p.hld-scale', null, x.scale), h('p', null, x.shape)))),
     ),
     h('section.note.wide', null, h('h2', null, 'Decisions worth defending'), table(['Choice', 'One way', 'The other way', 'The call here'], design.decisions.map((d) => [d.choice, d.a, d.b, d.call]), 'hld-table')),
+    h(
+      'section.note.wide', null,
+      h('h2', null, 'How the parts talk'),
+      h('p.hld-lead', null, 'Inside a node everything is a function call, so the decisions that must be fast and exact never cross the network. Between nodes it is a log. To the outside world it is HTTPS with deadlines.'),
+      table(
+        ['Connection', 'Method', 'Kind', 'Delivery'],
+        design.flows.map((x) => [`${nameOf(x.from)} to ${nameOf(x.to)}`, x.via, MODES.find((m) => m.id === x.mode)!.label, x.delivery]),
+        'hld-table',
+      ),
+    ),
     h('section.note.wide', null, h('h2', null, 'Failure drills'), h('dl.hld-drills', null, design.drills.flatMap((d) => [h('dt', null, d.name), h('dd', null, d.what)]))),
     h('section.note.wide.interview', null, h('h2', null, 'Say this in the interview'), list(design.interview)),
+    h(
+      'section.note.wide', { id: 'glossary' },
+      h('h2', null, 'Glossary'),
+      h(
+        'dl.hld-glossary', null,
+        design.glossary.flatMap((g) => [
+          h('dt', { id: `term-${slug(g.term)}` }, g.term),
+          h('dd', null, g.text, g.where ? [' ', h('button.hld-where', { type: 'button', onclick: () => select(g.where!, true, true) }, `See ${nameOf(g.where)}`)] : null),
+        ]),
+      ),
+    ),
     h(
       'section.note.wide', null,
       h('h2', null, 'Sources'),
@@ -189,13 +253,14 @@ export async function mountDesign(host: HTMLElement, design: Design): Promise<()
   let playing = false;
   let speed = 1;
   let selected: string | null = null;
+  let picked: string | null = null;
   let raf = 0;
   let timer = 0;
   let alive = true;
 
   function renderDetail(c: Component | null): void {
     if (!c) {
-      detailBody.replaceChildren(h('p.hld-hint', null, 'Select a box in the diagram, or a name above, to see what it does, why it is separate, how it fails and what you could use instead.'));
+      detailBody.replaceChildren(h('p.hld-hint', null, 'Select a box in the diagram, or a name above, to see what it does, why it is separate, how it fails and what you could use instead. Select a label on a line to see how two parts talk.'));
       return;
     }
     const alt = (a: Component['alternatives'][number]) =>
@@ -226,9 +291,42 @@ export async function mountDesign(host: HTMLElement, design: Design): Promise<()
     );
   }
 
-  function select(id: string | null, fromDiagram: boolean): void {
+  function renderFlow(fl: Flow): void {
+    const mode = MODES.find((m) => m.id === fl.mode)!;
+    detailBody.replaceChildren(
+      h('div.hld-detail-head', null, h('h3', null, `${nameOf(fl.from)} to ${nameOf(fl.to)}`), h('p.hld-detail-tech', null, `${fl.via}, ${mode.label.toLowerCase()}`)),
+      h(
+        'div.hld-detail-grid', null,
+        h(
+          'div', null,
+          h('h4', null, 'How they talk'), h('p', null, fl.how),
+          h('h4', null, 'What is promised'), h('p', null, fl.delivery),
+          h('h4', null, `About a ${mode.label.toLowerCase()}`), h('p', null, mode.note),
+        ),
+        h('div', null, h('h4', null, 'Other ways to connect them'), h('ul.hld-alts', null, fl.alts.map((a) => h('li', null, h('p', null, a))))),
+      ),
+    );
+  }
+
+  function pickFlow(id: string, reveal: boolean): void {
     if (playing) pause();
-    selected = selected === id ? null : id;
+    picked = picked === id ? null : id;
+    selected = null;
+    for (const [, g] of nodeEls) {
+      g.classList.remove('selected');
+      g.setAttribute('aria-pressed', 'false');
+    }
+    for (const [, b] of indexBtns) b.setAttribute('aria-pressed', 'false');
+    paintFlows();
+    if (picked) renderFlow(flowById.get(picked)!);
+    else renderDetail(null);
+    if (picked && reveal) detail.scrollIntoView({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
+  }
+
+  function select(id: string | null, fromDiagram: boolean, force = false): void {
+    if (playing) pause();
+    picked = null;
+    selected = selected === id && !force ? null : id;
     for (const [nid, g] of nodeEls) {
       g.classList.toggle('selected', nid === selected);
       g.setAttribute('aria-pressed', String(nid === selected));
@@ -247,12 +345,19 @@ export async function mountDesign(host: HTMLElement, design: Design): Promise<()
     for (const fl of design.flows) {
       const p = flowEls.get(fl.id)!;
       const linked = selected != null && (fl.from === selected || fl.to === selected);
+      const on = fl.id === picked;
       p.classList.toggle('live', live.has(fl.id));
-      p.classList.toggle('linked', linked && !live.has(fl.id));
+      p.classList.toggle('linked', (linked || on) && !live.has(fl.id));
+      const chip = chipEls.get(fl.id);
+      if (chip) {
+        chip.classList.toggle('live', live.has(fl.id));
+        chip.classList.toggle('picked', on);
+        chip.setAttribute('aria-pressed', String(on));
+      }
     }
     for (const t of Array.from(labelLayer.children) as SVGTextElement[]) {
       const fl = flowById.get(t.dataset.flow!) as Flow;
-      t.classList.toggle('live', live.has(fl.id) || (selected != null && (fl.from === selected || fl.to === selected)));
+      t.classList.toggle('live', live.has(fl.id) || fl.id === picked || (selected != null && (fl.from === selected || fl.to === selected)));
     }
   }
 
@@ -262,6 +367,11 @@ export async function mountDesign(host: HTMLElement, design: Design): Promise<()
     stepTitle.textContent = s ? s.title : 'Take the tour, or open any box';
     stepText.textContent = s ? s.text : design.blurb;
     counter.textContent = inTour ? `Step ${step + 1} of ${design.tour.length}` : `${design.tour.length} steps`;
+    const ways = [...new Set((s?.path ?? []).map((p) => flowById.get(p.replace(/^</, ''))!).map((x) => {
+      const kind = MODES.find((m) => m.id === x.mode)!.label.toLowerCase();
+      return kind.startsWith(x.via.toLowerCase()) ? kind : `${x.via} (${kind})`;
+    }))];
+    stepVia.replaceChildren(...(ways.length ? [h('span.hld-k', null, 'Travels by: '), ways.join(', then ')] : []));
     const focus = new Set(s?.focus ?? []);
     for (const [id, g] of nodeEls) {
       g.classList.toggle('lit', focus.has(id));
@@ -412,12 +522,36 @@ export async function mountDesign(host: HTMLElement, design: Design): Promise<()
       toggle();
     } else if (e.key === 'Escape' && selected) {
       select(selected, false);
+    } else if (e.key === 'Escape' && picked) {
+      pickFlow(picked, false);
     }
   };
   document.addEventListener('keydown', onKey);
 
+  // Chips sit on their lines; the browser knows where a point part-way along a path is.
+  for (const fl of design.flows) {
+    const chip = chipEls.get(fl.id);
+    if (!chip) continue;
+    const path = flowEls.get(fl.id)!;
+    const pt = path.getPointAtLength(path.getTotalLength() * fl.chip!);
+    chip.setAttribute('transform', `translate(${pt.x.toFixed(1)},${pt.y.toFixed(1)})`);
+  }
+
   renderDetail(null);
   sync();
+
+  // A link from search can open a box, a connection or a glossary term.
+  if (open) {
+    requestAnimationFrame(() => {
+      if (open.kind === 'c' && byId.has(open.id)) select(open.id, true, true);
+      else if (open.kind === 'f' && flowById.has(open.id)) pickFlow(open.id, true);
+      else if (open.kind === 'g') {
+        const term = document.getElementById(`term-${open.id}`);
+        term?.classList.add('found');
+        term?.scrollIntoView({ block: 'center' });
+      }
+    });
+  }
 
   return () => {
     alive = false;
