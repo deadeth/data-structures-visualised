@@ -9,10 +9,10 @@
 }
 
 .hld-readout {
-  padding: 14px 20px 16px;
+  padding: 14px 20px 14px;
   background: var(--ink);
   color: #fff;
-  min-height: 6.6rem;
+  min-height: 8.2rem;
 }
 
 .hld-step-title {
@@ -170,8 +170,175 @@
   marker-end: url(#hld-arrow);
 }
 
-.hld-flow.dashed {
-  stroke-dasharray: 5 5;
+/* One line style per way of talking. The legend under the diagram names them. */
+.hld-flow.mode-local {
+  stroke: #8493a8;
+  stroke-width: 1.4;
+}
+
+.hld-flow.mode-call {
+  stroke: var(--ink-2);
+  stroke-width: 1.9;
+}
+
+.hld-flow.mode-async {
+  stroke: var(--ink);
+  stroke-width: 2.3;
+  stroke-dasharray: 9 5;
+}
+
+.hld-flow.mode-write {
+  stroke: var(--ink-2);
+  stroke-width: 1.9;
+  stroke-dasharray: 14 4 2 4;
+}
+
+.hld-flow.mode-external {
+  stroke: var(--ink);
+  stroke-width: 2.3;
+  stroke-dasharray: 1 6;
+  stroke-linecap: round;
+}
+
+.hld-flow.sample {
+  marker-end: none;
+}
+
+.hld-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 18;
+  cursor: pointer;
+}
+
+/* The method, written on the line. Dark chips are logs and queues, which are the asynchronous hops. */
+.hld-chip {
+  cursor: pointer;
+  outline: none;
+}
+
+.hld-chip rect {
+  fill: var(--surface);
+  stroke: var(--ink);
+  stroke-width: 1.4;
+}
+
+.hld-chip text {
+  font-size: 13px;
+  font-weight: 650;
+  fill: var(--ink);
+}
+
+.hld-chip.mode-local rect {
+  fill: #eef1f6;
+  stroke: #8493a8;
+}
+
+.hld-chip.mode-local text {
+  fill: var(--ink-2);
+}
+
+.hld-chip.mode-async rect {
+  fill: var(--ink);
+}
+
+.hld-chip.mode-async text {
+  fill: #fff;
+}
+
+.hld-chip.mode-write rect {
+  stroke-width: 2.6;
+}
+
+.hld-chip.mode-external rect {
+  stroke-dasharray: 3 3;
+}
+
+.hld-chip:hover rect {
+  stroke-width: 2.8;
+}
+
+.hld-chip.live rect {
+  stroke: var(--path);
+  stroke-width: 3;
+  stroke-dasharray: none;
+}
+
+.hld-chip.picked rect {
+  stroke: var(--ink);
+  stroke-width: 3.6;
+  stroke-dasharray: none;
+}
+
+.hld-chip:focus-visible rect {
+  stroke: var(--path);
+  stroke-width: 4;
+  stroke-dasharray: none;
+}
+
+.hld-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 26px;
+  margin: 0;
+  padding: 12px 20px 14px;
+  list-style: none;
+  border-top: 1px solid var(--rule);
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+
+.hld-legend li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.hld-step-via {
+  margin-top: 8px;
+  min-height: 1.4em;
+  font-size: 0.93rem;
+  color: #d6deea;
+}
+
+.hld-lead {
+  margin-bottom: 14px;
+  max-width: 78ch;
+  color: var(--ink-2);
+}
+
+.hld-glossary {
+  display: grid;
+  grid-template-columns: minmax(12ch, 22ch) minmax(0, 1fr);
+  gap: 12px 24px;
+}
+
+.hld-glossary dt {
+  font-weight: 700;
+  scroll-margin-top: 90px;
+}
+
+.hld-glossary dt.found {
+  box-shadow: inset 4px 0 0 var(--ink);
+  padding-left: 10px;
+}
+
+.hld-glossary dd {
+  max-width: 80ch;
+  line-height: 1.5;
+}
+
+.hld-where {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .hld-head {
@@ -188,7 +355,7 @@
 
 .hld-flow.linked {
   stroke: var(--ink);
-  stroke-width: 2.2;
+  stroke-width: 3;
   marker-end: url(#hld-arrow-linked);
 }
 
@@ -196,6 +363,7 @@
   stroke: var(--path);
   stroke-width: 2.8;
   stroke-dasharray: 9 7;
+  stroke-linecap: butt;
   marker-end: url(#hld-arrow-live);
   animation: hld-march 0.9s linear infinite;
 }
@@ -505,8 +673,17 @@
 @media (max-width: 899px) {
   .hld-detail-grid,
   .hld-framings,
-  .hld-drills {
+  .hld-drills,
+  .hld-glossary {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hld-glossary {
+    gap: 4px;
+  }
+
+  .hld-glossary dd {
+    margin-bottom: 12px;
   }
 
   .hld-drills dd {
@@ -518,7 +695,7 @@
   }
 
   .hld-readout {
-    min-height: 9.5rem;
+    min-height: 13rem;
   }
 
   .hld-detail-body {
