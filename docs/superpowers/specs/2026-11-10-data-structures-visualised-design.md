@@ -46,3 +46,11 @@ What it is, what to watch, cost of each operation (average and worst), space, wh
 ## Testing
 
 Each structure has invariant tests under random operations against a simple model, checks that counters agree with recording on and off, and a run of its seed and tour. `npm run shot` screenshots every tour step for visual checks.
+
+## Example code (added 2026-11-10)
+
+Each structure keeps one real, runnable file per language (Python and Java) under `src/structures/<id>/code/`. Comments mark regions (one per operation and helper) and anchors (named lines). An operation lists the regions to show; each frame names the anchors it is executing; the side panel highlights those lines. The side panel shows either the step log or the code, chosen with a Steps/Code switch that is remembered, with a Python/Java switch beside it. The listing must be the same algorithm as the animation, step for step. `src/core/code-contract.test.ts` checks that every operation has both listings, that they carry the same anchors, and that every frame names lines that exist.
+
+## Simpler structures (added 2026-11-10)
+
+Stack (array with a top index, doubling growth), Queue (linked list with head and tail) and Priority queue (sorted array with binary-search insertion, pointing to the binary heap page for the faster version) join the Foundations group.
