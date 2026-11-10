@@ -419,7 +419,7 @@ export function dijkstra(s: GraphState, from: number, to: number, rec: Rec): { p
         run.parent[v] = u;
         run.parentEdge[v] = link.edge;
         heapPush(run.frontier, { node: v, from: u, edge: link.edge, d: cand });
-        rec.compare(cand, '<', cur === Infinity ? '∞' : cur, `shorter, update`, {
+        rec.compare(`${V} via ${U}: ${cand}`, '<', cur === Infinity ? '∞' : cur, `shorter, update`, {
           probe,
           message:
             cur === Infinity
@@ -429,7 +429,7 @@ export function dijkstra(s: GraphState, from: number, to: number, rec: Rec): { p
         if (old >= 0) rec.markEdge(s.edges[old].id, 'dim');
         rec.markEdge(edge.id, 'path');
       } else {
-        rec.compare(cand, '≥', cur, `no better, skip`, {
+        rec.compare(`${V} via ${U}: ${cand}`, '≥', cur, `no better, skip`, {
           probe,
           message: `Through ${U}, ${V} would cost ${top.d} + ${link.w} = ${cand}. No better than ${cur}, skip.`,
         });

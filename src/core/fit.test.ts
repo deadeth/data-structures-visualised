@@ -34,7 +34,22 @@ describe('fitting a scene into the canvas', () => {
 
   it('keeps the canvas height within its limits', () => {
     expect(neededHeight([row(3)], 390, true, 220, 500)).toBe(220);
-    const tall: Scene = { nodes: Array.from({ length: 20 }, (_, i) => ({ id: `t${i}`, x: 0, y: i * 80, cells: [{ text: 'x' }] })), edges: [] };
+    // Taller than the cap at the width's scale, but it fits the cap at the minimum scale: capped.
+    const tall: Scene = { nodes: Array.from({ length: 7 }, (_, i) => ({ id: `t${i}`, x: 0, y: i * 80, cells: [{ text: 'x' }] })), edges: [] };
     expect(neededHeight([tall], 390, true, 220, 500)).toBe(500);
+    expect(fitScene(sceneBounds(tall), 390, 500).s).toBeGreaterThanOrEqual(MIN_SCALE);
+  });
+
+  it('never lets the height take the scale below the minimum (a phone held sideways)', () => {
+    const tall: Scene = { nodes: Array.from({ length: 20 }, (_, i) => ({ id: `t${i}`, x: 0, y: i * 80, cells: [{ text: 'x' }] })), edges: [] };
+    const b = sceneBounds(tall)!;
+    // The cap would squeeze it, so the canvas is as tall as the scene needs at the minimum scale.
+    const h = neededHeight([tall], 844, true, 220, 273);
+    expect(h).toBe(Math.ceil(b.bh * MIN_SCALE + FIT_PAD * 2));
+    expect(fitScene(b, 844, h).s).toBe(MIN_SCALE);
+    // Even a canvas that is too short is never drawn below the minimum: the drawing is taller instead.
+    const f = fitScene(b, 844, 273);
+    expect(f.s).toBe(MIN_SCALE);
+    expect(f.h).toBeGreaterThan(273);
   });
 });

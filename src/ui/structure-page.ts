@@ -1,20 +1,10 @@
 import { entry, loadStructure } from '../catalog';
-import { figures, h, scrollRegion } from '../core/dom';
+import { costHtml, figures, h, maths, scrollRegion, tableRoles } from '../core/dom';
 import { Recorder } from '../core/recorder';
 import type { ArgDef, Frame, OpDef, StructureDef } from '../core/types';
 import { Stage } from './stage';
 
 const FILL_COUNT = 8;
-
-/** Turn "log_B n" into "log<sub>B</sub> n". Input is our own content, never user text. */
-function maths(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/_(\w)/g, '<sub>$1</sub>')
-    // A big-O never breaks across lines; the words after it may.
-    .replace(/O\((?:[^()]|\([^()]*\))*\)/g, '<span class="big-o">$&</span>');
-}
 
 function parseArg(def: ArgDef, raw: string): { value?: number | string; error?: string } {
   const text = raw.trim();
@@ -101,14 +91,32 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
     refreshFacts();
   };
 
-  const runOp = async (op: OpDef<unknown>, args: (number | string)[]): Promise<void> => {
+  /**
+   * Once an operation is on the stage, bring the readout, the canvas and the
+   * transport into view. If that leaves keyboard focus on an operation button
+   * that is no longer wholly on screen, move it to the play button, so Tab carries on
+   * from the stage instead of jumping the page back up.
+   */
+  const reveal = () => {
+    void stage.reveal().then(() => {
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement) || !opsBar.contains(active) || active.tagName !== 'BUTTON') return;
+      const r = active.getBoundingClientRect();
+      // Not wholly on screen: the next Tab would scroll the page back up to it.
+      if (r.top < 0 || r.bottom > window.innerHeight) stage.focusPlay();
+    });
+  };
+
+  const runOp = async (op: OpDef<unknown>, args: (number | string)[], show: boolean): Promise<void> => {
     stage.finish();
     const token = ++runToken;
     const rec = new Recorder(state, def.layout, true);
     op.run(state, args, rec);
     let frames: Frame[] = rec.frames;
     if (!frames.length) frames = [{ scene: def.layout(state), message: `${op.label} finished.`, counters: { ...rec.counters } }];
-    await stage.play(frames);
+    const done = stage.play(frames);
+    if (show) reveal();
+    await done;
     if (token === runToken) refreshFacts();
   };
 
@@ -169,8 +177,7 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
         }
         args.push(parsed.value!);
       }
-      stage.reveal();
-      void runOp(op, args);
+      void runOp(op, args, true);
     };
     const buttons = group.ops.map((op) =>
       h(`button.btn.${op.intent ?? 'neutral'}`, { type: 'button', onclick: () => go(op) }, op.label),
@@ -199,14 +206,16 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
     clearError();
     seed();
     rest('Starting the tour from the original contents.');
-    stage.reveal();
     touring = true;
     tourBtn.textContent = 'Stop the tour';
+    let first = true;
     for (const [opId, ...args] of def.tour) {
       if (!touring) return;
       const op = def.ops.find((o) => o.id === opId) as OpDef<unknown> | undefined;
       if (!op) continue;
-      await runOp(op, args);
+      // Keep each step in view, unless the reader has scrolled away from the stage altogether.
+      await runOp(op, args, first || stage.onScreen);
+      first = false;
       if (!touring) return;
       await new Promise((r) => setTimeout(r, 900 / stage.speed));
     }
@@ -258,6 +267,10 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
       },
       p.options.map((o) => h('option', { value: String(o.value), selected: o.value === p.default }, o.label)),
     );
+    // As wide as the chosen option, not the longest one: "1" should not sit in a box sized for "3 (virtual nodes)".
+    const fitSelect = () => select.style.setProperty('--chars', String(select.selectedOptions[0]?.textContent?.length ?? 2));
+    select.addEventListener('change', fitSelect);
+    fitSelect();
     tools.append(h('label.field.param', null, h('span', null, p.label), select));
   }
 
@@ -269,7 +282,8 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
       tour: def.tour,
       run(opId: string, args: (number | string)[]): number {
         const op = def.ops.find((o) => o.id === opId) as OpDef<unknown>;
-        void runOp(op, args);
+        // Starts the way a click does, including bringing the stage into view.
+        void runOp(op, args, true);
         stage.pause();
         return stage.length;
       },
@@ -290,7 +304,7 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
         h('h2', null, 'Cost of each operation'),
         scrollRegion(h(
           'div.table-wrap', null,
-          h(
+          tableRoles(h(
             'table.complexity.stack', null,
             h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'Operation'), h('th', { scope: 'col' }, 'Average'), h('th', { scope: 'col' }, 'Worst case'), h('th', { scope: 'col' }, 'Why'))),
             h(
@@ -299,13 +313,13 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
                 h(
                   'tr', null,
                   h('th', { scope: 'row' }, r.op),
-                  h('td.num', { 'data-label': 'Average', html: maths(r.average) }),
-                  h('td.num', { 'data-label': 'Worst case', html: maths(r.worst) }),
+                  h('td.num', { 'data-label': 'Average', html: costHtml(r.average) }),
+                  h('td.num', { 'data-label': 'Worst case', html: costHtml(r.worst) }),
                   h('td', { 'data-label': 'Why' }, r.note ?? ''),
                 ),
               ),
             ),
-          ),
+          )),
         ), 'Cost of each operation'),
         h('p.space', null, h('strong', null, 'Space: '), h('span', { html: maths(info.space) })),
       ),

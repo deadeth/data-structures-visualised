@@ -201,7 +201,7 @@ main {
 /* ---- page heads -------------------------------------------------------- */
 
 .page-head {
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
 h1 {
@@ -240,7 +240,7 @@ h1 {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .ops {
@@ -305,6 +305,11 @@ h1 {
 .field select {
   font-family: var(--sans);
   padding-right: 6px;
+}
+
+/* A parameter's select is as wide as its chosen option (the page sets --chars), plus room for the arrow. */
+.field.param select {
+  width: calc(var(--chars, 4) * 0.56em + 42px);
 }
 
 .field input::placeholder {
@@ -386,9 +391,9 @@ h1 {
   font-weight: 600;
   font-size: 0.93rem;
   /* The line is always reserved, so an error appearing does not push the stage down. */
-  min-height: 1.5em;
-  line-height: 1.5;
-  margin: 2px 0 4px;
+  min-height: 1.35em;
+  line-height: 1.35;
+  margin: 1px 0 0;
 }
 
 /* ---- stage ------------------------------------------------------------- */
@@ -398,34 +403,38 @@ h1 {
  * until there is room for the log beside the canvas.
  */
 .stage {
-  /* Tall enough to read, short enough that the transport stays on screen on a laptop. */
-  --canvas-h: clamp(330px, calc(100vh - 515px), 560px);
+  /*
+   * Tall enough to read, short enough that on a laptop the readout, the canvas
+   * and the transport fit on screen together once an operation has started.
+   */
+  --canvas-h: clamp(300px, calc(100vh - 480px), 560px);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: var(--radius);
-  overflow: hidden;
+  /* clip, not hidden: hidden would make the stage the scroll box the transport sticks to. */
+  overflow: clip;
   position: relative;
 }
 
+/*
+ * One composition at every width: the chips on a row of their own, then the
+ * sentence under them, both from the same left edge. Nothing moves sideways
+ * between steps.
+ */
 .readout {
+  --cmp-size: 1.7rem;
   position: relative;
-  display: grid;
-  grid-template-columns: var(--cmp-w, auto) minmax(0, 1fr);
-  gap: 6px 28px;
-  align-items: center;
-  padding: 14px 20px;
-  min-height: 86px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 20px;
   background: var(--ink);
   color: #fff;
 }
 
-/* Before any operation there is no key: the sentence starts at the left padding. */
-.readout.at-rest {
-  grid-template-columns: minmax(0, 1fr);
-}
-
+/* Before any operation there is no key: the sentence starts at the top padding. */
 .readout.at-rest .readout-cmp:not(.measure) {
   display: none;
 }
@@ -434,13 +443,15 @@ h1 {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 10px;
-  font: 700 1.7rem/1 var(--mono);
-  min-height: 44px;
+  gap: 0.36em;
+  height: 44px;
+  /* Shrunk for an operation whose widest comparison would not fit across (set by the stage). */
+  font: 700 calc(var(--cmp-size) * var(--cmp-fit, 1)) / 1 var(--mono);
   white-space: nowrap;
 }
 
 .readout-cmp.measure {
+  --cmp-fit: 1;
   position: absolute;
   left: 0;
   top: 0;
@@ -452,7 +463,7 @@ h1 {
 .cmp-key,
 .cmp-left,
 .cmp-other {
-  padding: 7px 12px;
+  padding: 0.26em 0.44em;
   border-radius: 999px;
 }
 
@@ -471,13 +482,13 @@ h1 {
 /* The left side of a comparison that is not the key itself (a hash, a distance, a balance). */
 .cmp-left {
   background: #24324a;
-  box-shadow: inset 0 0 0 1px #3d4f6e;
+  box-shadow: inset 0 0 0 1px #6b7d9c;
   color: #fff;
   border-radius: 8px;
 }
 
 .cmp-gap {
-  width: 6px;
+  width: 0.2em;
 }
 
 .cmp-other {
@@ -494,13 +505,24 @@ h1 {
   color: #d6deea;
   font-size: 1.04rem;
   line-height: 1.4;
-  max-width: 68ch;
+  max-width: 76ch;
+  /* Never more than three lines; the full text is in the step log and is what a screen reader hears. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
 }
 
 .readout-msg.verdict {
   color: #fff;
   font-weight: 650;
   font-size: 1.14rem;
+}
+
+.canvas-wrap {
+  position: relative;
+  min-width: 0;
 }
 
 .canvas {
@@ -520,6 +542,46 @@ h1 {
 .canvas:focus-visible {
   outline-offset: -3px;
   border-radius: 0;
+}
+
+/* More of the scene lies beyond a faded edge. */
+.canvas.more-right {
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), rgb(0 0 0 / 0.12));
+}
+
+.canvas.more-left {
+  mask-image: linear-gradient(to right, rgb(0 0 0 / 0.12), #000 28px);
+}
+
+.canvas.more-left.more-right {
+  mask-image: linear-gradient(to right, rgb(0 0 0 / 0.12), #000 28px, #000 calc(100% - 28px), rgb(0 0 0 / 0.12));
+}
+
+/*
+ * While a scrolling canvas has keyboard focus the arrows pan it, so say so:
+ * a line at the top of the transport, which is always in view with it and
+ * covers nothing in the scene.
+ */
+.pan-hint {
+  display: none;
+  flex: 1 1 100%;
+  margin-bottom: -4px;
+  font-size: 0.86rem;
+  color: var(--ink-2);
+}
+
+.stage:has(.canvas:focus-visible) .pan-hint {
+  display: block;
+}
+
+.pan-hint kbd {
+  font: 600 0.8rem var(--mono);
+  padding: 0 5px;
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #fafbfc;
+  color: var(--ink);
 }
 
 .stage.compact {
@@ -635,7 +697,7 @@ svg.scene {
   }
 
   .stage:not(.compact) > .readout { grid-area: readout; }
-  .stage:not(.compact) > .canvas { grid-area: canvas; }
+  .stage:not(.compact) > .canvas-wrap { grid-area: canvas; }
   .stage:not(.compact) > .transport { grid-area: transport; }
   .stage:not(.compact) > .shortcuts { grid-area: hint; }
   .stage:not(.compact) > .counters { grid-area: counters; }
@@ -672,13 +734,28 @@ svg.scene {
   }
 }
 
+/*
+ * During an operation the transport sticks to the bottom of the screen while
+ * the stage is taller than the room for it, so the controls stay in reach
+ * (the stage adds .stick once its readout is clear of the transport). It is
+ * held inside the stage, so at the stage's end it sits in its own place and
+ * covers nothing.
+ */
 .transport {
+  position: relative;
+  z-index: 2;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 12px 20px;
   padding: 12px 16px;
   border-top: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.stage.stick > .transport {
+  position: sticky;
+  bottom: 0;
 }
 
 .transport-nav {
@@ -933,11 +1010,19 @@ svg.scene {
   fill: var(--ink);
 }
 
+/*
+ * Labels are 14px in scene units, and grow as the scene is scaled down so they
+ * never render under 12 CSS px. The renderer sets --s to the current scale.
+ */
+.scene {
+  --label-size: max(14px, calc(12px / var(--s, 1)));
+}
+
 .cell-sub,
 .node-title,
 .node-caption {
   font-family: var(--sans) !important;
-  font-size: 14px;
+  font-size: var(--label-size);
   fill: var(--ink-2);
 }
 
@@ -970,8 +1055,16 @@ svg.scene {
 .cell.tone-ok { fill: var(--ok-soft); stroke: var(--ok); stroke-width: 2.5; }
 .cell.tone-bad { fill: var(--bad-soft); stroke: var(--bad); stroke-width: 2.5; }
 .cell.tone-key { fill: var(--key-soft); stroke: var(--key); stroke-width: 3; }
-.cell.tone-dim { fill: #f4f6f8; stroke: #cbd3dd; }
-.cell-text.tone-dim { fill: #64718a; }
+.cell.tone-dim { fill: #f4f6f8; stroke: #a9b4c3; }
+.cell-text.tone-dim { fill: #5f6c84; }
+
+/* An empty slot: a light dashed outline, nothing in it. */
+.cell.empty.tone-idle,
+.cell.empty.tone-dim {
+  fill: #fff;
+  stroke: #a9b4c3;
+  stroke-dasharray: 3 3;
+}
 
 /* Missed or removed is never red alone: the outline is dashed too. */
 .cell.tone-bad,
@@ -1001,12 +1094,12 @@ svg.scene {
 }
 
 .edge-line {
-  stroke: #9aa7b8;
+  stroke: #7d8ba0;
   stroke-width: 1.5;
 }
 
 .edge-head {
-  fill: #9aa7b8;
+  fill: #7d8ba0;
 }
 
 .edge.dashed .edge-line {
@@ -1023,9 +1116,13 @@ svg.scene {
 .edge.tone-compare .edge-head { fill: var(--compare); }
 .edge.tone-key .edge-line { stroke: var(--key); stroke-width: 3; }
 .edge.tone-key .edge-head { fill: var(--key); }
+/* Ruled out: a light line, but its label (a weight) stays readable. */
+.edge.tone-dim .edge-line { stroke: #c9d1db; }
+.edge.tone-dim .edge-head { fill: #c9d1db; }
+.edge.tone-dim .edge-label { fill: #5f6c84; }
 
 .edge-label {
-  font-size: 14px;
+  font-size: var(--label-size);
   font-weight: 650;
   fill: var(--ink-2);
   paint-order: stroke;
@@ -1040,12 +1137,12 @@ svg.scene {
 
 .probe text {
   fill: #fff;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 750;
 }
 
 .decor-ring {
-  stroke: #b3bfce;
+  stroke: #8493a8;
   stroke-width: 2;
 }
 
@@ -1056,7 +1153,7 @@ svg.scene {
 
 .decor-label {
   font-family: var(--sans) !important;
-  font-size: 14px;
+  font-size: var(--label-size);
   fill: var(--ink-2);
 }
 
@@ -1322,17 +1419,8 @@ td.num {
     --canvas-h: 340px;
   }
 
-  /* Chips above the sentence. The readout keeps one height through an operation so the canvas never jumps. */
-  .readout,
-  .readout.at-rest {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-  }
-
-  .readout-cmp {
-    font-size: 1.35rem;
-    min-height: 38px;
-    gap: 8px;
+  .readout {
+    --cmp-size: 1.35rem;
   }
 
   .readout-msg,
@@ -1403,12 +1491,14 @@ td.num {
   }
 
   /* Short values sit on the same line as their label. */
-  table.stack td.num {
+  table.stack td.num,
+  table.stack td.inline {
     white-space: normal;
     text-align: right;
   }
 
-  table.stack td.num::before {
+  table.stack td.num::before,
+  table.stack td.inline::before {
     display: inline;
     float: left;
     margin-right: 12px;
@@ -1416,7 +1506,8 @@ td.num {
     line-height: 1.6;
   }
 
-  table.stack td.num::after {
+  table.stack td.num::after,
+  table.stack td.inline::after {
     content: '';
     display: block;
     clear: both;
@@ -1440,6 +1531,8 @@ td.num {
   .cheat.stack .group-row th {
     padding: 0;
     background: none;
+    /* The band itself carries the rule; a second one inside it is noise. */
+    border-top: 0;
   }
 
   .complexity td:last-child,
@@ -1471,6 +1564,17 @@ td.num {
 
   .btn.quiet {
     height: 40px;
+    padding: 0 8px;
+  }
+
+  /* Tour, random keys and reset share one line on a phone. */
+  .tools {
+    gap: 4px 0;
+    margin-left: -8px;
+  }
+
+  .field.param {
+    margin-left: 8px;
   }
 
   .site-nav a,

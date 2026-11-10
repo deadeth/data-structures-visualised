@@ -1,17 +1,9 @@
 import { CATALOG, GROUPS, isReady, loadStructure } from '../catalog';
-import { h, scrollRegion } from '../core/dom';
+import { costHtml, h, scrollRegion, tableRoles } from '../core/dom';
 import { Recorder } from '../core/recorder';
 import type { OpDef } from '../core/types';
 import { Stage } from './stage';
 import { legend } from './structure-page';
-
-/** "O(1) amortised": the big-O never breaks across lines; the qualifier is set in the text face and may wrap. */
-function cost(text: string): (HTMLElement | string)[] {
-  const m = /^(O\([^)]*\),?)\s*(.*)$/.exec(text);
-  // A cost that is not a big-O ("Not supported") is words, so it is set in the text face.
-  if (!m) return [h('span.words', null, text)];
-  return m[2] ? [h('span.big-o', null, m[1]), ' ', h('span.qualifier', null, m[2])] : [h('span.big-o', null, m[1])];
-}
 
 /** Home: a live demo, then the cheat sheet. */
 export async function mountHome(host: HTMLElement): Promise<() => void> {
@@ -77,10 +69,10 @@ export async function mountHome(host: HTMLElement): Promise<() => void> {
         h(
           'tr', null,
           h('th', { scope: 'row' }, name),
-          h('td.num', { 'data-label': 'Lookup' }, cost(c.cheat.lookup)),
-          h('td.num', { 'data-label': 'Insert' }, cost(c.cheat.insert)),
-          h('td.num', { 'data-label': 'Delete' }, cost(c.cheat.remove)),
-          h('td', { 'data-label': 'Keeps order' }, c.cheat.ordered),
+          h('td.num', { 'data-label': 'Lookup', html: costHtml(c.cheat.lookup) }),
+          h('td.num', { 'data-label': 'Insert', html: costHtml(c.cheat.insert) }),
+          h('td.num', { 'data-label': 'Delete', html: costHtml(c.cheat.remove) }),
+          h('td.inline', { 'data-label': 'Keeps order' }, c.cheat.ordered),
           h('td', { 'data-label': 'Reach for it when' }, c.cheat.pick),
         ),
       );
@@ -92,7 +84,7 @@ export async function mountHome(host: HTMLElement): Promise<() => void> {
       'section.cheat-section', null,
       h('h2', null, 'Cheat sheet'),
       h('p', null, 'Costs are for n stored keys. Open a structure to see where the numbers come from.'),
-      scrollRegion(h('div.table-wrap', null, table), 'Cheat sheet'),
+      scrollRegion(h('div.table-wrap', null, tableRoles(table)), 'Cheat sheet'),
     ),
   );
 

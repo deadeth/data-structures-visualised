@@ -1,5 +1,5 @@
-import { PROBE_H, fitScene, neededHeight, sceneBounds, type Fit } from './fit';
-import { CELL_GAP, CELL_H, TRAY_PAD, cellCentre, cellWidth, circleRadius, nodeSize, slotX, CHAR_W } from './geometry';
+import { LABEL_MAX, PROBE_FONT, PROBE_H, SUB_ROOM, TITLE_ROOM, fitScene, neededHeight, overflowsWidth, probeWidth, sceneBounds, type Fit } from './fit';
+import { CELL_GAP, CELL_H, TRAY_PAD, cellCentre, cellWidth, circleRadius, nodeSize, slotX } from './geometry';
 import type { Decor, Frame, Probe, SceneEdge, SceneNode } from './types';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -40,7 +40,21 @@ interface LiveEdge {
 const FOLLOW_QUERY = '(max-width: 899px)';
 const MIN_FOLLOW_H = 220;
 
-const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+export interface RendererOptions {
+  /** Accessible name for the diagram. */
+  label?: string;
+  /**
+   * Height of everything that must share the screen with the canvas on a
+   * phone (readout, transport, margins), so the canvas is never planned
+   * taller than the room left for it.
+   */
+  reserve?: () => number;
+  /** Called when the canvas stops being a scroll region while it has focus. */
+  onRegionLost?: () => void;
+}
+
+const REGION_LABEL = 'Diagram, wider than the view. Left and right arrows scroll it; Space still plays.';
+
 const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
 
@@ -84,8 +98,16 @@ export class Renderer {
   private planned: Frame[] = [];
   private overflowing = false;
   private roRaf = 0;
+  /** Sideways scroll tween, driven by the same clock and easing as the nodes and the chip. */
+  private scrollFrom = 0;
+  private scrollTo: number | null = null;
+  private scrollSet = -1;
+  /** True for the first frame shown after plan(): with nothing to follow, it is framed on the scene's centre. */
+  private fresh = true;
+  private onScroll = () => this.syncFades();
 
-  constructor(private readonly host: HTMLElement, label = 'Animated diagram of the data structure') {
+  constructor(private readonly host: HTMLElement, private readonly opts: RendererOptions = {}) {
+    const label = opts.label ?? 'Animated diagram of the data structure';
     this.svg = el('svg', { role: 'img', 'aria-label': label }, 'scene');
     this.world = el('g');
     this.decorLayer = el('g', {}, 'decor');
@@ -94,7 +116,7 @@ export class Renderer {
     this.probeG = el('g', {}, 'probe');
     this.probeRect = el('rect', { height: PROBE_H, rx: PROBE_H / 2, y: -PROBE_H / 2 });
     this.probeTip = el('path');
-    this.probeText = el('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central' });
+    this.probeText = el('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': PROBE_FONT });
     this.probeG.append(this.probeTip, this.probeRect, this.probeText);
     this.probeG.style.opacity = '0';
     this.world.append(this.decorLayer, this.edgeLayer, this.nodeLayer, this.probeG);
@@ -108,6 +130,7 @@ export class Renderer {
       });
       this.ro.observe(host);
     }
+    host.addEventListener('scroll', this.onScroll, { passive: true });
     this.resize();
   }
 
@@ -115,6 +138,7 @@ export class Renderer {
     cancelAnimationFrame(this.raf);
     cancelAnimationFrame(this.roRaf);
     this.ro?.disconnect();
+    this.host.removeEventListener('scroll', this.onScroll);
     this.svg.remove();
   }
 
@@ -126,7 +150,11 @@ export class Renderer {
     this.w = w;
     this.h = h;
     // The height an operation needs depends on the width, so re-plan when the width changes.
-    if (widthChanged && this.planned.length && this.sizeCanvas()) return;
+    if (widthChanged && this.planned.length) {
+      const resized = this.sizeCanvas();
+      this.setRegion(this.planOverflows());
+      if (resized) return;
+    }
     if (this.last) {
       this.fitTo = this.computeFit(this.last);
       this.sizeSvg(this.fitTo);
@@ -147,6 +175,7 @@ export class Renderer {
    */
   plan(frames: Frame[]): void {
     this.planned = frames;
+    this.fresh = true;
     this.resetProbe();
     this.sizeCanvas();
     // Read the settled size now, so the first frame is fitted to it rather than to the old one.
@@ -156,6 +185,35 @@ export class Renderer {
       this.w = w;
       this.h = h;
     }
+    this.setRegion(this.planOverflows());
+  }
+
+  /** Whether any frame of the operation is wider than the canvas. Decided once, so the canvas does not flip between steps. */
+  private planOverflows(): boolean {
+    // Measured without the scrollbar's height, which only exists once it overflows.
+    const h = this.host.clientHeight + (this.overflowing ? this.host.offsetHeight - this.host.clientHeight : 0);
+    return this.planned.some((f) => overflowsWidth(sceneBounds(f.scene), this.w, h));
+  }
+
+  /**
+   * Make the canvas a named, focusable scroll region for the whole operation
+   * when any of its frames overflows, and an ordinary box when none does.
+   */
+  private setRegion(over: boolean): void {
+    if (over === this.overflowing) return;
+    this.overflowing = over;
+    const hadFocus = typeof document !== 'undefined' && document.activeElement === this.host;
+    if (over) {
+      this.host.setAttribute('tabindex', '0');
+      this.host.setAttribute('role', 'region');
+      this.host.setAttribute('aria-label', REGION_LABEL);
+    } else {
+      this.host.removeAttribute('tabindex');
+      this.host.removeAttribute('role');
+      this.host.removeAttribute('aria-label');
+    }
+    this.host.classList.toggle('overflowing', over);
+    if (!over && hadFocus) this.opts.onRegionLost?.();
   }
 
   /** Set the canvas height for the planned frames. Returns true if it changed (a resize will follow). */
@@ -166,7 +224,9 @@ export class Renderer {
     const w = this.host.clientWidth || this.w;
     const scenes = this.planned.map((f) => f.scene);
     if (follow) {
-      const maxH = Math.max(MIN_FOLLOW_H, Math.round(window.innerHeight * 0.7));
+      // As tall as the content, but leave room on screen for the readout and the transport.
+      const room = window.innerHeight - (this.opts.reserve?.() ?? 0);
+      const maxH = Math.max(MIN_FOLLOW_H, Math.round(Math.min(window.innerHeight * 0.7, room)));
       style.minHeight = '';
       style.height = `${neededHeight(scenes, w, true, MIN_FOLLOW_H, maxH)}px`;
     } else {
@@ -185,62 +245,83 @@ export class Renderer {
     this.probeG.style.opacity = '0';
   }
 
-  /** Give the SVG its drawn size, and make the canvas a named, focusable scroll region when it overflows. */
+  /** Give the SVG its drawn size. Wider than the canvas means it scrolls sideways. */
   private sizeSvg(f: Fit): void {
     // Within a pixel of the canvas counts as fitting: no scrollbar for a rounding error.
     const w = f.w > this.w + 1 ? f.w : this.w;
-    const h = this.h;
+    const h = f.h > this.h + 1 ? f.h : this.h;
     this.svg.style.width = `${w}px`;
     this.svg.style.height = `${h}px`;
     this.svg.setAttribute('viewBox', `0 0 ${w.toFixed(1)} ${h.toFixed(1)}`);
-    const over = w > this.w + 1;
-    if (over !== this.overflowing) {
-      this.overflowing = over;
-      if (over) {
-        this.host.setAttribute('tabindex', '0');
-        this.host.setAttribute('role', 'region');
-        this.host.setAttribute('aria-label', 'Diagram, wider than the screen. Scroll sideways to see all of it.');
-      } else {
-        this.host.removeAttribute('tabindex');
-        this.host.removeAttribute('role');
-        this.host.removeAttribute('aria-label');
-      }
-      this.host.classList.toggle('overflowing', over);
+  }
+
+  /** Fade whichever edge has more of the scene beyond it, so a scrolling canvas says so. */
+  private syncFades(): void {
+    const host = this.host;
+    const left = host.scrollLeft;
+    const more = host.scrollWidth - host.clientWidth;
+    host.classList.toggle('more-left', more > 1 && left > 1);
+    host.classList.toggle('more-right', more > 1 && left < more - 1);
+  }
+
+  /** Left and right edges, in canvas px of the drawn scene, of the nodes (or cells) whose tone passes the test. */
+  private span(frame: Frame, test: (tone: string | undefined) => boolean, f: Fit): { lo: number; hi: number } | null {
+    let lo = Infinity, hi = -Infinity;
+    for (const n of frame.scene.nodes) {
+      if (!(test(n.tone) || n.cells.some((c) => test(c.tone)))) continue;
+      const w = nodeSize(n).w;
+      lo = Math.min(lo, n.x - w / 2);
+      hi = Math.max(hi, n.x + w / 2);
     }
+    return isFinite(lo) ? { lo: f.tx + lo * f.s, hi: f.tx + hi * f.s } : null;
   }
 
   /**
-   * When the scene is wider than the canvas, scroll so that the probe (or,
-   * without one, whatever is highlighted) sits comfortably in view.
+   * Where the canvas should be scrolled to for this frame, or null to leave
+   * it. The probe stays comfortably in view; when it hops to somewhere that
+   * is out of view, and both ends of the hop fit in the view, the view centres
+   * on the hop so it is seen whole. The last frame of an operation shows the
+   * result (the nodes marked found or written). With nothing to follow, the
+   * first frame of an operation is framed on the scene's centre.
    */
-  private follow(frame: Frame): void {
-    if (!this.overflowing) return;
+  private scrollTarget(frame: Frame, oldX: number | null, newX: number | null): number | null {
     const f = this.fitTo;
-    let focusX: number | null = null;
-    const probe = frame.probe ? frame.scene.nodes.find((n) => n.id === frame.probe!.at) : undefined;
-    if (probe) {
-      focusX = probe.cells.length > 1 && frame.probe!.cell != null && probe.shape !== 'circle'
-        ? probe.x - nodeSize(probe).w / 2 + cellCentre(probe.cells, frame.probe!.cell)
-        : probe.x;
-    } else {
-      const hot = new Set(['compare', 'key', 'ok', 'bad']);
-      let lo = Infinity, hi = -Infinity;
-      for (const n of frame.scene.nodes) {
-        if (!(hot.has(n.tone ?? '') || n.cells.some((c) => hot.has(c.tone ?? '')))) continue;
-        const w = nodeSize(n).w;
-        lo = Math.min(lo, n.x - w / 2);
-        hi = Math.max(hi, n.x + w / 2);
-      }
-      if (isFinite(lo)) focusX = (lo + hi) / 2;
-    }
-    if (focusX == null) return;
-    const x = f.tx + focusX * f.s;
     const view = this.host.clientWidth;
+    const maxLeft = Math.max(0, f.w - view);
+    if (maxLeft <= 0) return 0;
     const left = this.host.scrollLeft;
     const margin = Math.min(120, view * 0.22);
-    if (x >= left + margin && x <= left + view - margin) return;
-    const target = Math.max(0, Math.min(f.w - view, x - view / 2));
-    this.host.scrollTo({ left: target, behavior: reducedMotion() ? 'auto' : 'smooth' });
+    const clamp = (x: number) => Math.round(Math.max(0, Math.min(maxLeft, x)));
+    const inView = (lo: number, hi: number, m: number) => lo >= left + m && hi <= left + view - m;
+
+    const isLast = this.planned.length > 1 && frame === this.planned[this.planned.length - 1];
+    if (isLast) {
+      const ok = this.span(frame, (t) => t === 'ok', f);
+      if (ok) {
+        // The result and the chip together.
+        let { lo, hi } = ok;
+        if (newX != null) {
+          lo = Math.min(lo, newX - 40);
+          hi = Math.max(hi, newX + 40);
+        }
+        if (inView(lo, hi, 12)) return null;
+        if (hi - lo <= view - 48) return clamp((lo + hi) / 2 - view / 2);
+        // Too wide to see whole: from its start, as far as the chip allows (the chip never leaves the view).
+        return clamp(newX == null ? lo - 24 : Math.max(lo - 24, newX + margin - view));
+      }
+    }
+    if (newX != null) {
+      if (inView(newX, newX, margin)) return null;
+      if (oldX != null && Math.abs(newX - oldX) <= view - margin * 2) return clamp((oldX + newX) / 2 - view / 2);
+      return clamp(newX - view / 2);
+    }
+    const hot = this.span(frame, (t) => t === 'compare' || t === 'key' || t === 'ok' || t === 'bad', f);
+    if (hot) {
+      if (inView(hot.lo, hot.hi, Math.min(margin, 24))) return null;
+      return clamp((hot.lo + hot.hi) / 2 - view / 2);
+    }
+    // Nothing to follow: frame the middle of the scene (the root, for a tree).
+    return this.fresh ? clamp((f.w - view) / 2) : null;
   }
 
   /** Show a frame, taking `ms` to get there. Zero jumps straight to it. */
@@ -264,7 +345,8 @@ export class Renderer {
       live.def = def;
       live.leaving = false;
       live.fx = live.x; live.fy = live.y; live.fo = live.o;
-      live.tx = def.x; live.ty = def.y; live.to = def.tone === 'dim' ? 0.45 : 1;
+      // Ruled-out nodes are quiet through their own colours, not through opacity on top of them.
+      live.tx = def.x; live.ty = def.y; live.to = 1;
       this.paintNode(live);
     }
     for (const [id, live] of this.nodes) {
@@ -290,7 +372,8 @@ export class Renderer {
       live.def = def;
       live.leaving = false;
       live.fo = live.o;
-      live.to = def.tone === 'dim' ? 0.3 : 1;
+      // Like nodes, a ruled-out edge is quiet through its colour (see .edge.tone-dim), so its label stays readable.
+      live.to = 1;
       live.g.setAttribute('class', `edge tone-${def.tone ?? 'idle'}${def.dashed ? ' dashed' : ''}`);
       if (def.label != null) {
         if (!live.label) {
@@ -311,6 +394,9 @@ export class Renderer {
     }
 
     this.paintDecor(scene.decor ?? []);
+    // Where the chip is now, in canvas px, before it is aimed at its new place.
+    const p = this.probe;
+    const oldX = p.shown && p.o > 0.5 ? this.fit.tx + p.x * this.fit.s : null;
     this.aimProbe(frame.probe);
 
     this.fitFrom = { ...this.fit };
@@ -320,7 +406,12 @@ export class Renderer {
       this.hasFit = true;
     }
     this.sizeSvg(this.fitTo);
-    this.follow(frame);
+    const newX = p.to > 0 ? this.fitTo.tx + p.tx * this.fitTo.s : null;
+    const target = this.overflowing ? this.scrollTarget(frame, oldX, newX) : null;
+    this.fresh = false;
+    this.scrollFrom = this.host.scrollLeft;
+    this.scrollTo = target != null && Math.abs(target - this.scrollFrom) >= 1 ? target : null;
+    this.scrollSet = this.scrollFrom;
 
     cancelAnimationFrame(this.raf);
     this.raf = 0;
@@ -345,6 +436,8 @@ export class Renderer {
   }
 
   private settle(): void {
+    this.scrollTo = null;
+    this.syncFades();
     for (const [id, live] of this.nodes) {
       if (live.leaving) {
         live.g.remove();
@@ -385,11 +478,22 @@ export class Renderer {
       h: this.fitTo.h,
     };
     this.applyFit();
+    if (this.scrollTo != null) {
+      // The reader took over (a swipe or the arrow keys): stop steering.
+      if (Math.abs(this.host.scrollLeft - this.scrollSet) > 2) this.scrollTo = null;
+      else {
+        this.host.scrollLeft = lerp(this.scrollFrom, this.scrollTo, k);
+        this.scrollSet = this.host.scrollLeft;
+      }
+    }
   }
 
   private applyFit(): void {
     const f = this.fit;
     this.world.setAttribute('transform', `translate(${f.tx.toFixed(2)},${f.ty.toFixed(2)}) scale(${f.s.toFixed(4)})`);
+    // Labels grow as the scale falls so they never render under 12 CSS px (see .scene label styles).
+    const s = Math.min(1, Math.max(0.5, f.s)).toFixed(3);
+    if (this.svg.style.getPropertyValue('--s') !== s) this.svg.style.setProperty('--s', s);
   }
 
   // ---- nodes --------------------------------------------------------------
@@ -432,7 +536,8 @@ export class Renderer {
       for (const c of cells) {
         const cw = cellWidth(c);
         const tone = c.tone ?? (multi ? 'idle' : def.tone ?? 'idle');
-        g.append(el('rect', { x, y: -CELL_H / 2, width: cw, height: CELL_H, rx: 6 }, `cell tone-${tone}`));
+        // An empty slot gets a light dashed outline (see .cell.empty).
+        g.append(el('rect', { x, y: -CELL_H / 2, width: cw, height: CELL_H, rx: 6 }, `cell tone-${tone}${c.text === '' ? ' empty' : ''}`));
         const t = el('text', { x: x + cw / 2, 'text-anchor': 'middle', 'dominant-baseline': 'central' }, `cell-text tone-${tone}`);
         t.textContent = c.text;
         g.append(t);
@@ -447,12 +552,13 @@ export class Renderer {
       if (anySub) below = h / 2 + 20;
     }
     if (def.title) {
-      const t = el('text', { y: -h / 2 - 8, 'text-anchor': 'middle' }, 'node-title');
+      const t = el('text', { y: -h / 2 - 7, 'text-anchor': 'middle' }, 'node-title');
       t.textContent = def.title;
       g.append(t);
     }
     if (def.caption) {
-      const t = el('text', { y: below + 14, 'text-anchor': 'middle' }, 'node-caption');
+      // Hangs from just under the node or its subs, so a larger label grows downwards, away from them.
+      const t = el('text', { y: below + 4, 'text-anchor': 'middle', 'dominant-baseline': 'hanging' }, 'node-caption');
       t.textContent = def.caption;
       g.append(t);
     }
@@ -536,18 +642,18 @@ export class Renderer {
       return;
     }
     const def = target.def;
-    const w = Math.max(34, probe.text.length * CHAR_W + 20);
+    const w = probeWidth(probe.text);
     const place = probe.place ?? 'above';
     let x = def.x;
     let y = def.y;
     const cellX = probe.cell != null && def.shape !== 'circle' ? def.x - target.w / 2 + cellCentre(def.cells, probe.cell) : def.x;
     if (place === 'above') {
       x = cellX;
-      y = def.y - target.h / 2 - PROBE_H / 2 - 9 - (def.title ? 16 : 0);
+      y = def.y - target.h / 2 - PROBE_H / 2 - 9 - (def.title ? TITLE_ROOM : 0);
     } else if (place === 'below') {
       x = cellX;
       const hasSub = def.cells.some((c) => c.sub);
-      y = def.y + target.h / 2 + PROBE_H / 2 + 9 + (hasSub ? 20 : 0) + (def.caption ? 16 : 0);
+      y = def.y + target.h / 2 + PROBE_H / 2 + 9 + (hasSub ? SUB_ROOM : 0) + (def.caption ? LABEL_MAX + 4 : 0);
     } else if (place === 'left') {
       x = def.x - target.w / 2 - w / 2 - 10;
     } else {

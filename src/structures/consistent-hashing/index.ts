@@ -257,11 +257,11 @@ function locate(s: RingState, pos: number, rec: Rec, probe: Probe): { point: Poi
     rec.count('reads');
     rec.mark(pid(p), 'compare');
     if (pos <= p.pos) {
-      rec.compare(`${pos}°`, '≤', `${p.pos}°`, `${p.server}'s point is at or after the key, so it could be the owner: look earlier for a closer one`, { probe });
+      rec.compare(`h(${probe.text}) = ${pos}°`, '≤', `${p.pos}°`, `${p.server}'s point is at or after the key, so it could be the owner: look earlier for a closer one`, { probe });
       hi = mid;
       rec.mark(pid(p), 'path');
     } else {
-      rec.compare(`${pos}°`, '>', `${p.pos}°`, `${p.server}'s point is behind the key, so the owner is later in the list`, { probe });
+      rec.compare(`h(${probe.text}) = ${pos}°`, '>', `${p.pos}°`, `${p.server}'s point is behind the key, so the owner is later in the list`, { probe });
       lo = mid + 1;
       rec.mark(pid(p), 'dim');
     }

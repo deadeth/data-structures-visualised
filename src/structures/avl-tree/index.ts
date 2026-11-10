@@ -223,18 +223,18 @@ function retrace(s: AvlState, path: AvlNode[], rec: Rec, what: 'insert' | 'delet
         rec.mark(nid(n), 'bad');
         rec.step(
           `At ${n.key} the left side is ${tall(ht(n.left))} and the right side is ${tall(ht(n.right))}: balance ${signed(b)}. A gap of two levels is not allowed, so ${n.key} must be rebalanced.`,
-          { compare: { left: `balance ${signed(b)}`, op: b > 1 ? '>' : '<', right: b > 1 ? '1' : '−1', verdict: `${n.key} is ${heavy}-heavy, rotate` } },
+          { compare: { left: `${n.key}: balance ${signed(b)}`, op: b > 1 ? '>' : '<', right: b > 1 ? '1' : '−1', verdict: `${n.key} is ${heavy}-heavy, rotate` } },
         );
         rec.mark(nid(y), 'compare');
         if (zigzag) {
           rec.step(
             `The extra height is on the inside: ${n.key} leans ${heavy}, but its ${heavy} child ${y.key} leans ${away}. One rotation would only tip this zig-zag the other way, so it takes two.`,
-            { compare: { left: `balance ${signed(by)}`, op: heavy === 'left' ? '<' : '>', right: '0', verdict: `${heavy}-${away} case: rotate ${heavy}, then ${away}` } },
+            { compare: { left: `${y.key}: balance ${signed(by)}`, op: heavy === 'left' ? '<' : '>', right: '0', verdict: `${heavy}-${away} case: rotate ${heavy}, then ${away}` } },
           );
         } else {
           rec.step(
             `The extra height is on the outside: ${n.key}'s ${heavy} child ${y.key} ${by === 0 ? `does not lean ${away}` : `leans ${heavy} as well`}. A straight ${heavy}-${heavy} line like this needs one ${away} rotation.`,
-            { compare: { left: `balance ${signed(by)}`, op: heavy === 'left' ? '≥' : '≤', right: '0', verdict: `${heavy}-${heavy} case: one ${away} rotation` } },
+            { compare: { left: `${y.key}: balance ${signed(by)}`, op: heavy === 'left' ? '≥' : '≤', right: '0', verdict: `${heavy}-${heavy} case: one ${away} rotation` } },
           );
         }
       }
@@ -304,7 +304,7 @@ function retrace(s: AvlState, path: AvlNode[], rec: Rec, what: 'insert' | 'delet
         tail = ` It is now one level ${grew ? 'taller' : 'shorter'}, so check its parent too.`;
         verdict = `${n.key} is balanced but ${grew ? 'taller' : 'shorter'}, check its parent`;
       }
-      const cmp: Compare = { left: `balance ${signed(b)}`, op: b < 0 ? '≥' : '≤', right: b < 0 ? '−1' : '1', verdict };
+      const cmp: Compare = { left: `${n.key}: balance ${signed(b)}`, op: b < 0 ? '≥' : '≤', right: b < 0 ? '−1' : '1', verdict };
       rec.mark(nid(n), 'compare');
       rec.step(
         `At ${n.key} the left side is ${tall(ht(n.left))} and the right side is ${tall(ht(n.right))}: balance ${signed(b)}, within the allowed −1 to +1.${tail}`,

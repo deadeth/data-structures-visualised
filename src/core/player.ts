@@ -1,4 +1,4 @@
-import { REWIND_MS, manualTweenMs, playTweenMs, stepMs } from './timing';
+import { REWIND_MS, manualTweenMs, playTweenMs, remainingAfterSpeedChange, stepMs } from './timing';
 import type { Frame } from './types';
 
 export const SPEEDS = [0.25, 0.5, 1, 2, 4, 8] as const;
@@ -15,6 +15,10 @@ export class Player {
   playing = false;
   speed = 1;
   private timer = 0;
+  /** What the pending timer will do, when it was armed and the full step length it was armed for. */
+  private pending: (() => void) | null = null;
+  private armedAt = 0;
+  private armedFor = 0;
 
   constructor(
     private readonly render: (frame: Frame, ms: number) => void,
@@ -35,7 +39,7 @@ export class Player {
   }
 
   load(frames: Frame[], autoplay: boolean): void {
-    clearTimeout(this.timer);
+    this.disarm();
     this.frames = frames;
     this.index = 0;
     this.playing = false;
@@ -49,9 +53,25 @@ export class Player {
     if (frames.length <= 1) this.ended();
   }
 
-  private schedule(): void {
+  /** Run `fn` after `delay` ms, remembering enough to stretch or shrink the wait if the speed changes. */
+  private arm(fn: () => void, delay = this.stepMs): void {
     clearTimeout(this.timer);
+    this.pending = fn;
+    this.armedAt = performance.now();
+    this.armedFor = delay;
     this.timer = window.setTimeout(() => {
+      this.pending = null;
+      fn();
+    }, delay);
+  }
+
+  private disarm(): void {
+    clearTimeout(this.timer);
+    this.pending = null;
+  }
+
+  private schedule(delay?: number): void {
+    this.arm(() => {
       if (!this.playing) return;
       if (this.atEnd) {
         this.playing = false;
@@ -64,15 +84,15 @@ export class Player {
       this.changed();
       if (this.atEnd) {
         // Let the last frame land before reporting the end.
-        this.timer = window.setTimeout(() => {
+        this.arm(() => {
           this.playing = false;
           this.changed();
           this.ended();
-        }, this.stepMs);
+        });
       } else {
         this.schedule();
       }
-    }, this.stepMs);
+    }, delay);
   }
 
   play(): void {
@@ -88,7 +108,7 @@ export class Player {
   }
 
   pause(): void {
-    clearTimeout(this.timer);
+    this.disarm();
     this.playing = false;
     this.changed();
   }
@@ -105,7 +125,7 @@ export class Player {
 
   seek(index: number, smooth = false): void {
     if (!this.frames.length) return;
-    clearTimeout(this.timer);
+    this.disarm();
     this.playing = false;
     const next = Math.max(0, Math.min(this.frames.length - 1, index));
     const ms = smooth && Math.abs(next - this.index) === 1 && !reducedMotion() ? manualTweenMs(this.speed) : 0;
@@ -122,9 +142,25 @@ export class Player {
     if (wasPlaying) this.ended();
   }
 
+  /** Change speed. Mid-step, the part of the step already spent is kept rather than starting the wait again. */
   setSpeed(speed: number): void {
+    const before = this.armedFor;
+    const fn = this.pending;
     this.speed = speed;
-    if (this.playing) this.schedule();
+    if (this.playing && fn) {
+      const elapsed = performance.now() - this.armedAt;
+      // armedFor is the whole step at the old speed only when the wait began at a step boundary.
+      const oldStep = Math.max(before, elapsed);
+      const left = remainingAfterSpeedChange(elapsed, oldStep, this.stepMs);
+      clearTimeout(this.timer);
+      this.pending = fn;
+      this.armedFor = this.stepMs;
+      this.armedAt = performance.now() - (this.stepMs - left);
+      this.timer = window.setTimeout(() => {
+        this.pending = null;
+        fn();
+      }, left);
+    }
     this.changed();
   }
 }
