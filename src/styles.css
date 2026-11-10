@@ -947,9 +947,16 @@ svg.scene {
   background: #7f90a8;
 }
 
+/* Two flowing columns, so a long point on one side leaves no hole on the other. */
 .note.interview ul {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px 44px;
+  display: block;
+  columns: 2;
+  column-gap: 44px;
+}
+
+.note.interview li {
+  break-inside: avoid;
+  margin-bottom: 14px;
 }
 
 .table-wrap {
@@ -1125,11 +1132,31 @@ td.num {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .notes,
-  .note.interview ul {
+  .notes {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .note.interview ul {
+    columns: 1;
+  }
+
+}
+
+@media (max-width: 520px) {
+  .speed {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .speed-label {
+    padding: 0 4px 0 5px;
+  }
+
+  .speed-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0 5px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
