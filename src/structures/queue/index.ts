@@ -1,3 +1,4 @@
+import { PROBE_H, probeWidth } from '../../core/fit';
 import { CELL_H, boxWidth } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef } from '../../core/types';
@@ -46,12 +47,12 @@ const TAG_W = 52;
 /** Gap between a slot and the head or tail tag that sits outside it. */
 const TAG_GAP = 6;
 /** The probe chip as the renderer draws it. The widest one holds a three-digit key. */
-const CHIP_W = 50;
-const CHIP_H = 26;
+const CHIP_W = probeWidth('999');
+const CHIP_H = PROBE_H;
 const CHIP_GAP_X = 10;
 const CHIP_GAP_Y = 9;
 /** The renderer keeps this much clear above every node for the chip. */
-const CHIP_ROOM_ABOVE = 42;
+const CHIP_ROOM_ABOVE = PROBE_H + 16;
 const END_W = boxWidth(['producer']);
 /** Room under the producer and consumer for their captions. */
 const END_BELOW = 18;

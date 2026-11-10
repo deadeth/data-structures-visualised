@@ -274,7 +274,7 @@ describe('AVL tree', () => {
     const parentOf = (f: Frame, id: string) => f.scene.edges.find((e) => e.to === id)?.from;
     const bad = rec.frames.findIndex((f) => tone(f, 'k70') === 'bad');
     expect(bad).toBeGreaterThan(0);
-    expect(rec.frames[bad].compare).toMatchObject({ left: 'balance +2', op: '>', right: '1' });
+    expect(rec.frames[bad].compare).toMatchObject({ left: '70: balance +2', op: '>', right: '1' });
     // First rotation: 65 rises above 60, still under 70.
     const first = rec.frames.findIndex((f) => parentOf(f, 'k60') === 'k65' && parentOf(f, 'k65') === 'k70');
     // Second rotation: 65 is on top with 60 and 70 below it.

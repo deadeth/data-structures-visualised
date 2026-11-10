@@ -79,6 +79,8 @@ export class Stage {
   private player: Player;
   private counters: { key: string; label: string }[];
   private readout: HTMLElement;
+  private canvasWrap: HTMLElement;
+  private transport: HTMLElement;
   private cmp: HTMLElement;
   private measure: HTMLElement;
   private msg: HTMLElement;
@@ -108,12 +110,26 @@ export class Stage {
   private announceTimer = 0;
   private resizeRaf = 0;
   private lastWidth = 0;
+  /** Set while an operation is being loaded, so focus is moved only once the transport is up to date. */
+  private loading = false;
+  private lostFocus = false;
+  private stickRaf = 0;
+  /**
+   * The transport sticks to the bottom of the screen only while there is
+   * something to play and the readout is clear of it, so it never sits over
+   * the readout or over a canvas that has not scrolled into view yet.
+   */
+  private onScroll = () => {
+    cancelAnimationFrame(this.stickRaf);
+    this.stickRaf = requestAnimationFrame(() => this.syncStick());
+  };
   private onResize = () => {
     cancelAnimationFrame(this.resizeRaf);
     this.resizeRaf = requestAnimationFrame(() => {
       const w = this.root.clientWidth;
       if (w !== this.lastWidth) {
         this.lastWidth = w;
+        this.fitChips(this.player.frames);
         this.sizeMessage();
       }
     });
@@ -122,6 +138,7 @@ export class Stage {
   constructor(host: HTMLElement, opts: StageOptions) {
     this.counters = opts.counters;
 
+    // Row one: the chips (the key, then the comparison). Row two: the sentence. Both start at the same left edge.
     this.cmp = h('div.readout-cmp', { 'aria-hidden': 'true' });
     this.measure = h('div.readout-cmp.measure', { 'aria-hidden': 'true' });
     // Not a live region: it changes on every frame while playing. Announcements go through `status`.
@@ -129,6 +146,9 @@ export class Stage {
     this.readout = h('div.readout.at-rest', null, this.cmp, this.msg, this.measure);
 
     const canvas = h('div.canvas');
+    // Shown at the top of the transport only while the canvas has keyboard focus and scrolls: there the arrows pan instead of stepping.
+    const panHint = h('p.pan-hint', { 'aria-hidden': 'true' }, h('kbd', null, '←'), ' ', h('kbd', null, '→'), ' scroll the diagram here. ', h('kbd', null, 'Space'), ' still plays.');
+    this.canvasWrap = h('div.canvas-wrap', null, canvas);
 
     const nav = (name: 'restart' | 'back' | 'next' | 'end', label: string, fn: () => void, keys?: string) =>
       h('button.icon-btn', { type: 'button', 'aria-label': label, title: label, 'aria-keyshortcuts': keys, onclick: fn }, icon(name));
@@ -151,12 +171,13 @@ export class Stage {
       this.speedBtns.push(b);
       speed.append(b);
     }
-    const transport = h(
+    const transport = (this.transport = h(
       'div.transport', null,
+      panHint,
       h('div.transport-nav', null, this.navBtns.restart, this.navBtns.back, this.playBtn, this.navBtns.next, this.navBtns.end),
       h('div.transport-scrub', null, this.scrub, this.stepLabel),
       speed,
-    );
+    ));
     const hint = h(
       'p.shortcuts', null,
       h('span', { 'aria-hidden': 'true' },
@@ -169,7 +190,7 @@ export class Stage {
     this.buildCounters();
 
     // DOM order is the reading and tab order on every width: readout, canvas, transport, counters, then the log.
-    this.root = h('section.stage', { class: opts.compact ? 'compact' : '', 'aria-label': 'Animation' }, this.readout, canvas, transport, hint, this.countersHost);
+    this.root = h('section.stage', { class: opts.compact ? 'compact' : '', 'aria-label': 'Animation' }, this.readout, this.canvasWrap, transport, hint, this.countersHost);
     if (!opts.compact) {
       this.log = h('ol.log', { 'aria-label': 'Steps in this operation', onkeydown: (e: KeyboardEvent) => this.logKey(e) });
       this.logSummary = h('summary.log-title', null, 'Steps');
@@ -189,10 +210,15 @@ export class Stage {
     }
     host.append(this.root);
 
-    this.renderer = new Renderer(
-      canvas,
-      opts.name ? `Diagram of the ${opts.name}. The readout above it describes each step in words.` : undefined,
-    );
+    this.renderer = new Renderer(canvas, {
+      label: opts.name ? `Diagram of the ${opts.name}. The readout above it describes each step in words.` : undefined,
+      // On a phone the canvas shares the screen with the readout and the transport.
+      reserve: () => this.readout.offsetHeight + this.transport.offsetHeight + 24,
+      onRegionLost: () => {
+        if (this.loading) this.lostFocus = true;
+        else this.focusPlay();
+      },
+    });
     this.player = new Player(
       (frame, ms) => this.renderer.show(frame, ms),
       () => this.sync(),
@@ -212,7 +238,9 @@ export class Stage {
       const isRange = tag === 'INPUT' && (t as HTMLInputElement).type === 'range';
       if ((tag === 'INPUT' && !isRange) || tag === 'SELECT' || tag === 'TEXTAREA' || t?.isContentEditable) return;
       if (e.key === ' ') {
-        const activatable = tag === 'BUTTON' || tag === 'A' || tag === 'SUMMARY';
+        // The "All steps" disclosure keeps its own Space.
+        if (tag === 'SUMMARY') return;
+        const activatable = tag === 'BUTTON' || tag === 'A';
         // With nothing to play, let Space do its usual job on a button.
         if (activatable && this.player.frames.length <= 1) return;
         e.preventDefault();
@@ -236,12 +264,24 @@ export class Stage {
     };
     document.addEventListener('keydown', this.onKey);
     window.addEventListener('resize', this.onResize);
+    window.addEventListener('resize', this.onScroll);
+    window.addEventListener('scroll', this.onScroll, { passive: true });
+  }
+
+  private syncStick(): void {
+    if (!this.root.isConnected) return;
+    const room = window.innerHeight - this.transport.offsetHeight;
+    const stick = this.player.frames.length > 1 && this.readout.getBoundingClientRect().bottom < room - 48;
+    this.root.classList.toggle('stick', stick);
   }
 
   destroy(): void {
     document.removeEventListener('keydown', this.onKey);
     window.removeEventListener('resize', this.onResize);
+    window.removeEventListener('resize', this.onScroll);
+    window.removeEventListener('scroll', this.onScroll);
     cancelAnimationFrame(this.resizeRaf);
+    cancelAnimationFrame(this.stickRaf);
     this.beside.removeEventListener('change', this.onBeside);
     clearTimeout(this.announceTimer);
     this.player.pause();
@@ -318,13 +358,54 @@ export class Stage {
     this.player.seek(index);
   }
 
-  /** On a phone, bring the stage into view so the reader sees the operation they just started. */
-  reveal(): void {
-    if (!matchMedia(NARROW).matches) return;
+  /**
+   * Bring the readout, the canvas and the transport into view so the reader
+   * sees the operation they just started. Runs a frame after the operation is
+   * loaded, once the canvas has its height. Scrolls the least that works: just
+   * enough to lift the transport clear of the bottom of the screen, but never
+   * so far that the readout goes off the top. Resolves when the scroll is done.
+   */
+  reveal(): Promise<void> {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        if (!this.root.isConnected) return resolve();
+        const vh = window.innerHeight;
+        const top = this.readout.getBoundingClientRect().top;
+        // Where the transport sits in the flow (it may be stuck to the bottom of the screen right now).
+        const bottom = this.canvasWrap.getBoundingClientRect().bottom + this.transport.offsetHeight;
+        let delta = 0;
+        if (top < 0) delta = top - 8;
+        else if (bottom > vh) delta = Math.min(bottom - (vh - 12), top - 8);
+        if (Math.abs(delta) < 1) return resolve();
+        const smooth = !reducedMotion();
+        window.scrollBy({ top: delta, behavior: smooth ? 'smooth' : 'auto' });
+        if (!smooth) return resolve();
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          window.removeEventListener('scrollend', finish);
+          resolve();
+        };
+        window.addEventListener('scrollend', finish);
+        window.setTimeout(finish, 900);
+      });
+    });
+  }
+
+  /** True when any of the stage is on screen. */
+  get onScreen(): boolean {
     const r = this.root.getBoundingClientRect();
-    const canvas = this.root.querySelector('.canvas')!.getBoundingClientRect();
-    if (r.top >= 0 && canvas.bottom <= window.innerHeight) return;
-    this.root.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
+    return r.bottom > 0 && r.top < window.innerHeight;
+  }
+
+  /** Put keyboard focus on the play button without scrolling, or on the stage if there is nothing to play. */
+  focusPlay(): void {
+    if (!this.playBtn.disabled) this.playBtn.focus({ preventScroll: true });
+    else {
+      this.root.tabIndex = -1;
+      this.root.focus({ preventScroll: true });
+    }
   }
 
   private flushDone(): void {
@@ -351,22 +432,35 @@ export class Stage {
     return key != null ? [keyPill(false), h('span.cmp-gap'), left, ...tail] : [left, ...tail];
   }
 
-  /** Fix the chip column's width for the whole operation so the sentence beside it does not shift. */
+  /**
+   * Set up the readout for an operation. With no chips in any frame (a resting
+   * picture) the chip row is not there at all; otherwise it is there for the
+   * whole operation, so nothing below it moves between steps.
+   */
   private sizeReadout(frames: Frame[]): void {
+    const any = frames.some((f, i) => this.chips(f, this.keys[i]).length > 0);
+    this.readout.classList.toggle('at-rest', !any);
+    this.fitChips(frames);
+    this.sizeMessage(frames);
+  }
+
+  /** Shrink the chips for this operation if its widest comparison would not fit across the readout. */
+  private fitChips(frames: Frame[]): void {
+    const room = this.readout.clientWidth - 40;
     let widest = 0;
     frames.forEach((f, i) => {
       this.measure.replaceChildren(...this.chips(f, this.keys[i]));
       widest = Math.max(widest, this.measure.scrollWidth);
     });
     this.measure.replaceChildren();
-    this.readout.style.setProperty('--cmp-w', `${Math.ceil(widest)}px`);
-    this.readout.classList.toggle('at-rest', widest === 0);
-    this.sizeMessage(frames);
+    const fit = widest > room && room > 0 ? Math.max(0.62, room / widest) : 1;
+    this.readout.style.setProperty('--cmp-fit', fit.toFixed(3));
   }
 
   /**
-   * Hold the sentence's height at the tallest message of the operation, so the
-   * canvas below never jumps as messages change length.
+   * Hold the sentence's height through an operation at its longest message,
+   * but never more than three lines (the rest is in the step log and is read
+   * out in full), and at least two lines on a wide screen.
    */
   private sizeMessage(frames: Frame[] = this.player.frames): void {
     const msg = this.msg;
@@ -377,6 +471,10 @@ export class Stage {
       msg.classList.toggle('verdict', !!f.compare);
       msg.textContent = f.message;
       tallest = Math.max(tallest, msg.offsetHeight);
+    }
+    if (!matchMedia(NARROW).matches) {
+      msg.classList.add('verdict');
+      tallest = Math.max(tallest, Math.ceil(2 * parseFloat(getComputedStyle(msg).lineHeight)));
     }
     msg.textContent = keep.text;
     msg.classList.toggle('verdict', keep.verdict);
@@ -460,9 +558,15 @@ export class Stage {
     }
     this.scrub.max = String(Math.max(0, frames.length - 1));
     this.sizeReadout(frames);
+    this.loading = true;
+    this.lostFocus = false;
     this.renderer.plan(frames);
     this.lastIndex = -1;
     this.player.load(frames, autoplay);
+    this.loading = false;
+    // The canvas stopped being a scroll region while it had focus: hand focus to the transport.
+    if (this.lostFocus) this.focusPlay();
+    this.syncStick();
   }
 
   private announce(text: string): void {

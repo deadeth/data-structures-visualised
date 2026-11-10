@@ -1,3 +1,4 @@
+import { probeWidth } from '../../core/fit';
 import { CELL_PAD, CHAR_W } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Compare, Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef } from '../../core/types';
@@ -286,7 +287,7 @@ const CHIP_OFFSET = 10;
 const CHIP_CLEAR = 8;
 
 /** Width of the probe chip for a key of this many digits. Mirrors the renderer. */
-export const chipWidth = (digits: number) => Math.max(34, digits * CHAR_W + 20);
+export const chipWidth = (digits: number) => probeWidth('0'.repeat(digits));
 
 export function layout(s: HashState): Scene {
   const n = s.buckets.length;

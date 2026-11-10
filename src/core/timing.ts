@@ -27,3 +27,13 @@ export function playTweenMs(speed: number): number {
 export function manualTweenMs(speed: number): number {
   return Math.round(Math.min(BASE_MANUAL_MS / Math.sqrt(speed), MAX_MANUAL_MS));
 }
+
+/**
+ * Time left in a step when the speed changes part-way through it. The reader
+ * keeps the fraction of the dwell already spent, so a speed change never
+ * restarts the step: `remaining = (1 - elapsed / oldStepMs) * newStepMs`.
+ */
+export function remainingAfterSpeedChange(elapsedMs: number, oldStepMs: number, newStepMs: number): number {
+  const done = oldStepMs > 0 ? Math.min(1, Math.max(0, elapsedMs / oldStepMs)) : 1;
+  return Math.max(0, Math.round((1 - done) * newStepMs));
+}

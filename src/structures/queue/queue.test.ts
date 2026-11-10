@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { CHAR_W, nodeSize } from '../../core/geometry';
+import { probeWidth } from '../../core/fit';
+import { nodeSize } from '../../core/geometry';
 import { Recorder } from '../../core/recorder';
 import { makeRng } from '../../core/rng';
 import type { Frame, Scene } from '../../core/types';
@@ -57,7 +58,7 @@ function chipBox(f: Frame): Box | null {
   if (!f.probe) return null;
   const n = f.scene.nodes.find((x) => x.id === f.probe!.at)!;
   const { w: nw, h: nh } = nodeSize(n);
-  const w = Math.max(34, f.probe.text.length * CHAR_W + 20);
+  const w = probeWidth(f.probe.text);
   const h = 26;
   const place = f.probe.place ?? 'above';
   let x = n.x;

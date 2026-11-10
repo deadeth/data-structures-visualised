@@ -332,7 +332,7 @@ describe('graph: Dijkstra', () => {
     expect(cost).toBe(7);
     // D is first reached through B at 9, then improved through C to 7.
     const improved = rec.frames.filter((f) => f.compare?.op === '<' && f.compare.right !== '∞').map((f) => f.compare);
-    expect(improved).toEqual([{ left: 7, op: '<', right: 9, verdict: 'shorter, update' }]);
+    expect(improved).toEqual([{ left: 'D via C: 7', op: '<', right: 9, verdict: 'shorter, update' }]);
     // Four nodes are settled, and G and H are never even reached.
     expect(letters(s.run!.order)).toBe('ABCD');
     expect(rec.counters.reads).toBe(4);
@@ -356,9 +356,14 @@ describe('graph: Dijkstra', () => {
       const c = f.compare!;
       expect(['<', '≥']).toContain(c.op);
       expect(c.verdict).toBe(c.op === '<' ? 'shorter, update' : 'no better, skip');
-      expect(typeof c.left).toBe('number');
+      // The neutral pill names whose distance it is: "E via B: 12".
+      const m = /^([A-H]) via ([A-H]): (\d+)$/.exec(String(c.left));
+      expect(m).not.toBeNull();
       const right = c.right === '∞' ? Infinity : Number(c.right);
-      expect(c.op === '<' ? Number(c.left) < right : Number(c.left) >= right).toBe(true);
+      const cand = Number(m![3]);
+      expect(c.op === '<' ? cand < right : cand >= right).toBe(true);
+      // The node being expanded is the probe's node.
+      expect(f.probe!.text.startsWith(m![2])).toBe(true);
       // The probe names the node being expanded and its distance, such as "C 5".
       expect(f.probe?.text).toMatch(/^[A-H] \d+$/);
       // Exactly one neighbour and one edge are being examined.

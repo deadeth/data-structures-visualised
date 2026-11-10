@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { CHAR_W, cellCentre, nodeSize } from '../../core/geometry';
+import { probeWidth } from '../../core/fit';
+import { cellCentre, nodeSize } from '../../core/geometry';
 import { Recorder } from '../../core/recorder';
 import { makeRng } from '../../core/rng';
 import type { Frame, Scene } from '../../core/types';
@@ -112,7 +113,7 @@ function checkFrames(frames: Frame[]): void {
       // The chip as the renderer draws it: 26 high, 9 above the node, centred on the cell.
       const { w, h } = nodeSize(node);
       const cx = f.probe.cell != null ? node.x - w / 2 + cellCentre(node.cells, f.probe.cell) : node.x;
-      const cw = Math.max(34, f.probe.text.length * CHAR_W + 20);
+      const cw = probeWidth(f.probe.text);
       const chip: Box = { id: 'probe', x1: cx - cw / 2, x2: cx + cw / 2, y1: node.y - h / 2 - 35, y2: node.y - h / 2 - 9 };
       for (const b of all) if (overlap(chip, b)) throw new Error(`the probe chip covers ${b.id}${where}`);
     }
