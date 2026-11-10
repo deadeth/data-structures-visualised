@@ -1,9 +1,17 @@
 import { CATALOG, GROUPS, isReady, loadStructure } from '../catalog';
-import { h } from '../core/dom';
+import { h, scrollRegion } from '../core/dom';
 import { Recorder } from '../core/recorder';
 import type { OpDef } from '../core/types';
 import { Stage } from './stage';
 import { legend } from './structure-page';
+
+/** "O(1) amortised": the big-O never breaks across lines; the qualifier is set in the text face and may wrap. */
+function cost(text: string): (HTMLElement | string)[] {
+  const m = /^(O\([^)]*\),?)\s*(.*)$/.exec(text);
+  // A cost that is not a big-O ("Not supported") is words, so it is set in the text face.
+  if (!m) return [h('span.words', null, text)];
+  return m[2] ? [h('span.big-o', null, m[1]), ' ', h('span.qualifier', null, m[2])] : [h('span.big-o', null, m[1])];
+}
 
 /** Home: a live demo, then the cheat sheet. */
 export async function mountHome(host: HTMLElement): Promise<() => void> {
@@ -30,7 +38,9 @@ export async function mountHome(host: HTMLElement): Promise<() => void> {
   void (async () => {
     const def = await loadStructure('b-plus-tree');
     if (!alive) return;
-    stage = new Stage(stageHost, { compact: true, counters: def.counters });
+    // The demo is never a live region, and it does not start itself for readers who asked for less motion.
+    stage = new Stage(stageHost, { compact: true, counters: def.counters, name: 'B+ tree', live: false });
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
     for (;;) {
       const params: Record<string, number> = {};
       for (const p of def.params ?? []) params[p.id] = p.default;
@@ -40,6 +50,10 @@ export async function mountHome(host: HTMLElement): Promise<() => void> {
       for (const [id, ...args] of def.tour) {
         const rec = new Recorder(state, def.layout, true);
         find(id).run(state, args, rec);
+        if (still) {
+          stage.cue(rec.frames);
+          return;
+        }
         await stage.play(rec.frames);
         if (!alive) return;
         await new Promise((r) => setTimeout(r, 1400));
@@ -49,7 +63,7 @@ export async function mountHome(host: HTMLElement): Promise<() => void> {
   })();
 
   const table = h(
-    'table.cheat', null,
+    'table.cheat.stack', null,
     h(
       'thead', null,
       h('tr', null, ['Structure', 'Lookup', 'Insert', 'Delete', 'Keeps order', 'Reach for it when'].map((t) => h('th', { scope: 'col' }, t))),
@@ -60,7 +74,15 @@ export async function mountHome(host: HTMLElement): Promise<() => void> {
     for (const c of CATALOG.filter((e) => e.group === group)) {
       const name = isReady(c.id) ? h('a', { href: `#/s/${c.id}` }, c.name) : h('span.soon', null, c.name);
       body.append(
-        h('tr', null, h('th', { scope: 'row' }, name), h('td.num', null, c.cheat.lookup), h('td.num', null, c.cheat.insert), h('td.num', null, c.cheat.remove), h('td', null, c.cheat.ordered), h('td', null, c.cheat.pick)),
+        h(
+          'tr', null,
+          h('th', { scope: 'row' }, name),
+          h('td.num', { 'data-label': 'Lookup' }, cost(c.cheat.lookup)),
+          h('td.num', { 'data-label': 'Insert' }, cost(c.cheat.insert)),
+          h('td.num', { 'data-label': 'Delete' }, cost(c.cheat.remove)),
+          h('td', { 'data-label': 'Keeps order' }, c.cheat.ordered),
+          h('td', { 'data-label': 'Reach for it when' }, c.cheat.pick),
+        ),
       );
     }
     table.append(body);
@@ -70,7 +92,7 @@ export async function mountHome(host: HTMLElement): Promise<() => void> {
       'section.cheat-section', null,
       h('h2', null, 'Cheat sheet'),
       h('p', null, 'Costs are for n stored keys. Open a structure to see where the numbers come from.'),
-      h('div.table-wrap', null, table),
+      scrollRegion(h('div.table-wrap', null, table), 'Cheat sheet'),
     ),
   );
 

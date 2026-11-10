@@ -1,3 +1,4 @@
+import { PROBE_H, fitScene, neededHeight, sceneBounds, type Fit } from './fit';
 import { CELL_GAP, CELL_H, TRAY_PAD, cellCentre, cellWidth, circleRadius, nodeSize, slotX, CHAR_W } from './geometry';
 import type { Decor, Frame, Probe, SceneEdge, SceneNode } from './types';
 
@@ -35,9 +36,11 @@ interface LiveEdge {
   leaving: boolean;
 }
 
-interface Fit { s: number; tx: number; ty: number }
+/** Below this width the canvas takes the height of its content instead of a fixed height. */
+const FOLLOW_QUERY = '(max-width: 899px)';
+const MIN_FOLLOW_H = 220;
 
-const PROBE_H = 26;
+const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
 
@@ -65,9 +68,9 @@ export class Renderer {
   private probe: Tween & { text: string; place: NonNullable<Probe['place']>; shown: boolean } = {
     x: 0, y: 0, o: 0, fx: 0, fy: 0, fo: 0, tx: 0, ty: 0, to: 0, text: '', place: 'above', shown: false,
   };
-  private fit: Fit = { s: 1, tx: 0, ty: 0 };
-  private fitFrom: Fit = { s: 1, tx: 0, ty: 0 };
-  private fitTo: Fit = { s: 1, tx: 0, ty: 0 };
+  private fit: Fit = { s: 1, tx: 0, ty: 0, w: 0, h: 0 };
+  private fitFrom: Fit = { s: 1, tx: 0, ty: 0, w: 0, h: 0 };
+  private fitTo: Fit = { s: 1, tx: 0, ty: 0, w: 0, h: 0 };
   private hasFit = false;
   private decorSig = '';
   private raf = 0;
@@ -77,9 +80,13 @@ export class Renderer {
   private h = 420;
   private last: Frame | null = null;
   private ro: ResizeObserver | null = null;
+  /** The frames of the current operation, used to size the canvas once for all of them. */
+  private planned: Frame[] = [];
+  private overflowing = false;
+  private roRaf = 0;
 
-  constructor(host: HTMLElement) {
-    this.svg = el('svg', { role: 'img', 'aria-label': 'Animated diagram of the data structure' }, 'scene');
+  constructor(private readonly host: HTMLElement, label = 'Animated diagram of the data structure') {
+    this.svg = el('svg', { role: 'img', 'aria-label': label }, 'scene');
     this.world = el('g');
     this.decorLayer = el('g', {}, 'decor');
     this.edgeLayer = el('g', {}, 'edges');
@@ -94,7 +101,11 @@ export class Renderer {
     this.svg.append(this.world);
     host.append(this.svg);
     if (typeof ResizeObserver !== 'undefined') {
-      this.ro = new ResizeObserver(() => this.resize());
+      // Deferred a frame: resizing can change the canvas height, which must not happen inside the observer.
+      this.ro = new ResizeObserver(() => {
+        cancelAnimationFrame(this.roRaf);
+        this.roRaf = requestAnimationFrame(() => this.resize());
+      });
       this.ro.observe(host);
     }
     this.resize();
@@ -102,23 +113,134 @@ export class Renderer {
 
   destroy(): void {
     cancelAnimationFrame(this.raf);
+    cancelAnimationFrame(this.roRaf);
     this.ro?.disconnect();
     this.svg.remove();
   }
 
   private resize(): void {
-    const r = this.svg.getBoundingClientRect();
-    if (r.width < 10 || r.height < 10) return;
-    this.w = r.width;
-    this.h = r.height;
-    this.svg.setAttribute('viewBox', `0 0 ${this.w} ${this.h}`);
+    const w = this.host.clientWidth;
+    const h = this.host.clientHeight;
+    if (w < 10 || h < 10) return;
+    const widthChanged = Math.abs(w - this.w) > 0.5;
+    this.w = w;
+    this.h = h;
+    // The height an operation needs depends on the width, so re-plan when the width changes.
+    if (widthChanged && this.planned.length && this.sizeCanvas()) return;
     if (this.last) {
       this.fitTo = this.computeFit(this.last);
+      this.sizeSvg(this.fitTo);
       if (!this.raf) {
         this.fit = { ...this.fitTo };
         this.applyFit();
       }
+    } else {
+      this.sizeSvg({ s: 1, tx: 0, ty: 0, w, h });
     }
+  }
+
+  /**
+   * Tell the renderer which frames are coming, so the canvas height can be
+   * settled once for the whole operation rather than jumping between steps.
+   * Also hides the probe chip, so it drops in fresh instead of flying over from
+   * where the last operation left it.
+   */
+  plan(frames: Frame[]): void {
+    this.planned = frames;
+    this.resetProbe();
+    this.sizeCanvas();
+    // Read the settled size now, so the first frame is fitted to it rather than to the old one.
+    const w = this.host.clientWidth;
+    const h = this.host.clientHeight;
+    if (w >= 10 && h >= 10) {
+      this.w = w;
+      this.h = h;
+    }
+  }
+
+  /** Set the canvas height for the planned frames. Returns true if it changed (a resize will follow). */
+  private sizeCanvas(): boolean {
+    const follow = typeof matchMedia !== 'undefined' && matchMedia(FOLLOW_QUERY).matches;
+    const style = this.host.style;
+    const before = `${style.height}|${style.minHeight}`;
+    const w = this.host.clientWidth || this.w;
+    const scenes = this.planned.map((f) => f.scene);
+    if (follow) {
+      const maxH = Math.max(MIN_FOLLOW_H, Math.round(window.innerHeight * 0.7));
+      style.minHeight = '';
+      style.height = `${neededHeight(scenes, w, true, MIN_FOLLOW_H, maxH)}px`;
+    } else {
+      // Keep the canvas's own height, but never let it squeeze the scene below the minimum scale.
+      style.height = '';
+      const need = neededHeight(scenes, w, false, 0, Infinity);
+      style.minHeight = need > 0 ? `${need}px` : '';
+    }
+    return before !== `${style.height}|${style.minHeight}`;
+  }
+
+  private resetProbe(): void {
+    const p = this.probe;
+    p.shown = false;
+    p.o = p.fo = p.to = 0;
+    this.probeG.style.opacity = '0';
+  }
+
+  /** Give the SVG its drawn size, and make the canvas a named, focusable scroll region when it overflows. */
+  private sizeSvg(f: Fit): void {
+    // Within a pixel of the canvas counts as fitting: no scrollbar for a rounding error.
+    const w = f.w > this.w + 1 ? f.w : this.w;
+    const h = this.h;
+    this.svg.style.width = `${w}px`;
+    this.svg.style.height = `${h}px`;
+    this.svg.setAttribute('viewBox', `0 0 ${w.toFixed(1)} ${h.toFixed(1)}`);
+    const over = w > this.w + 1;
+    if (over !== this.overflowing) {
+      this.overflowing = over;
+      if (over) {
+        this.host.setAttribute('tabindex', '0');
+        this.host.setAttribute('role', 'region');
+        this.host.setAttribute('aria-label', 'Diagram, wider than the screen. Scroll sideways to see all of it.');
+      } else {
+        this.host.removeAttribute('tabindex');
+        this.host.removeAttribute('role');
+        this.host.removeAttribute('aria-label');
+      }
+      this.host.classList.toggle('overflowing', over);
+    }
+  }
+
+  /**
+   * When the scene is wider than the canvas, scroll so that the probe (or,
+   * without one, whatever is highlighted) sits comfortably in view.
+   */
+  private follow(frame: Frame): void {
+    if (!this.overflowing) return;
+    const f = this.fitTo;
+    let focusX: number | null = null;
+    const probe = frame.probe ? frame.scene.nodes.find((n) => n.id === frame.probe!.at) : undefined;
+    if (probe) {
+      focusX = probe.cells.length > 1 && frame.probe!.cell != null && probe.shape !== 'circle'
+        ? probe.x - nodeSize(probe).w / 2 + cellCentre(probe.cells, frame.probe!.cell)
+        : probe.x;
+    } else {
+      const hot = new Set(['compare', 'key', 'ok', 'bad']);
+      let lo = Infinity, hi = -Infinity;
+      for (const n of frame.scene.nodes) {
+        if (!(hot.has(n.tone ?? '') || n.cells.some((c) => hot.has(c.tone ?? '')))) continue;
+        const w = nodeSize(n).w;
+        lo = Math.min(lo, n.x - w / 2);
+        hi = Math.max(hi, n.x + w / 2);
+      }
+      if (isFinite(lo)) focusX = (lo + hi) / 2;
+    }
+    if (focusX == null) return;
+    const x = f.tx + focusX * f.s;
+    const view = this.host.clientWidth;
+    const left = this.host.scrollLeft;
+    const margin = Math.min(120, view * 0.22);
+    if (x >= left + margin && x <= left + view - margin) return;
+    const target = Math.max(0, Math.min(f.w - view, x - view / 2));
+    this.host.scrollTo({ left: target, behavior: reducedMotion() ? 'auto' : 'smooth' });
   }
 
   /** Show a frame, taking `ms` to get there. Zero jumps straight to it. */
@@ -197,6 +319,8 @@ export class Renderer {
       this.fitFrom = { ...this.fitTo };
       this.hasFit = true;
     }
+    this.sizeSvg(this.fitTo);
+    this.follow(frame);
 
     cancelAnimationFrame(this.raf);
     this.raf = 0;
@@ -257,6 +381,8 @@ export class Renderer {
       s: lerp(this.fitFrom.s, this.fitTo.s, k),
       tx: lerp(this.fitFrom.tx, this.fitTo.tx, k),
       ty: lerp(this.fitFrom.ty, this.fitTo.ty, k),
+      w: this.fitTo.w,
+      h: this.fitTo.h,
     };
     this.applyFit();
   }
@@ -292,10 +418,10 @@ export class Renderer {
       t.textContent = c.text;
       g.append(t);
       if (c.sub) {
-        const s = el('text', { 'text-anchor': 'middle', y: r + 13 }, 'cell-sub');
+        const s = el('text', { 'text-anchor': 'middle', y: r + 16 }, `cell-sub${c.subValue ? ' value' : ''}`);
         s.textContent = c.sub;
         g.append(s);
-        below = r + 18;
+        below = r + 20;
       }
     } else {
       const multi = def.cells.length > 1;
@@ -312,13 +438,13 @@ export class Renderer {
         g.append(t);
         if (c.sub) {
           anySub = true;
-          const s = el('text', { x: x + cw / 2, y: h / 2 + 13, 'text-anchor': 'middle' }, 'cell-sub');
+          const s = el('text', { x: x + cw / 2, y: h / 2 + 16, 'text-anchor': 'middle' }, `cell-sub${c.subValue ? ' value' : ''}`);
           s.textContent = c.sub;
           g.append(s);
         }
         x += cw + CELL_GAP;
       }
-      if (anySub) below = h / 2 + 18;
+      if (anySub) below = h / 2 + 20;
     }
     if (def.title) {
       const t = el('text', { y: -h / 2 - 8, 'text-anchor': 'middle' }, 'node-title');
@@ -421,7 +547,7 @@ export class Renderer {
     } else if (place === 'below') {
       x = cellX;
       const hasSub = def.cells.some((c) => c.sub);
-      y = def.y + target.h / 2 + PROBE_H / 2 + 9 + (hasSub ? 18 : 0) + (def.caption ? 16 : 0);
+      y = def.y + target.h / 2 + PROBE_H / 2 + 9 + (hasSub ? 20 : 0) + (def.caption ? 16 : 0);
     } else if (place === 'left') {
       x = def.x - target.w / 2 - w / 2 - 10;
     } else {
@@ -475,38 +601,7 @@ export class Renderer {
   // ---- fit ----------------------------------------------------------------
 
   private computeFit(frame: Frame): Fit {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    const grow = (x1: number, y1: number, x2: number, y2: number) => {
-      if (x1 < minX) minX = x1;
-      if (y1 < minY) minY = y1;
-      if (x2 > maxX) maxX = x2;
-      if (y2 > maxY) maxY = y2;
-    };
-    for (const n of frame.scene.nodes) {
-      const { w, h } = nodeSize(n);
-      const extraBelow = (n.cells.some((c) => c.sub) ? 18 : 0) + (n.caption ? 18 : 0);
-      // Always leave room above for the probe chip so the view does not jump when it arrives.
-      grow(n.x - w / 2, n.y - h / 2 - PROBE_H - 16 - (n.title ? 16 : 0), n.x + w / 2, n.y + h / 2 + extraBelow);
-    }
-    for (const d of frame.scene.decor ?? []) {
-      if (d.type === 'ring') grow(d.cx - d.r, d.cy - d.r, d.cx + d.r, d.cy + d.r);
-      else if (d.type === 'band') grow(d.x, d.y, d.x + d.w, d.y + d.h);
-      else {
-        const tw = d.text.length * 7.5;
-        const x1 = d.anchor === 'end' ? d.x - tw : d.anchor === 'middle' ? d.x - tw / 2 : d.x;
-        grow(x1, d.y - 9, x1 + tw, d.y + 9);
-      }
-    }
-    if (!isFinite(minX)) return { s: 1, tx: this.w / 2, ty: this.h / 2 };
-    const pad = 26;
-    const bw = Math.max(1, maxX - minX);
-    const bh = Math.max(1, maxY - minY);
-    const s = Math.min(1.25, (this.w - pad * 2) / bw, (this.h - pad * 2) / bh);
-    return {
-      s,
-      tx: (this.w - bw * s) / 2 - minX * s,
-      ty: (this.h - bh * s) / 2 - minY * s,
-    };
+    return fitScene(sceneBounds(frame.scene), this.w, this.h);
   }
 }
 

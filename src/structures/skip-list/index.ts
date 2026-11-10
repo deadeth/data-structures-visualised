@@ -424,9 +424,9 @@ export function remove(s: SkipState, key: number, rec: Rec): boolean {
 
 // ---- layout ---------------------------------------------------------------
 
-const KEY_W = 44;
-const HEAD_W = 58;
-const GAP = 16;
+const KEY_W = 40;
+const HEAD_W = 54;
+const GAP = 13;
 /** Tall enough for the probe chip to sit between a box and the box above it. */
 const ROW = 76;
 

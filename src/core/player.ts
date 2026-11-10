@@ -1,7 +1,7 @@
+import { REWIND_MS, manualTweenMs, playTweenMs, stepMs } from './timing';
 import type { Frame } from './types';
 
 export const SPEEDS = [0.25, 0.5, 1, 2, 4, 8] as const;
-const BASE_STEP_MS = 1150;
 
 const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -23,11 +23,11 @@ export class Player {
   ) {}
 
   get stepMs(): number {
-    return BASE_STEP_MS / this.speed;
+    return stepMs(this.speed);
   }
 
   private get tweenMs(): number {
-    return reducedMotion() ? 0 : Math.min(520, this.stepMs * 0.62);
+    return reducedMotion() ? 0 : playTweenMs(this.speed);
   }
 
   get atEnd(): boolean {
@@ -78,8 +78,9 @@ export class Player {
   play(): void {
     if (!this.frames.length) return;
     if (this.atEnd) {
+      // Replay: ease back to the start rather than snapping.
       this.index = 0;
-      this.render(this.frames[0], 0);
+      this.render(this.frames[0], reducedMotion() ? 0 : REWIND_MS);
     }
     this.playing = true;
     this.changed();
@@ -107,7 +108,7 @@ export class Player {
     clearTimeout(this.timer);
     this.playing = false;
     const next = Math.max(0, Math.min(this.frames.length - 1, index));
-    const ms = smooth && Math.abs(next - this.index) === 1 && !reducedMotion() ? 240 : 0;
+    const ms = smooth && Math.abs(next - this.index) === 1 && !reducedMotion() ? manualTweenMs(this.speed) : 0;
     this.index = next;
     this.render(this.frames[next], ms);
     this.changed();

@@ -1,5 +1,5 @@
 import { CATALOG, isReady, loadStructure } from '../catalog';
-import { h } from '../core/dom';
+import { h, scrollRegion } from '../core/dom';
 import { Recorder } from '../core/recorder';
 import { makeRng } from '../core/rng';
 import type { OpDef, StructureDef } from '../core/types';
@@ -34,7 +34,8 @@ function measure(def: StructureDef, name: string, keys: number[], probes: number
   };
 }
 
-const fmt = (n: number) => (n >= 100 ? Math.round(n).toLocaleString('en-GB') : n >= 10 ? n.toFixed(1) : n.toFixed(2));
+/** One decimal place everywhere, so the decimal points line up in a right-aligned column. */
+const fmt = (n: number) => n.toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 /** Head to head: the same keys and the same lookups, run through every structure that can take them. */
 export async function mountCompare(host: HTMLElement): Promise<() => void> {
@@ -52,7 +53,7 @@ export async function mountCompare(host: HTMLElement): Promise<() => void> {
         `Insert the same keys into each structure, then look up ${LOOKUPS} of them. The table counts the work each lookup took. Try sorted order to see which structures fall apart.`,
       ),
     ),
-    h('div.controls', null, h('div.ops', null, h('div.op-group', null, h('label.field', null, h('span', null, 'Keys to insert'), sizeSel), h('label.field', null, h('span', null, 'Arrival order'), orderSel), h('div.op-buttons', null, runBtn)))),
+    h('div.controls', null, h('div.ops', null, h('div.op-group.spread', null, h('label.field', null, h('span', null, 'Keys to insert'), sizeSel), h('label.field', null, h('span', null, 'Arrival order'), orderSel), h('div.op-buttons', null, runBtn)))),
     out,
   );
   host.append(page);
@@ -89,27 +90,41 @@ export async function mountCompare(host: HTMLElement): Promise<() => void> {
     }
     rows.sort((a, b) => a.lookupCmp - b.lookupCmp);
     const max = Math.max(...rows.map((r) => r.lookupCmp), 1);
+    const caption = h(
+      'p.table-caption', { id: 'results-caption' },
+      `${n.toLocaleString('en-GB')} keys inserted in ${orderSel.value} order, then ${LOOKUPS} lookups. Averages per operation; log₂ of ${n.toLocaleString('en-GB')} is ${Math.log2(n).toFixed(1)}.`,
+    );
     const table = h(
-      'table.results', null,
-      h('caption', null, `${n.toLocaleString('en-GB')} keys inserted in ${orderSel.value} order, then ${LOOKUPS} lookups. Averages per operation; log₂ of ${n.toLocaleString('en-GB')} is ${Math.log2(n).toFixed(1)}.`),
-      h('thead', null, h('tr', null, ['Structure', 'Comparisons per lookup', '', 'Nodes read per lookup', 'Comparisons per insert'].map((t) => h('th', { scope: 'col' }, t)))),
+      'table.results.stack', { 'aria-labelledby': 'results-caption' },
+      h(
+        'thead', null,
+        h(
+          'tr', null,
+          h('th', { scope: 'col' }, 'Structure'),
+          h('th', { scope: 'col' }, 'Comparisons per lookup'),
+          h('th', { scope: 'col' }, h('span.visually-hidden', null, 'Comparisons per lookup, as a bar')),
+          h('th', { scope: 'col' }, 'Nodes read per lookup'),
+          h('th', { scope: 'col' }, 'Comparisons per insert'),
+        ),
+      ),
       h(
         'tbody', null,
         rows.map((r) =>
           h(
             'tr', null,
             h('th', { scope: 'row' }, h('a', { href: `#/s/${r.id}` }, r.name)),
-            h('td.num', null, fmt(r.lookupCmp)),
+            h('td.num.lead', { 'data-label': 'Comparisons per lookup' }, fmt(r.lookupCmp)),
             // Square-root scale so the O(n) rows do not flatten everything else to nothing.
-            h('td.bar-cell', null, h('span.bar', { style: `width:${Math.max(0.6, Math.sqrt(r.lookupCmp / max) * 100).toFixed(1)}%` })),
-            h('td.num', null, fmt(r.lookupReads)),
-            h('td.num', null, fmt(r.insertCmp)),
+            h('td.bar-cell', { 'aria-hidden': 'true' }, h('span.bar', { style: `width:${Math.max(0.6, Math.sqrt(r.lookupCmp / max) * 100).toFixed(1)}%` })),
+            h('td.num', { 'data-label': 'Nodes read per lookup' }, fmt(r.lookupReads)),
+            h('td.num', { 'data-label': 'Comparisons per insert' }, fmt(r.insertCmp)),
           ),
         ),
       ),
     );
     out.replaceChildren(
-      h('div.table-wrap', null, table),
+      caption,
+      scrollRegion(h('div.table-wrap', null, table), 'Results'),
       h('p.muted', null, 'Bar length uses a square-root scale. Comparisons are not the whole story: a B+ tree does more comparisons than a balanced binary tree but reads far fewer nodes, and on disk the node reads are what you pay for. The B+ tree here scans each node from left to right so you can follow it; a real one binary-searches inside the node, which brings 64 children down to about six comparisons per node.'),
     );
     runBtn.disabled = false;

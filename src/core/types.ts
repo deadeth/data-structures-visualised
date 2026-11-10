@@ -25,6 +25,12 @@ export interface Cell {
   tone?: Tone;
   /** Small label under the cell, e.g. an array index. */
   sub?: string;
+  /**
+   * Set when the label under the cell is data the reader should track (a
+   * distance so far), not furniture such as an index. It is then drawn in the
+   * mono face at full weight.
+   */
+  subValue?: boolean;
   /** Fixed width in px. Leave unset to size from the text. */
   w?: number;
 }

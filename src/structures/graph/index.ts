@@ -515,7 +515,7 @@ export function layout(s: GraphState): Scene {
       if (onPath[i]) tone = 'ok';
       else if (rank[i] >= 0) tone = 'path';
     }
-    nodes.push({ id: nid(i), x: POS[i][0], y: POS[i][1], shape: 'circle', r: R, cells: [{ text: s.names[i], sub }], tone });
+    nodes.push({ id: nid(i), x: POS[i][0], y: POS[i][1], shape: 'circle', r: R, cells: [{ text: s.names[i], sub, subValue: sub != null || undefined }], tone });
   }
 
   const edges: SceneEdge[] = s.edges.map((e, i) => {

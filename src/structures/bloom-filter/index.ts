@@ -224,10 +224,9 @@ export function layout(s: BloomState): Scene {
   decor.push({ id: 'keys-note', type: 'label', x: -5, y: -71, text: 'Only this page remembers that list. The filter itself is just the bits below.' });
 
   const below = (rows - 1) * PITCH_Y + CELL_H / 2 + 40;
-  const formula = (i: number) => `h${i + 1} = (${HASHES[i][0]}x + ${HASHES[i][1]}) mod ${PRIME} mod ${s.m}`;
-  decor.push({ id: 'h1', type: 'label', x: -5, y: below, text: formula(0), anchor: 'start' });
-  decor.push({ id: 'h2', type: 'label', x: ROW_W / 2, y: below, text: formula(1), anchor: 'middle' });
-  decor.push({ id: 'h3', type: 'label', x: ROW_W + 5, y: below, text: formula(2), anchor: 'end' });
+  // One line for all three, so the shared "mod" tail is said once and the line fits at a readable size.
+  const formula = (i: number) => `h${i + 1} = (${HASHES[i][0]}x + ${HASHES[i][1]})`;
+  decor.push({ id: 'hashes', type: 'label', x: -5, y: below, text: `${formula(0)}, ${formula(1)}, ${formula(2)}, each then mod ${PRIME} mod ${s.m}`, anchor: 'start' });
 
   return { nodes, edges: [], decor };
 }
