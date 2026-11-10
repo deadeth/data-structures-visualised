@@ -110,7 +110,7 @@ export async function mountCompare(host: HTMLElement): Promise<() => void> {
     );
     out.replaceChildren(
       h('div.table-wrap', null, table),
-      h('p.muted', null, 'Bar length uses a square-root scale. Comparisons are not the whole story: a B+ tree does more comparisons than a balanced binary tree but reads far fewer nodes, and on disk the node reads are what you pay for.'),
+      h('p.muted', null, 'Bar length uses a square-root scale. Comparisons are not the whole story: a B+ tree does more comparisons than a balanced binary tree but reads far fewer nodes, and on disk the node reads are what you pay for. The B+ tree here scans each node from left to right so you can follow it; a real one binary-searches inside the node, which brings 64 children down to about six comparisons per node.'),
     );
     runBtn.disabled = false;
   };
