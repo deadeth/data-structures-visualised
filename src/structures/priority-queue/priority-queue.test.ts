@@ -146,6 +146,13 @@ describe('priority queue on a sorted array', () => {
       expect(node.tone).toBe('compare');
       expect(f.lines).toContain('mid');
     }
+    // The frame that says a half is ruled out already shows it: dimmed, the tag moved, and the test and its branch lit.
+    const first = compares[0].scene;
+    for (const k of [84, 67, 52]) expect(first.nodes.find((n) => n.id === `k${k}`)!.tone).toBe('dim');
+    expect(first.nodes.find((n) => n.id === 'lo')!.x).toBe(first.nodes.find((n) => n.id === 'k30')!.x);
+    expect(compares[0].lines).toEqual(expect.arrayContaining(['less', 'right']));
+    expect(compares[1].lines).toEqual(expect.arrayContaining(['more', 'left']));
+    expect(compares[1].scene.nodes.find((n) => n.id === 'hi')!.x).toBe(compares[1].scene.nodes.find((n) => n.id === 'k18')!.x);
     // After the first comparison the left half is ruled out and drawn dim, and lo has moved past it.
     const second = compares[1].scene;
     for (const k of [84, 67, 52, 41]) expect(second.nodes.find((n) => n.id === `k${k}`)!.tone).toBe('dim');
@@ -225,7 +232,7 @@ describe('priority queue on a sorted array', () => {
     const first = take.frames[0].scene;
     const last = take.frames[take.frames.length - 1].scene;
     for (const k of [67, 41, 30]) expect(last.nodes.find((n) => n.id === `k${k}`)!.x).toBe(first.nodes.find((n) => n.id === `k${k}`)!.x);
-    expect(last.nodes.find((n) => n.caption === 'most urgent')!.cells[0].text).toBe('30');
+    expect(last.nodes.find((n) => n.caption === 'most\nurgent')!.cells[0].text).toBe('30');
     const empty = create();
     for (const run of [popMin, peek]) {
       const rec = loud(empty);

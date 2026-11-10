@@ -1,3 +1,4 @@
+import { LABEL_LINE } from '../../core/fit';
 import { CHAR_W, cellsWidth } from '../../core/geometry';
 import type { Cell, Decor, Scene, SceneNode } from '../../core/types';
 import { MEM, MEM_CAP, VISIBLE, entryText, tid, type Entry, type LsmState } from './lsm';
@@ -49,8 +50,9 @@ export function layout(s: LsmState): Scene {
     id: 'mem-hint',
     type: 'label',
     x: X0 + memW + 18,
-    y: cy(0),
-    text: `Every write lands here first. At ${MEM_CAP} entries it is flushed to disk.`,
+    // Two short lines, centred on the row, so it fits beside the memtable on a phone.
+    y: cy(0) - LABEL_LINE / 2,
+    text: `Every write lands here.\nFull at ${MEM_CAP}: flushed to disk.`,
   });
 
   const merge = s.merge;

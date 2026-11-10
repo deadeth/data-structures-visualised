@@ -257,7 +257,8 @@ export function dfs(s: GraphState, start: number, rec: Rec): number[] {
     rec.count('reads');
     if (top.edge >= 0) rec.markEdge(s.edges[top.edge].id, 'path');
     const F = top.from >= 0 ? s.names[top.from] : '';
-    rec.line('pop', 'visit');
+    // The test that found it new, then the visit it leads to.
+    rec.line('pop', 'seen', 'visit');
     rec.compare(U, '=', 'new', `visit ${U}`, {
       probe,
       message:
@@ -503,7 +504,7 @@ const ordinal = (n: number) => ORDINALS[n - 1] ?? `${n}th`;
 const FRONTIER_TITLE: Record<Algo, string> = {
   bfs: 'Queue: the left end comes out next',
   dfs: 'Stack: the right end comes out next',
-  dijkstra: 'Priority queue: smallest distance (left) comes out next',
+  dijkstra: 'Priority queue: smallest (left) is next',
 };
 
 export function layout(s: GraphState): Scene {

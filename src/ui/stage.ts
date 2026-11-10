@@ -2,7 +2,9 @@ import type { Source } from '../core/code';
 import { CodePanel } from './code-panel';
 import { h } from '../core/dom';
 import { Player, SPEEDS } from '../core/player';
+import { ease } from '../core/timing';
 import { Renderer } from '../core/renderer';
+import { minCanvasWidth } from '../core/fit';
 import type { Frame, Scene } from '../core/types';
 
 const ICONS = {
@@ -16,8 +18,16 @@ const ICONS = {
 
 /** At this width and above the step log sits beside the canvas; below it, under the counters. */
 const LOG_BESIDE = '(min-width: 1200px)';
+/**
+ * Code needs a wider column than the step log, so it sits beside the canvas
+ * (under the step log) only from here up. Below it, with the code on, a
+ * window of the listing sits under the canvas; it scrolls to the rest.
+ */
+const CODE_BESIDE = '(min-width: 1360px)';
 /** Below this width the layout is a phone's. */
 const NARROW = '(max-width: 899px)';
+/** A short screen, such as a phone held sideways. */
+const SHORT = '(max-height: 500px)';
 
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -73,14 +83,21 @@ export interface StageOptions {
   code?: boolean;
 }
 
-type SideView = 'steps' | 'code';
-const VIEW_STORE = 'dsv.side';
+const CODE_STORE = 'dsv.code';
+/** The store used while the side panel was a Steps or Code switch. Read once, then replaced by CODE_STORE. */
+const OLD_STORE = 'dsv.side';
 
-function savedView(): SideView {
+/** Whether the reader wants the code shown. A value in the old store wins and is migrated, so "Code" stays on. */
+function savedCodeOn(): boolean {
   try {
-    return localStorage.getItem(VIEW_STORE) === 'code' ? 'code' : 'steps';
+    const old = localStorage.getItem(OLD_STORE);
+    if (old != null) {
+      localStorage.removeItem(OLD_STORE);
+      localStorage.setItem(CODE_STORE, old === 'code' ? 'on' : 'off');
+    }
+    return localStorage.getItem(CODE_STORE) === 'on';
   } catch {
-    return 'steps';
+    return false;
   }
 }
 
@@ -102,8 +119,17 @@ export class Stage {
   private status: HTMLElement | null = null;
   private logWrap: HTMLDetailsElement | null = null;
   private code: CodePanel | null = null;
-  private view: SideView = 'steps';
-  private viewBtns = new Map<SideView, HTMLButtonElement>();
+  private codeOn = false;
+  /**
+   * Set once a scene on this page proved too wide to sit beside the code
+   * column without scrolling sideways (a wide skip list at 1440px). The code
+   * then takes the window under the canvas instead, as between 1200 and
+   * 1359px, so turning the code on never makes the diagram scroll.
+   */
+  private wideScene = false;
+  private wideAt = 0;
+  /** The Code on/off toggle, for the page to place with its other tools. Null when there is no code. */
+  readonly codeToggle: HTMLButtonElement | null = null;
   private logSummary: HTMLElement | null = null;
   private log: HTMLOListElement | null = null;
   private logItems: HTMLLIElement[] = [];
@@ -121,7 +147,10 @@ export class Stage {
   private doneResolvers: (() => void)[] = [];
   private onKey: (e: KeyboardEvent) => void;
   private beside = matchMedia(LOG_BESIDE);
+  private codeBeside = matchMedia(CODE_BESIDE);
   private onBeside = () => this.syncLogPlacement(true);
+  /** Movement time of the frame being shown, so the code listing glides on the same clock as the canvas. */
+  private frameMs = 0;
   private loads = 0;
   private lastIndex = -1;
   private lastPlaying = false;
@@ -132,6 +161,7 @@ export class Stage {
   private loading = false;
   private lostFocus = false;
   private stickRaf = 0;
+  private pageRaf = 0;
   /**
    * The transport sticks to the bottom of the screen only while there is
    * something to play and the readout is clear of it, so it never sits over
@@ -149,6 +179,7 @@ export class Stage {
         this.lastWidth = w;
         this.fitChips(this.player.frames);
         this.sizeMessage();
+        this.sizeWindow();
       }
     });
   };
@@ -209,22 +240,19 @@ export class Stage {
 
     // DOM order is the reading and tab order on every width: readout, canvas, transport, counters, then the log.
     this.root = h('section.stage', { class: opts.compact ? 'compact' : '', 'aria-label': 'Animation' }, this.readout, this.canvasWrap, transport, hint, this.countersHost);
+    if (!opts.compact && opts.code) this.code = new CodePanel();
     if (!opts.compact) {
       this.log = h('ol.log', { 'aria-label': 'Steps in this operation', onkeydown: (e: KeyboardEvent) => this.logKey(e) });
       this.logSummary = h('summary.log-title', null, 'Steps');
       this.logWrap = h('details.log-wrap', null, this.logSummary, this.log);
       if (opts.code) {
-        // The side panel shows the steps or the code, never both: one thing to read beside the canvas.
-        this.code = new CodePanel();
-        const tabs = h('div.side-tabs', { role: 'group', 'aria-label': 'Show beside the diagram' });
-        for (const [id, label] of [['steps', 'Steps'], ['code', 'Code']] as [SideView, string][]) {
-          const b = h('button.side-tab', { type: 'button', 'aria-pressed': 'false', onclick: () => this.setView(id) }, label) as HTMLButtonElement;
-          this.viewBtns.set(id, b);
-          tabs.append(b);
-        }
-        this.logSummary.after(tabs);
-        this.logWrap.append(this.code.root);
-        this.setView(savedView(), false);
+        // The steps are always shown; the code is shown as well when the reader turns it on.
+        (this as { codeToggle: HTMLButtonElement | null }).codeToggle = h('button.code-toggle', {
+          type: 'button',
+          'aria-pressed': 'false',
+          onclick: () => this.setCodeOn(!this.codeOn),
+        }, 'Code') as HTMLButtonElement;
+        this.codeOn = savedCodeOn();
       }
       this.logSummary.addEventListener('click', (e) => {
         // Beside the canvas the log is a fixed panel, not a disclosure.
@@ -233,7 +261,9 @@ export class Stage {
       this.logWrap.addEventListener('toggle', () => this.scrollLog());
       this.root.append(this.logWrap);
       this.beside.addEventListener('change', this.onBeside);
+      this.codeBeside.addEventListener('change', this.onBeside);
       this.syncLogPlacement(false);
+      if (this.code) this.setCodeOn(this.codeOn, false);
     }
     if (opts.live !== false) {
       this.status = h('div.visually-hidden', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
@@ -244,14 +274,18 @@ export class Stage {
     this.renderer = new Renderer(canvas, {
       label: opts.name ? `Diagram of the ${opts.name}. The readout above it describes each step in words.` : undefined,
       // On a phone the canvas shares the screen with the readout and the transport.
-      reserve: () => this.readout.offsetHeight + this.transport.offsetHeight + 24,
+      reserve: () => this.readout.offsetHeight + this.transport.offsetHeight + (this.code?.windowRoot.offsetHeight ?? 0) + 24,
       onRegionLost: () => {
         if (this.loading) this.lostFocus = true;
         else this.focusPlay();
       },
     });
     this.player = new Player(
-      (frame, ms) => this.renderer.show(frame, ms),
+      (frame, ms) => {
+        this.frameMs = ms;
+        this.renderer.show(frame, ms);
+        this.followProbe(ms);
+      },
       () => this.sync(),
       () => {
         const r = this.doneResolvers;
@@ -314,6 +348,7 @@ export class Stage {
     cancelAnimationFrame(this.resizeRaf);
     cancelAnimationFrame(this.stickRaf);
     this.beside.removeEventListener('change', this.onBeside);
+    this.codeBeside.removeEventListener('change', this.onBeside);
     clearTimeout(this.announceTimer);
     this.player.pause();
     this.renderer.destroy();
@@ -345,29 +380,36 @@ export class Stage {
     this.speedBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(SPEEDS[i] === s)));
   }
 
-  /** Choose what the side panel shows. */
-  setView(view: SideView, persist = true): void {
+  /** Show or hide the example code. The step log is shown either way. */
+  setCodeOn(on: boolean, persist = true): void {
     if (!this.code || !this.logWrap) return;
-    this.view = view;
-    this.logWrap.dataset.view = view;
-    this.root.classList.toggle('with-code', view === 'code');
-    for (const [id, b] of this.viewBtns) b.setAttribute('aria-pressed', String(id === view));
+    const was = this.codeOn;
+    this.codeOn = on;
+    // The canvas may change width: let the scene glide to its new fit rather than jump.
+    if (was !== on && (this.renderer as Renderer | undefined)) this.renderer.easeNextResize();
+    this.root.classList.toggle('with-code', on);
+    this.codeToggle?.setAttribute('aria-pressed', String(on));
     if (persist) {
       try {
-        localStorage.setItem(VIEW_STORE, view);
+        localStorage.setItem(CODE_STORE, on ? 'on' : 'off');
       } catch {
         // Not being able to remember the choice is harmless.
       }
     }
-    if (view === 'steps') {
-      if (this.player as Player | undefined) this.scrollLog();
+    this.syncLogPlacement(true);
+    if (this.player as Player | undefined) {
+      this.sizeWindow();
+      this.scrollLog();
+      this.code.show(this.player.frames[this.player.index]?.lines);
     }
-    else if (this.player as Player | undefined) this.code.show(this.player.frames[this.player.index]?.lines);
   }
 
-  /** The example code for the operation about to play. Pass no regions when it has none. */
-  setCode(source: Source | undefined, regions: string[] | undefined, note?: string): void {
-    this.code?.load(source, regions, note);
+  /**
+   * The example code for the operation about to play. Pass no regions when it
+   * has none. With `rest` set nothing is playing: the listing shows unlit.
+   */
+  setCode(source: Source | undefined, regions: string[] | undefined, opts: { empty?: string; rest?: boolean } = {}): void {
+    this.code?.load(source, regions, opts);
   }
 
   /** Show a resting picture with a line of narration. */
@@ -422,13 +464,20 @@ export class Stage {
    * so far that the readout goes off the top. Resolves when the scroll is done.
    */
   reveal(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((done) => {
+      // On a short screen, once the stage is in view, make sure the chip is clear of the transport too.
+      const resolve = () => {
+        this.followProbe(0);
+        done();
+      };
       requestAnimationFrame(() => {
         if (!this.root.isConnected) return resolve();
         const vh = window.innerHeight;
         const top = this.readout.getBoundingClientRect().top;
-        // Where the transport sits in the flow (it may be stuck to the bottom of the screen right now).
-        const bottom = this.canvasWrap.getBoundingClientRect().bottom + this.transport.offsetHeight;
+        // Where the transport sits in the flow (it may be stuck to the bottom of the screen right now), under the code window if one shows.
+        const win = this.code?.windowRoot;
+        const above = win && win.offsetHeight > 0 ? win : this.canvasWrap;
+        const bottom = above.getBoundingClientRect().bottom + this.transport.offsetHeight;
         let delta = 0;
         if (top < 0) delta = top - 8;
         else if (bottom > vh) delta = Math.min(bottom - (vh - 12), top - 8);
@@ -447,6 +496,39 @@ export class Stage {
         window.setTimeout(finish, 900);
       });
     });
+  }
+
+  /**
+   * On a short screen (a phone held sideways) the canvas is taller than the
+   * room between the top of the screen and the stuck transport, so scroll the
+   * page with the chip: on the same clock and easing as the canvas, just
+   * enough to keep it clear of the transport and the top edge.
+   */
+  private followProbe(ms: number): void {
+    cancelAnimationFrame(this.pageRaf);
+    if (!matchMedia(SHORT).matches || !this.onScreen || this.loading) return;
+    const p = this.renderer.probeTarget();
+    if (!p) return;
+    // The transport sticks to the bottom while playing; where it would sit is the screen's bottom less its height.
+    const tr = this.transport.getBoundingClientRect();
+    const floor = Math.min(tr.top, window.innerHeight - this.transport.offsetHeight) - 8;
+    const ceil = Math.max(4, this.readout.getBoundingClientRect().bottom + 4);
+    let delta = 0;
+    if (p.bottom > floor) delta = p.bottom - floor;
+    else if (p.top < ceil) delta = p.top - ceil;
+    if (Math.abs(delta) < 1) return;
+    const from = window.scrollY;
+    if (ms <= 0 || reducedMotion()) {
+      window.scrollTo(0, from + delta);
+      return;
+    }
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - t0) / ms);
+      window.scrollTo(0, from + delta * ease(t));
+      if (t < 1) this.pageRaf = requestAnimationFrame(tick);
+    };
+    this.pageRaf = requestAnimationFrame(tick);
   }
 
   /** True when any of the stage is on screen. */
@@ -484,7 +566,10 @@ export class Stage {
     if (!c) return key != null ? [keyPill(true)] : [];
     const tail = [h('span.cmp-op', null, c.op), h('span.cmp-other', null, String(c.right))];
     if (key != null && String(c.left) === key) return [keyPill(false), ...tail];
-    const left = h('span.cmp-left', null, String(c.left));
+    // A left side that names its subject ("70: balance +2", "h(63) = 232°") is a description, not the key:
+    // set it in the text face and smaller, so the followed key keeps the weight.
+    const subject = !/^-?[\d.]+$/.test(String(c.left));
+    const left = h(`span.cmp-left${subject ? '.subject' : ''}`, null, String(c.left));
     return key != null ? [keyPill(false), h('span.cmp-gap'), left, ...tail] : [left, ...tail];
   }
 
@@ -515,8 +600,9 @@ export class Stage {
 
   /**
    * Hold the sentence's height through an operation at its longest message,
-   * but never more than three lines (the rest is in the step log and is read
-   * out in full), and at least two lines on a wide screen.
+   * but never more than the clamp allows (three lines, four on a phone; the
+   * rest is in the step log and is read out in full). An operation whose
+   * sentences all fit on one line keeps one line.
    */
   private sizeMessage(frames: Frame[] = this.player.frames): void {
     const msg = this.msg;
@@ -528,24 +614,80 @@ export class Stage {
       msg.textContent = f.message;
       tallest = Math.max(tallest, msg.offsetHeight);
     }
-    if (!matchMedia(NARROW).matches) {
-      msg.classList.add('verdict');
-      tallest = Math.max(tallest, Math.ceil(2 * parseFloat(getComputedStyle(msg).lineHeight)));
-    }
     msg.textContent = keep.text;
     msg.classList.toggle('verdict', keep.verdict);
     if (tallest) msg.style.minHeight = `${tallest}px`;
   }
 
+  /**
+   * On a laptop the code window under the canvas takes up to eight rows, but
+   * never so many that the readout, the canvas, the window and the transport
+   * stop fitting on the screen together (a tall tree needs its canvas). Set
+   * once per operation, so it does not change size between steps. On a phone
+   * it is a fixed strip of three rows and the canvas makes room for it instead.
+   */
+  private sizeWindow(): void {
+    const win = this.code?.windowRoot;
+    if (!win || win.offsetHeight === 0 || matchMedia(NARROW).matches) {
+      this.root.style.removeProperty('--code-rows');
+      return;
+    }
+    const rowH = 0.75 * 1.65 * parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const used = this.readout.offsetHeight + this.canvasWrap.offsetHeight + this.transport.offsetHeight + 1;
+    const head = win.querySelector<HTMLElement>('.code-head')?.offsetHeight ?? 0;
+    // 8px kept above the readout and 12px under the transport, as reveal() does; 14px is the window's own padding.
+    const rows = Math.max(3, Math.min(8, Math.floor((window.innerHeight - used - head - 8 - 12 - 14) / rowH)));
+    this.root.style.setProperty('--code-rows', String(rows));
+  }
+
+  /** Latch `wideScene` if these frames need more width than the canvas has beside the code column. */
+  private checkWide(frames: Frame[]): void {
+    if (!this.code || !this.logWrap) return;
+    const w = this.root.clientWidth;
+    if (w !== this.wideAt) {
+      // A different width: judge afresh.
+      this.wideAt = w;
+      this.wideScene = false;
+    }
+    const column = Math.min(480, Math.max(380, w * 0.38));
+    const room = w - column - 1;
+    const need = minCanvasWidth(frames.map((f) => f.scene));
+    if (!this.wideScene && need > room && need <= w - 301) {
+      this.wideScene = true;
+      this.syncLogPlacement(true);
+    }
+  }
+
   // ---- step log -------------------------------------------------------------
 
+  /**
+   * Where things go. From 1200px the step log is beside the canvas; with the
+   * code on, from 1360px the side column widens and holds the code under the
+   * log, and below that the code is a window under the canvas. Below 1200px
+   * the log is the "All steps" disclosure under the counters.
+   */
   private syncLogPlacement(changed: boolean): void {
-    if (!this.logWrap || !this.logSummary) return;
+    if (!this.logWrap || !this.logSummary || !this.log) return;
     const beside = this.beside.matches;
-    this.logSummary.textContent = beside ? 'Steps' : this.code ? 'Steps and code' : 'All steps';
+    const codeBeside = !!this.code && this.codeOn && beside && this.codeBeside.matches && !this.wideScene;
+    const was = this.root.classList.contains('beside');
+    this.root.classList.toggle('beside', beside);
+    this.root.classList.toggle('code-beside', codeBeside);
+    if (this.code) {
+      // Each surface is in the page only while it shows, so the listing is never there twice for a screen reader.
+      const side = this.code.root;
+      if (codeBeside && !side.isConnected) this.logWrap.append(side);
+      else if (!codeBeside && side.isConnected) side.remove();
+      // The window sits under the canvas, above the transport, so the live line is read with the picture.
+      const win = this.code.windowRoot;
+      const showWin = this.codeOn && !codeBeside;
+      if (showWin && !win.isConnected) this.canvasWrap.after(win);
+      else if (!showWin && win.isConnected) win.remove();
+    }
+    this.logSummary.textContent = beside ? 'Steps' : 'All steps';
     this.logSummary.tabIndex = beside ? -1 : 0;
     // Open beside the canvas; under it, open on a laptop and folded away on a phone.
-    if (beside || !changed) this.logWrap.open = beside || !matchMedia(NARROW).matches;
+    if (beside || !changed || was !== beside) this.logWrap.open = beside || !matchMedia(NARROW).matches;
   }
 
   private fillLogItem(i: number): void {
@@ -587,7 +729,10 @@ export class Stage {
     const view = log.clientHeight;
     let top = log.scrollTop;
     const curBottom = cur.offsetTop + cur.offsetHeight;
-    if (prev.offsetTop - edge < top) top = prev.offsetTop - edge;
+    if (curBottom - prev.offsetTop + edge * 2 > view) {
+      // No room for both: the current step, whole, comes first.
+      top = cur.offsetTop - edge;
+    } else if (prev.offsetTop - edge < top) top = prev.offsetTop - edge;
     else if (curBottom + edge > top + view) {
       top = curBottom + edge - view;
       // Snap forward to an item boundary so the top item is whole, as long as the previous step stays visible.
@@ -614,9 +759,11 @@ export class Stage {
     }
     this.scrub.max = String(Math.max(0, frames.length - 1));
     this.sizeReadout(frames);
+    this.checkWide(frames);
     this.loading = true;
     this.lostFocus = false;
     this.renderer.plan(frames);
+    this.sizeWindow();
     this.lastIndex = -1;
     this.player.load(frames, autoplay);
     this.loading = false;
@@ -677,7 +824,8 @@ export class Stage {
       });
       this.scrollLog();
     }
-    if (this.view === 'code') this.code?.show(frame.lines);
+    this.code?.show(frame.lines, this.frameMs);
+    this.frameMs = 0;
 
     // Speak only when the reader is moving through the steps, not on every frame of playback.
     const moved = p.index !== this.lastIndex;
@@ -685,7 +833,9 @@ export class Stage {
     if (!p.playing && (moved || stopped) && this.loads > 1) {
       const c = frame.compare;
       const lead = many ? `Step ${p.index + 1} of ${p.frames.length}. ` : '';
-      this.announce(lead + (c ? `${c.left} ${c.op} ${c.right}. ` : '') + frame.message);
+      // With the code on, say which lines are running too (the highlight itself is not announced).
+      const lines = this.codeOn ? this.code?.liveText() : '';
+      this.announce(lead + (c ? `${c.left} ${c.op} ${c.right}. ` : '') + frame.message + (lines ? ` Code ${lines}.` : ''));
     }
     this.lastIndex = p.index;
     this.lastPlaying = p.playing;

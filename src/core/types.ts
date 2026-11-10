@@ -44,14 +44,19 @@ export interface SceneNode {
   y: number;
   /** One cell for a simple node, several for an array-like node. */
   cells: Cell[];
-  shape?: 'box' | 'circle';
+  /**
+   * `tag` is a named pointer (top, head, tail, lo, hi): a small white label
+   * with an outline, drawn the same way on every page. It never takes a tone or
+   * a hue. Its one cell holds the name.
+   */
+  shape?: 'box' | 'circle' | 'tag';
   /** Outline tone for the whole node. */
   tone?: Tone;
   /** Categorical tint 0-5 for grouping (an owner, a level). Not a state. */
   hue?: number;
   /** Small text above the node. */
   title?: string;
-  /** Small text below the node. */
+  /** Small text below the node. A newline breaks it onto a second line. */
   caption?: string;
   /** If the node is new this frame, it grows out of this node's position. */
   from?: string;
@@ -85,6 +90,7 @@ export interface SceneEdge {
 
 export type Decor =
   | { id: string; type: 'ring'; cx: number; cy: number; r: number }
+  /** A label. A newline breaks it: the lines are stacked downwards from y. */
   | { id: string; type: 'label'; x: number; y: number; text: string; anchor?: 'start' | 'middle' | 'end'; strong?: boolean }
   | { id: string; type: 'band'; x: number; y: number; w: number; h: number; label?: string };
 

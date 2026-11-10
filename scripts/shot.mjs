@@ -3,7 +3,7 @@
 //   npm run shot -- <structure-id>     rest state, plus the middle and last frame of every tour step
 //   npm run shot -- home | compare     those pages
 //   npm run shot -- <id> --mobile      same, at phone width
-//   npm run shot -- <id> --code        same, with the Python listing beside the canvas (--java for Java)
+//   npm run shot -- <id> --code        same, with the code turned on in Python (--java for Java)
 //
 // Images land in .shots/. Console errors from the page are printed and make the script exit 1.
 import { mkdirSync } from 'node:fs';
@@ -33,9 +33,9 @@ page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
 page.on('pageerror', (e) => errors.push(String(e)));
 
 if (code) {
-  // Show the example code beside the canvas instead of the step log.
+  // Turn the example code on (it shows with the step log).
   await page.evaluateOnNewDocument((lang) => {
-    localStorage.setItem('dsv.side', 'code');
+    localStorage.setItem('dsv.code', 'on');
     localStorage.setItem('dsv.code.lang', lang);
   }, java ? 'java' : 'python');
 }

@@ -229,8 +229,8 @@ export function layout(s: QueueState): Scene {
   }
   const head = tagAt(s, f, HEAD);
   const tail = tagAt(s, f, TAIL);
-  nodes.push({ id: HEAD, x: head.x, y: head.y, cells: [{ text: 'head', w: TAG_W }], hue: 2 });
-  nodes.push({ id: TAIL, x: tail.x, y: tail.y, cells: [{ text: 'tail', w: TAG_W }], hue: 0 });
+  nodes.push({ id: HEAD, x: head.x, y: head.y, cells: [{ text: 'head', w: TAG_W }], shape: 'tag' });
+  nodes.push({ id: TAIL, x: tail.x, y: tail.y, cells: [{ text: 'tail', w: TAG_W }], shape: 'tag' });
   nodes.push({ id: HUB, x: f.cx, y: f.cy, cells: [{ text: String(s.size) }], title: 'size', caption: `of ${s.capacity}` });
   // The two ends of the pipe sit in the bottom corners, clear of the tags.
   const endY = f.height - 18 - CELL_H / 2;

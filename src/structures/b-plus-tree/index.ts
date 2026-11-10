@@ -394,7 +394,8 @@ export function range(s: BPlusState, a: number, b: number, rec: Rec): number[] {
         rec.markCell(nid(node), i, 'idle');
         break scan;
       }
-      rec.line('collect');
+      // The test that let it through, with the line it leads to.
+      rec.line('past', 'collect');
       rec.compare(hi, '≥', k, `${k} is in the range, collect it`, { probe });
       rec.markCell(nid(node), i, 'ok');
       out.push(k);

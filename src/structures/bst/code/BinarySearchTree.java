@@ -50,7 +50,7 @@ public class BinarySearchTree {
             if (key == node.key) { //@match
                 return true; //@found
             }
-            if (key < node.key) { //@left
+            if (key < node.key) { //@less,left
                 node = node.left; //@left
             } else { //@right
                 node = node.right; //@right
@@ -74,7 +74,7 @@ public class BinarySearchTree {
             if (key == node.key) { //@match
                 return false; //@duplicate
             }
-            if (key < node.key) { //@left,left_free
+            if (key < node.key) { //@less,left,left_free
                 if (node.left == null) { //@left,left_free
                     node.left = new Node(key); //@attach_left
                     break;
@@ -100,7 +100,7 @@ public class BinarySearchTree {
         Node node = root; //@start
         while (node != null && key != node.key) { //@match
             parent = node;
-            if (key < node.key) { //@left
+            if (key < node.key) { //@less,left
                 node = node.left; //@left
             } else { //@right
                 node = node.right; //@right

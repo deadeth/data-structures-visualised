@@ -22,6 +22,10 @@ op.run(state, args, rec)
 
 **Show every comparison.** Each time the algorithm compares the key with something, call `rec.compare(left, op, right, verdict, { probe })`. `left` is the key being followed, or a value derived from it (a hash, a bit position, a distance). The readout always shows the followed key, taken from the probe, as the magenta pill; when `left` is not that key it is drawn after it in a neutral pill, so magenta never lands on a derived value. A derived `left` must say whose value it is, short enough for a pill: `h(63) = 232°`, `10: balance +1`, `E via B: 12`, `bit 25`. That is why every operation that follows a key should pass a probe at least once. `verdict` says what the result means for the next move, in lower case with no full stop: `'go left'`, `'keep scanning right'`. Mark the cell or node being compared with the `compare` tone first, then set it back (`'idle'` clears a cell mark) or to `path`.
 
+**Pointers are tags.** A named index or pointer that marks a slot or node (`top`, `head`, `tail`, `lo`, `hi`) is a node with `shape: 'tag'`: white, a 1.5px secondary-ink outline, the text face at 600 at label size. One style on every page; never give it a hue or a tone. Put it beside or under what it points at, on a row of its own when two can share a slot, and slide it by keeping its id.
+
+**Labels can break.** A newline in a `caption` or a decor label breaks it onto a second line. Keep notes to two lines of about 22 characters on narrow scenes, and keep a caption no wider than about two slots, so it reads as belonging to its own node. Titles, captions and edge labels count towards the scene's bounds, so a long one shrinks the scene.
+
 **Tones have fixed meanings.** `path` visited, `compare` being compared now, `ok` found or written, `bad` removed, evicted or missed (drawn with a dashed outline as well as red, so it never relies on colour alone), `dim` ruled out, `key` holds the followed key. `dim` is quiet through its own colours, never through opacity, so its text still reads at 4.5:1. A box cell with empty text is drawn as an empty slot (a light dashed outline). `hue` (0 to 5) is for grouping only, such as which server owns a key. Categorical hues must stay well clear of the state colours (magenta, amber, blue, green, red) so a grouped cell is never read as a state; if you add or change one, keep ink text above 7:1 on its fill and its stroke above 4.5:1.
 
 **Labels under cells.** `sub` is furniture by default (an array index), drawn in the text face at label size. Set `subValue: true` when the label is data the reader should track, such as a distance so far; it is then drawn in the mono face at full weight.
@@ -60,7 +64,7 @@ Leave about 44px of clear space above any node the probe will visit (`PROBE_H + 
 
 ## Example code
 
-Every structure ships a real implementation in Python and in Java, shown beside the canvas when the reader picks Code. The line being executed is highlighted in step with the animation. `src/structures/b-plus-tree/` is the reference: read `code/b_plus_tree.py`, `code/BPlusTree.java` and the `rec.line(...)` calls in `index.ts`.
+Every structure ships a real implementation in Python and in Java, shown with the steps when the reader turns Code on. The lines being executed are highlighted in step with the animation. From 1360px wide the side column holds the step log on top and the listing below; narrower, the listing is a window under the canvas (eight rows at most, three on a phone) that follows the live lines and scrolls to the rest. Long lines wrap with a hanging indent, so write them to read well wrapped. `src/structures/b-plus-tree/` is the reference: read `code/b_plus_tree.py`, `code/BPlusTree.java` and the `rec.line(...)` calls in `index.ts`.
 
 **One real file per language**, in `src/structures/<id>/code/`, imported as text (`import python from './code/name.py?raw'`) and passed as `source: { python, java }` on the definition. The files must run: check the Python with `python3` and the Java with `javac` and `java` (both are installed) against a simple model under thousands of random operations. Keep the test harness outside the repo; only the implementation is shown.
 
@@ -73,6 +77,8 @@ node = self.root  #@start      Node node = root; //@start      this line is the 
 ```
 
 An operation lists the regions to show, most important first: `code: ['insert', 'split', 'find_leaf']`. The same region and anchor names must exist in both languages. An anchor can sit on several lines, and a line can carry several (`#@scan,found`).
+
+**Light the test.** On a comparison frame, light the line that makes the comparison the readout shows (the `if` or `while`), plus the branch it takes. A three-way decision per key (`if key < x` / `elif key > x` / `else`) counts as one comparison, as the animation does. When a frame lights two places (a call and the helper it calls), name the helper's anchor last: the listing scrolls to the last-named anchor when both do not fit, and offers a control to reach the other.
 
 **Frames name anchors.** Call `rec.line('anchor')` before the step or comparison that executes that line. It is sticky: it applies to every frame until the next call, so set it whenever the algorithm moves on. Pass several names to light several places at once (`rec.line('split_leaf', 'push_up')`). Every frame of an operation must name at least one anchor that its listing has.
 

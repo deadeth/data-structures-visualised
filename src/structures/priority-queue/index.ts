@@ -1,5 +1,5 @@
-import { CAPTION_ROOM, PROBE_H, SUB_ROOM } from '../../core/fit';
-import { CELL_H } from '../../core/geometry';
+import { CAPTION_ROOM, LABEL_LINE, PROBE_H, SUB_ROOM } from '../../core/fit';
+import { CELL_H, TAG_H } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef } from '../../core/types';
 import java from './code/PriorityQueue.java?raw';
@@ -77,8 +77,32 @@ export function insert(s: PQState, key: number, rec: Rec): boolean {
         : `The window is slots ${lo} to ${hi - 1}, so the middle is slot ${mid}, which holds ${there}.`;
     comparisons++;
     rec.mark(itemId(there), 'compare');
-    if (there === key) {
-      rec.line('mid', 'duplicate');
+    // One three-way decision per middle key, as in the listing. The frame that says which half is ruled out
+    // already shows it dimmed and the tag moved, with the test and the branch it takes lit together.
+    if (key < there) {
+      const from = lo;
+      for (let i = lo; i < mid; i++) rec.mark(at(s, i), 'dim');
+      lo = mid + 1;
+      if (rec.recording) s.window = { lo, hi };
+      rec.line('mid', 'less', 'right');
+      rec.compare(key, '<', there, `go right`, {
+        probe,
+        message: `${where} ${key} is smaller, and smaller keys sit further right, so ${range(from, mid)} ruled out. lo becomes ${lo}.`,
+      });
+      rec.mark(itemId(there), 'dim');
+    } else if (key > there) {
+      for (let i = mid + 1; i < hi; i++) rec.mark(at(s, i), 'dim');
+      const top = hi - 1;
+      hi = mid;
+      if (rec.recording) s.window = { lo, hi };
+      rec.line('mid', 'more', 'left');
+      rec.compare(key, '>', there, `go left`, {
+        probe,
+        message: `${where} ${key} is larger, so it belongs here or further left, and ${range(mid, top)} ruled out. hi becomes ${mid}.`,
+      });
+      rec.mark(itemId(there), 'dim');
+    } else {
+      rec.line('mid', 'same', 'duplicate');
       rec.compare(key, '=', there, `already queued`, { probe, message: `${where} That is ${key} itself.` });
       rec.clearMarks();
       rec.mark(itemId(there), 'ok');
@@ -90,24 +114,6 @@ export function insert(s: PQState, key: number, rec: Rec): boolean {
       );
       return false;
     }
-    if (there > key) {
-      rec.line('mid', 'right');
-      rec.compare(key, '<', there, `go right`, {
-        probe,
-        message: `${where} ${key} is smaller, and smaller keys sit further right, so ${range(lo, mid)} ruled out. lo becomes ${mid + 1}.`,
-      });
-      for (let i = lo; i <= mid; i++) rec.mark(at(s, i), 'dim');
-      lo = mid + 1;
-    } else {
-      rec.line('mid', 'left');
-      rec.compare(key, '>', there, `go left`, {
-        probe,
-        message: `${where} ${key} is larger, so it belongs here or further left, and ${range(mid, hi - 1)} ruled out. hi becomes ${mid}.`,
-      });
-      for (let i = mid; i < hi; i++) rec.mark(at(s, i), 'dim');
-      hi = mid;
-    }
-    if (rec.recording) s.window = { lo, hi };
   }
 
   const pos = lo;
@@ -226,10 +232,11 @@ const SLOT_W = 40;
 const PITCH = SLOT_W + 3;
 /** The caption under the most urgent item is wider than its slot, so the scene keeps this much clear at each end. */
 const OVERHANG = 30;
-const NOTE_Y = -(CELL_H / 2 + PROBE_H + 16 + 12);
-/** The lo and hi tags sit on rows of their own under the captions, so they can share a slot without touching. */
-const LO_Y = CELL_H / 2 + SUB_ROOM + CAPTION_ROOM + 6 + CELL_H / 2;
-const HI_Y = LO_Y + CELL_H + 6;
+/** The note above the array is two lines, so it starts a line higher, clear of the chip. */
+const NOTE_Y = -(CELL_H / 2 + PROBE_H + 16 + 12 + LABEL_LINE);
+/** The lo and hi tags sit on rows of their own under the two-line caption, so they can share a slot without touching. */
+const LO_Y = CELL_H / 2 + SUB_ROOM + CAPTION_ROOM + LABEL_LINE + 6 + TAG_H / 2;
+const HI_Y = LO_Y + TAG_H + 6;
 
 export function layout(s: PQState): Scene {
   const nodes: SceneNode[] = [];
@@ -240,18 +247,18 @@ export function layout(s: PQState): Scene {
   });
   s.slots.forEach((v, i) => {
     if (v === null) nodes.push({ id: emptyId(i), x: i * PITCH, y: 0, cells: [{ text: '', w: SLOT_W, sub: String(i) }] });
-    else nodes.push({ id: itemId(v), x: i * PITCH, y: 0, cells: [{ text: String(v), w: SLOT_W, sub: String(i) }], caption: i === last ? 'most urgent' : undefined });
+    else nodes.push({ id: itemId(v), x: i * PITCH, y: 0, cells: [{ text: String(v), w: SLOT_W, sub: String(i) }], caption: i === last ? 'most\nurgent' : undefined });
   });
   if (s.window) {
-    nodes.push({ id: LO, x: s.window.lo * PITCH, y: LO_Y, cells: [{ text: 'lo', w: SLOT_W }], hue: 0 });
-    nodes.push({ id: HI, x: s.window.hi * PITCH, y: HI_Y, cells: [{ text: 'hi', w: SLOT_W }], hue: 1 });
+    nodes.push({ id: LO, x: s.window.lo * PITCH, y: LO_Y, cells: [{ text: 'lo', w: SLOT_W }], shape: 'tag' });
+    nodes.push({ id: HI, x: s.window.hi * PITCH, y: HI_Y, cells: [{ text: 'hi', w: SLOT_W }], shape: 'tag' });
   }
   const left = -SLOT_W / 2;
   const decor: Decor[] = [
-    { id: 'note', type: 'label', x: left, y: NOTE_Y, text: 'Sorted, largest first. The smallest key leaves first.', strong: true },
+    { id: 'note', type: 'label', x: left, y: NOTE_Y, text: 'Sorted, largest first.\nThe smallest key leaves first.', strong: true },
     // Two empty labels pin the corners, so the view holds still when the lo and hi tags come and go.
     { id: 'corner-a', type: 'label', x: left - OVERHANG, y: NOTE_Y, text: '' },
-    { id: 'corner-b', type: 'label', x: (s.slots.length - 1) * PITCH + SLOT_W / 2 + OVERHANG, y: HI_Y + CELL_H / 2 - 8, text: '' },
+    { id: 'corner-b', type: 'label', x: (s.slots.length - 1) * PITCH + SLOT_W / 2 + OVERHANG, y: HI_Y + TAG_H / 2, text: '' },
   ];
   return { nodes, edges: [], decor };
 }

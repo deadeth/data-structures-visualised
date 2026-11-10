@@ -1,5 +1,5 @@
-import { CAPTION_ROOM, LABEL_MAX, PROBE_H, TITLE_ROOM } from '../../core/fit';
-import { CELL_H } from '../../core/geometry';
+import { CAPTION_ROOM, LABEL_MAX, PROBE_H } from '../../core/fit';
+import { CELL_H, TAG_H } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef } from '../../core/types';
 import java from './code/FifoQueue.java?raw';
@@ -206,23 +206,28 @@ const BOX_W = 48;
 const PITCH = 68;
 /** How far below the row a node sits while it is not part of the queue. */
 const DROP = 84;
-const TOP = -(CELL_H / 2 + TITLE_ROOM + PROBE_H + 16);
+const TOP = -(CELL_H / 2 + PROBE_H + 16);
+/** head and tail are pointer tags just under the node they point at (over a node that has dropped out of the row). */
+const TAG_GAP = 8;
+const TAG_W = BOX_W;
 const BOTTOM = DROP + CELL_H / 2 + CAPTION_ROOM + 4;
 
 export function layout(s: FifoState): Scene {
   const x = (pos: number) => (pos - s.origin) * PITCH;
   const nodes: SceneNode[] = [];
   const edges: SceneEdge[] = [];
+  // Where each pointer points: a node's place, or the null marker.
+  const tags: { name: 'head' | 'tail'; x: number; y: number }[] = [];
+  const point = (name: 'head' | 'tail', px: number, py: number) => tags.push({ name, x: px, y: py });
   const draw = (n: QNode, out: 'new' | 'unlinked' | null) => {
-    const names: string[] = [];
-    if (n === s.head) names.push('head');
-    if (n === s.tail) names.push('tail');
+    const y = out ? DROP : 0;
+    if (n === s.head) point('head', x(n.pos), y);
+    if (n === s.tail) point('tail', x(n.pos), y);
     nodes.push({
       id: nid(n),
       x: x(n.pos),
-      y: out ? DROP : 0,
+      y,
       cells: [{ text: String(n.key), w: BOX_W }],
-      title: names.length ? names.join(', ') : undefined,
       caption: out ?? undefined,
     });
     edges.push({ id: eid(n), from: nid(n), to: n.next ? nid(n.next) : NULL_ID, kind: 'side', arrow: true, dashed: out === 'unlinked' });
@@ -231,16 +236,20 @@ export function layout(s: FifoState): Scene {
   for (let n = s.head; n; n = n.next) if (n !== s.draft) draw(n, null);
   if (s.draft) draw(s.draft, 'new');
 
-  const nulls: string[] = [];
-  if (!s.head) nulls.push('head');
-  if (!s.tail) nulls.push('tail');
+  if (!s.head) point('head', x(s.nextPos), 0);
+  if (!s.tail) point('tail', x(s.nextPos), 0);
   nodes.push({
     id: NULL_ID,
     x: x(s.nextPos),
     y: 0,
     cells: [{ text: 'null', w: BOX_W, tone: 'dim' }],
-    title: nulls.length ? nulls.join(', ') : undefined,
   });
+  // Under a node in the row, or over one that has dropped below it. Two on one node stack, head nearer.
+  for (const t of tags) {
+    const shared = t.name === 'tail' && tags.some((o) => o.name === 'head' && o.x === t.x && o.y === t.y);
+    const dy = t.y === 0 ? CELL_H / 2 + TAG_GAP + TAG_H / 2 + (shared ? TAG_H + 4 : 0) : -(CELL_H / 2 + 4 + TAG_H / 2);
+    nodes.push({ id: `ptr-${t.name}`, x: t.x, y: t.y + dy, cells: [{ text: t.name, w: TAG_W }], shape: 'tag' });
+  }
   // Two empty labels pin the corners of the scene. The view then never re-centres, so a node that stays put in
   // memory stays put on screen, and it is plain that a dequeue shifts nothing.
   const decor: Decor[] = [

@@ -10,7 +10,7 @@ Each page runs the real algorithm one step at a time:
 - Every comparison is written out (`58 > 48`) with what it means for the next move.
 - Play, pause, step forwards and backwards, drag through the steps, or change speed from 0.25× to 8×.
 - Counters show comparisons and node reads for the operation, so the cost is a number you watched add up.
-- Switch the side panel from Steps to Code to see a real implementation in Python or Java, with the line being executed highlighted as the animation plays.
+- Turn on Code to see a real implementation in Python or Java beside the steps, with the lines being executed highlighted as the animation plays.
 - Underneath: what each operation costs, which production systems use the structure, when to reach for it, what it costs you, and what to say about it in a systems design interview.
 
 Keyboard: space plays and pauses, the arrow keys step, `[` and `]` change speed.

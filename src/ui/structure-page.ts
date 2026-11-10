@@ -86,8 +86,10 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
     for (const f of def.status?.(state) ?? []) facts.append(h('div', null, h('dt', null, f.label), h('dd', null, figures(f.value))));
   };
 
+  // At rest the code view shows the listing of the tour's first operation, unlit, so it is never an empty panel.
+  const restOp = def.ops.find((o) => o.id === def.tour[0]?.[0] && o.code) ?? def.ops.find((o) => o.code);
   const rest = (message: string) => {
-    stage.setCode(undefined, undefined, 'Run an operation to see the code for it here.');
+    stage.setCode(def.source, restOp?.code, { empty: 'Run an operation to see the code for it here.', rest: true });
     stage.still(def.layout(state), message);
     refreshFacts();
   };
@@ -115,7 +117,7 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
     op.run(state, args, rec);
     let frames: Frame[] = rec.frames;
     if (!frames.length) frames = [{ scene: def.layout(state), message: `${op.label} finished.`, counters: { ...rec.counters } }];
-    stage.setCode(def.source, op.code, `${op.label} has no code listing.`);
+    stage.setCode(def.source, op.code, { empty: `${op.label} has no code listing.` });
     const done = stage.play(frames);
     if (show) reveal();
     await done;
@@ -225,6 +227,8 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
     tourBtn.textContent = 'Play the tour';
   }
   tools.append(tourBtn);
+  // Show the example code with the steps. Remembered across pages.
+  if (stage.codeToggle) tools.append(stage.codeToggle);
 
   if (def.fill) {
     tools.append(

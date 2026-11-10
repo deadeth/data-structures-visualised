@@ -37,3 +37,9 @@ export function remainingAfterSpeedChange(elapsedMs: number, oldStepMs: number, 
   const done = oldStepMs > 0 ? Math.min(1, Math.max(0, elapsedMs / oldStepMs)) : 1;
   return Math.max(0, Math.round((1 - done) * newStepMs));
 }
+
+/** The easing every movement on the stage uses: the canvas, the chip, the pan and the code listing's scroll. */
+export const ease = (t: number): number => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+/** Below this, a code listing jumps to the live lines instead of gliding there. */
+export const MIN_GLIDE_MS = 300;

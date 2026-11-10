@@ -49,7 +49,17 @@ export function circleRadius(n: SceneNode): number {
   return n.r ?? Math.max(CIRCLE_MIN_R, Math.ceil((n.cells[0]?.text.length ?? 1) * CHAR_W) / 2 + 9);
 }
 
+/** Height of a pointer tag (top, head, lo). */
+export const TAG_H = 26;
+/** Advance of one character of a tag's text (the text face at 600, at the largest label size). */
+export const TAG_CHAR_W = 9;
+
+export function tagWidth(text: string): number {
+  return Math.max(40, Math.ceil(text.length * TAG_CHAR_W) + 18);
+}
+
 export function nodeSize(n: SceneNode): { w: number; h: number } {
+  if (n.shape === 'tag') return { w: n.cells[0]?.w ?? tagWidth(n.cells[0]?.text ?? ''), h: TAG_H };
   if (n.shape === 'circle') {
     const r = circleRadius(n);
     return { w: r * 2, h: r * 2 };

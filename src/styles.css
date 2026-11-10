@@ -487,6 +487,13 @@ h1 {
   border-radius: 8px;
 }
 
+.cmp-left.subject {
+  font-family: var(--sans);
+  font-weight: 600;
+  font-size: 0.72em;
+  padding: 0.36em 0.6em;
+}
+
 .cmp-gap {
   width: 0.2em;
 }
@@ -685,53 +692,57 @@ svg.scene {
   color: inherit;
 }
 
-@media (min-width: 1200px) {
-  .stage:not(.compact) {
-    grid-template-columns: minmax(0, 1fr) 300px;
-    grid-template-areas:
-      'readout readout'
-      'canvas log'
-      'transport transport'
-      'hint hint'
-      'counters counters';
-  }
+/*
+ * The step log (or the code) beside the canvas. The stage sets .beside: from
+ * 1200px for the steps, and from 1360px for the code, which needs more room.
+ */
+.stage.beside:not(.compact) {
+  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-areas:
+    'readout readout'
+    'canvas log'
+    'window log'
+    'transport transport'
+    'hint hint'
+    'counters counters';
+}
 
-  .stage:not(.compact) > .readout { grid-area: readout; }
-  .stage:not(.compact) > .canvas-wrap { grid-area: canvas; }
-  .stage:not(.compact) > .transport { grid-area: transport; }
-  .stage:not(.compact) > .shortcuts { grid-area: hint; }
-  .stage:not(.compact) > .counters { grid-area: counters; }
+.stage.beside:not(.compact) > .readout { grid-area: readout; }
+.stage.beside:not(.compact) > .canvas-wrap { grid-area: canvas; }
+.stage.beside:not(.compact) > .code-window { grid-area: window; }
+.stage.beside:not(.compact) > .transport { grid-area: transport; }
+.stage.beside:not(.compact) > .shortcuts { grid-area: hint; }
+.stage.beside:not(.compact) > .counters { grid-area: counters; }
 
-  /* Beside the canvas the log is a panel as tall as the canvas, and never sets that height itself. */
-  .log-wrap {
-    grid-area: log;
-    position: relative;
-    border-top: 0;
-    border-left: 1px solid var(--rule);
-  }
+/* Beside the canvas the log is a panel as tall as the canvas, and never sets that height itself. */
+.stage.beside .log-wrap {
+  grid-area: log;
+  position: relative;
+  border-top: 0;
+  border-left: 1px solid var(--rule);
+}
 
-  .log-title {
-    list-style: none;
-    font-size: 0.82rem;
-    font-weight: 500;
-    color: var(--ink-3);
-    padding: 10px 14px 6px;
-    min-height: 0;
-    cursor: default;
-  }
+.stage.beside .log-title {
+  list-style: none;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ink-3);
+  padding: 10px 14px 6px;
+  min-height: 0;
+  cursor: default;
+}
 
-  .log-title::-webkit-details-marker {
-    display: none;
-  }
+.stage.beside .log-title::-webkit-details-marker {
+  display: none;
+}
 
-  .log {
-    position: absolute;
-    top: 34px;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    max-height: none;
-  }
+.stage.beside .log {
+  position: absolute;
+  top: 34px;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  max-height: none;
 }
 
 /*
@@ -1070,6 +1081,24 @@ svg.scene {
 .cell.tone-bad,
 .tray.tone-bad { stroke-dasharray: 5 3; }
 .cell-text.tone-key { fill: #97104e; }
+
+/*
+ * A named pointer (top, head, tail, lo, hi): one style on every page. White,
+ * a 1.5px outline in the secondary ink, the text face at 600. Never a
+ * categorical hue or a state colour, so it is never read as a state.
+ */
+.tag {
+  fill: #fff;
+  stroke: var(--ink-2);
+  stroke-width: 1.5;
+}
+
+.tag-text {
+  font-family: var(--sans) !important;
+  font-size: var(--label-size);
+  font-weight: 600;
+  fill: var(--ink);
+}
 
 /* Categorical tints for grouping. They never signal a state. */
 .hue-0 .cell.tone-idle { fill: #dff3f1; stroke: #17807c; }
@@ -1627,25 +1656,60 @@ td.num {
   border: 0;
 }
 
-/* ---- example code beside the stage ------------------------------------- */
 
-.side-tabs,
+/* ---- example code ------------------------------------------------------- */
+
+/* Show the code with the steps: an on/off toggle among the page's tools. Filled while on. */
+.code-toggle {
+  height: 36px;
+  padding: 0 14px;
+  border: 1.5px solid var(--ink-2);
+  border-radius: 999px;
+  background: #fff;
+  font: 600 0.95rem var(--sans);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.code-toggle:hover {
+  background: #e4eaf4;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.code-toggle[aria-pressed='true'] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+/* A small header over each code surface: its name, and the language switch. */
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  padding: 2px 12px 2px 14px;
+  border-top: 1px solid var(--rule);
+}
+
+.code-title {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
 .code-langs {
   display: flex;
   align-items: center;
   gap: 2px;
 }
 
-.side-tabs {
-  height: 40px;
-  padding: 0 12px;
-}
-
-.side-tab,
 .code-lang {
   height: 28px;
   padding: 0 10px;
-  border: 0;
+  border: 1.5px solid transparent;
   border-radius: 7px;
   background: none;
   font: 600 0.86rem var(--sans);
@@ -1653,51 +1717,43 @@ td.num {
   cursor: pointer;
 }
 
-.side-tab:hover,
 .code-lang:hover {
-  background: var(--paper);
+  background: #e4eaf4;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
-.side-tab[aria-pressed='true'],
+/* The language is a secondary choice: outlined. */
 .code-lang[aria-pressed='true'] {
-  background: var(--ink);
-  color: #fff;
+  background: #fff;
+  border-color: var(--ink);
+  color: var(--ink);
 }
 
-.log-wrap[data-view='code'] > .log,
-.log-wrap[data-view='steps'] > .code-panel {
-  display: none;
-}
-
-/* The language switch shares the row the Steps and Code tabs sit on. */
-.code-panel {
-  display: grid;
-  grid-template-rows: 40px minmax(0, 1fr);
-  margin-top: -40px;
-  pointer-events: none;
-}
-
-.code-langs {
-  justify-self: end;
-  padding-right: 12px;
-  pointer-events: auto;
+.code-view,
+.code-window-view {
+  position: relative;
+  min-height: 0;
 }
 
 .code-body {
   position: relative;
-  pointer-events: auto;
   overflow: auto;
   max-height: 380px;
   border-top: 1px solid var(--rule);
-  scroll-padding-block: 28px;
 }
 
-.code-empty {
+.code-empty,
+.code-note {
   margin: 0;
   padding: 18px 20px;
   font-size: 0.9rem;
   color: var(--ink-2);
-  max-width: 34ch;
+  max-width: 40ch;
+}
+
+.code-note {
+  padding: 10px 14px 0;
 }
 
 .code {
@@ -1708,7 +1764,6 @@ td.num {
   tab-size: 4;
 }
 
-/* A line too long for the panel wraps under its own start, so nothing is ever cut off. */
 .code-line {
   display: grid;
   grid-template-columns: 3.2ch minmax(0, 1fr);
@@ -1717,6 +1772,11 @@ td.num {
   border-left: 3px solid transparent;
 }
 
+/*
+ * A line too long for the column wraps with a hanging indent: the first line
+ * sits at its own indent (set inline as padding, pulled back by text-indent)
+ * and its continuation hangs 2ch deeper, so block structure stays readable.
+ */
 .code-line code {
   font: inherit;
   white-space: pre-wrap;
@@ -1724,9 +1784,18 @@ td.num {
   min-height: 1.6em;
 }
 
+/* The leading spaces stay in the text, so a copied listing keeps its indentation, but take no room. */
+.code-indent {
+  font-size: 0;
+}
+
 .code-no {
   text-align: right;
   color: var(--ink-3);
+  user-select: none;
+}
+
+.code-running {
   user-select: none;
 }
 
@@ -1750,6 +1819,11 @@ td.num {
   font-style: italic;
 }
 
+/* On the tint, comments darken so small italic stays well above 4.5:1. */
+.code-line.on .tok-comment {
+  color: #47566b;
+}
+
 .tok-string,
 .tok-number {
   color: #17605d;
@@ -1760,43 +1834,228 @@ td.num {
   font-weight: 700;
 }
 
-@media (min-width: 1200px) {
-  /* Code needs more room than a list of steps, so the side column widens while it shows. */
-  .stage.with-code:not(.compact) {
-    grid-template-columns: minmax(0, 1fr) minmax(420px, 48%);
+/* Highlighted lines out of view: a control on the edge where they are, which scrolls to them. */
+.code-more {
+  position: absolute;
+  right: 12px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1.5px solid var(--ink-2);
+  border-radius: 999px;
+  background: #fff;
+  font: 600 0.8rem var(--sans);
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgb(15 27 45 / 0.12);
+}
+
+.code-more[hidden] {
+  display: none;
+}
+
+.code-more:hover {
+  background: #e4eaf4;
+  text-decoration: underline;
+}
+
+
+/*
+ * Lines out of view above: the control sits in the header row, beside the
+ * name, so it covers no code. Lines below: on the bottom edge.
+ */
+.code-more.up {
+  top: -29px;
+  left: 62px;
+  right: auto;
+  min-height: 24px;
+}
+
+.code-more.down {
+  bottom: -12px;
+  min-height: 24px;
+}
+
+/* The side column's listing ends at the transport, which sits above it: keep the control inside. */
+.code-view .code-more.down {
+  bottom: 6px;
+}
+
+/*
+ * The live window: with the code on, when it is not in the side column, the
+ * listing sits under the canvas and follows the live lines, so the picture
+ * and the code are read together. It scrolls to the rest of the listing.
+ */
+.code-window {
+  position: relative;
+  /* Above the transport, so a control on its lower edge is not covered. */
+  z-index: 3;
+  background: var(--surface);
+}
+
+.code-window-body {
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  border-top: 1px solid var(--rule);
+  /* Up to eight rows of code: fewer when a tall scene needs the room (the stage sets --code-rows). */
+  height: calc(var(--code-rows, 8) * 1.65 * 0.75rem + 12px);
+}
+
+.code-window .code {
+  padding: 6px 0;
+}
+
+/* The canvas gives up some height for the window, so the readout, the live line and the transport fit together. */
+.stage.with-code:not(.code-beside):not(.compact) {
+  --canvas-h: clamp(240px, calc(100vh - 530px), 560px);
+}
+
+/*
+ * From 1360px with the code on, the side column widens and holds both: the
+ * step log on top (about 38%, never less than two steps), the code below.
+ */
+.stage.code-beside:not(.compact) {
+  --log-h: max(176px, calc(38% - 34px));
+  grid-template-columns: minmax(0, 1fr) clamp(380px, 38%, 480px);
+}
+
+.stage.code-beside .log {
+  bottom: auto;
+  height: var(--log-h);
+}
+
+.stage.code-beside .code-panel {
+  position: absolute;
+  top: calc(34px + var(--log-h));
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.stage.code-beside .code-view {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.stage.code-beside .code-body {
+  flex: 1 1 auto;
+  max-height: none;
+}
+
+@media (max-width: 899px) {
+  /* A phone: a strip of three rows. */
+  .code-window-body {
+    height: calc(3 * 1.65 * 0.75rem + 8px);
   }
 
-  .log-wrap:has(> .side-tabs) > .log-title {
-    display: none;
+  .code-window .code {
+    padding: 4px 0;
   }
 
-  .log-wrap:has(> .side-tabs) > .log {
-    top: 40px;
+  /* The strip's header stays slim so the readout, the canvas, the strip and the transport fit on a phone. */
+  .code-window .code-head {
+    min-height: 26px;
+    padding-block: 0;
   }
 
-  .code-panel {
-    position: absolute;
-    inset: 0;
-    margin-top: 0;
+  .code-window .code-lang {
+    height: 26px;
   }
 
-  .code-body {
-    max-height: none;
+  .code-window .code-more.up {
+    top: -25px;
   }
 }
 
 @media (max-width: 520px) {
-  .side-tab,
-  .code-lang {
+
+  /* A phone keeps the step list folded away, so a fourth line keeps the point of a long sentence. */
+  .readout-msg {
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+  }
+}
+
+/*
+ * A short screen (a phone held sideways): the transport is one row no taller
+ * than 56px, and the readout is tighter, so the canvas has room. The stage
+ * scrolls the page with the chip to keep it clear of the transport.
+ */
+@media (max-height: 500px) {
+  .transport {
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 6px 10px;
+    max-height: 56px;
+  }
+
+  .transport-nav {
+    gap: 0;
+  }
+
+  .icon-btn {
+    width: 36px;
+  }
+
+  .play-btn {
+    min-width: 0;
+    padding: 0 12px 0 10px;
+  }
+
+  .transport-scrub {
+    flex: 1 1 60px;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .step-label {
+    min-width: 0;
+    font-size: 0.8rem;
+  }
+
+  .speed {
+    flex: 0 0 auto;
+    padding: 2px;
+  }
+
+  .speed-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .speed-btn,
+  .scrub {
     height: 40px;
   }
 
-  .side-tabs {
-    height: 48px;
+  .speed-btn {
+    flex: 0 0 auto;
+    min-width: 34px;
+    padding: 0 3px;
+    font-size: 0.8rem;
   }
 
-  .code-panel {
-    grid-template-rows: 48px minmax(0, 1fr);
-    margin-top: -48px;
+  .pan-hint {
+    display: none !important;
+  }
+
+  .readout {
+    padding: 8px 16px;
+    gap: 4px;
+  }
+
+  .readout-msg {
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
   }
 }
