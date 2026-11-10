@@ -32,6 +32,7 @@ for (const group of GROUPS) {
   nav.append(navGroup(group, items));
 }
 nav.append(navGroup('Compare', [h('li', null, link('/compare', 'Head to head', 'Run one workload through every structure'))]));
+nav.append(navGroup('System designs', [h('li', null, link('/d/web-crawler', 'Distributed web crawler', 'An interactive high-level design with a guided tour'))]));
 
 const menu = h('details.menu', null, h('summary', null, 'All structures'), nav);
 const wide = matchMedia('(min-width: 900px)');
@@ -77,6 +78,9 @@ async function route(): Promise<void> {
   } else if (path === '/compare') {
     document.title = 'Head to head | Data structures, visualised';
     mount = mountCompare(main);
+  } else if (path === '/d/web-crawler') {
+    document.title = 'Distributed web crawler | Data structures, visualised';
+    mount = Promise.all([import('./ui/design-page'), import('./designs/web-crawler')]).then(([page, d]) => page.mountDesign(main, d.webCrawler));
   } else if (m && entry(m[1]) && isReady(m[1])) {
     document.title = `${entry(m[1])!.name} | Data structures, visualised`;
     mount = mountStructure(main, m[1]);
