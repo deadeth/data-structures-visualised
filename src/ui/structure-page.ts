@@ -200,7 +200,7 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
             const [opId, ...args] = def.fill!(state);
             quiet(opId, args);
           }
-          rest(`Added ${FILL_COUNT} random keys without animating them.`);
+          rest(`Added up to ${FILL_COUNT} random keys without animating them. Keys that would not fit were skipped.`);
         },
       }, `Add ${FILL_COUNT} random keys`),
     );

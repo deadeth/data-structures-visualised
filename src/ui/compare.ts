@@ -14,9 +14,10 @@ interface Row {
 
 const LOOKUPS = 200;
 
-function measure(def: StructureDef, name: string, keys: number[], probes: number[]): Row {
+function measure(def: StructureDef, name: string, keys: number[], probes: number[], override: Record<string, number> = {}): Row {
   const params: Record<string, number> = {};
   for (const p of def.params ?? []) params[p.id] = p.default;
+  Object.assign(params, override);
   const state = def.create(params);
   const insert = def.ops.find((o) => o.id === def.bench!.insert) as OpDef<unknown>;
   const search = def.ops.find((o) => o.id === def.bench!.search) as OpDef<unknown>;
@@ -81,7 +82,8 @@ export async function mountCompare(host: HTMLElement): Promise<() => void> {
     const probes = Array.from({ length: LOOKUPS }, () => all[Math.floor(rnd() * n)]);
     const rows: Row[] = [];
     for (const { def, name } of defs) {
-      rows.push(measure(def, name, keys, probes));
+      if (def.bench?.variants) for (const v of def.bench.variants) rows.push(measure(def, v.label, keys, probes, v.params));
+      else rows.push(measure(def, name, keys, probes));
       await new Promise((r) => setTimeout(r, 0));
       if (!alive) return;
     }

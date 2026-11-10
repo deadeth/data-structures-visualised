@@ -198,6 +198,11 @@ export interface StructureDef<S = any> {
   /** Add several keys at once without animation. Returns [opId, ...args]. */
   fill?(state: S): [string, ...(number | string)[]];
   /** Op ids the head-to-head page can drive with integer keys. */
-  bench?: { insert: string; search: string };
+  bench?: {
+    insert: string;
+    search: string;
+    /** Run more than once with different params, e.g. a narrow and a wide node. */
+    variants?: { label: string; params: Record<string, number> }[];
+  };
   info: Info;
 }

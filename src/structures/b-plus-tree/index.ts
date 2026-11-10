@@ -485,7 +485,14 @@ const def: StructureDef<BPlusState> = {
     ['delete', 12],
   ],
   fill: (s) => ['insert', absentKey(s)],
-  bench: { insert: 'insert', search: 'search' },
+  bench: {
+    insert: 'insert',
+    search: 'search',
+    variants: [
+      { label: 'B+ tree, 4 children per node', params: { order: 4 } },
+      { label: 'B+ tree, 64 children per node', params: { order: 64 } },
+    ],
+  },
   info: {
     summary:
       'A B+ tree keeps keys sorted in wide, shallow nodes. Internal nodes only steer the search; every key lives in a leaf, and the leaves are chained together. Wide nodes mean few levels, and few levels mean few disk reads.',
