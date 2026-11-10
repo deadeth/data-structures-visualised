@@ -20,9 +20,11 @@ op.run(state, args, rec)
 
 **Follow the key.** Pass a `probe` on every frame where the key is "somewhere": `{ text: '42', at: nodeId, cell?: i }`. The magenta chip travels to that node. Magenta means the followed key and nothing else, so only use the `key` tone for the cell that holds that key.
 
-**Show every comparison.** Each time the algorithm compares the key with something, call `rec.compare(left, op, right, verdict, { probe })`. `left` is the key being followed. `verdict` says what the result means for the next move, in lower case with no full stop: `'go left'`, `'keep scanning right'`. Mark the cell or node being compared with the `compare` tone first, then set it back (`'idle'` clears a cell mark) or to `path`.
+**Show every comparison.** Each time the algorithm compares the key with something, call `rec.compare(left, op, right, verdict, { probe })`. `left` is the key being followed, or a value derived from it (a hash, a bit position, a distance). The readout always shows the followed key, taken from the probe, as the magenta pill; when `left` is not that key it is drawn after it in a neutral pill, so magenta never lands on a derived value. That is why every operation that follows a key should pass a probe at least once. `verdict` says what the result means for the next move, in lower case with no full stop: `'go left'`, `'keep scanning right'`. Mark the cell or node being compared with the `compare` tone first, then set it back (`'idle'` clears a cell mark) or to `path`.
 
-**Tones have fixed meanings.** `path` visited, `compare` being compared now, `ok` found or written, `bad` removed, evicted or missed, `dim` ruled out, `key` holds the followed key. `hue` (0 to 5) is for grouping only, such as which server owns a key.
+**Tones have fixed meanings.** `path` visited, `compare` being compared now, `ok` found or written, `bad` removed, evicted or missed (drawn with a dashed outline as well as red, so it never relies on colour alone), `dim` ruled out, `key` holds the followed key. `hue` (0 to 5) is for grouping only, such as which server owns a key. Categorical hues must stay well clear of the state colours (magenta, amber, blue, green, red) so a grouped cell is never read as a state; if you add or change one, keep ink text above 7:1 on its fill and its stroke above 4.5:1.
+
+**Labels under cells.** `sub` is furniture by default (an array index), drawn small in the text face. Set `subValue: true` when the label is data the reader should track, such as a distance so far; it is then drawn in the mono face at full weight.
 
 **Counters.** Use `comparisons` (added for you by `rec.compare`), `reads` for nodes, buckets, pages or tables touched, and `writes` for nodes or slots written. Add others only when they are the point of the structure (`evictions`, `moved`). List the ones to display in `counters`.
 
@@ -38,7 +40,7 @@ op.run(state, args, rec)
 
 ## Layout
 
-`layout(state)` returns absolute positions in px for a scene roughly 700 to 1000 wide and up to about 380 tall. The renderer scales the scene to fit, so do not chase exact sizes, but do avoid overlaps. Use the helpers in `src/core/geometry.ts`:
+`layout(state)` returns absolute positions in px for a scene roughly 700 to 1000 wide and up to about 380 tall. The renderer scales the scene to fit, but never below 0.75 (cell text would drop under 12 CSS px): a scene that is still too wide makes the canvas scroll sideways on narrow screens, following the probe. So keep scenes compact. Aim for no more than about 950 wide, so the scene fits beside the step log on a 1440px screen without scrolling, and avoid overlaps. Labels and titles are drawn at 14px in scene units; leave room for them. Use the helpers in `src/core/geometry.ts`:
 
 - `boxWidth(texts)` and `nodeSize(node)` for the drawn size of a node
 - `tidyTree({ root, children, width })` for any tree (pass `null` children to keep left and right apart in binary trees)

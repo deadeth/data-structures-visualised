@@ -1,5 +1,5 @@
 import { entry, loadStructure } from '../catalog';
-import { h } from '../core/dom';
+import { figures, h, scrollRegion } from '../core/dom';
 import { Recorder } from '../core/recorder';
 import type { ArgDef, Frame, OpDef, StructureDef } from '../core/types';
 import { Stage } from './stage';
@@ -8,7 +8,12 @@ const FILL_COUNT = 8;
 
 /** Turn "log_B n" into "log<sub>B</sub> n". Input is our own content, never user text. */
 function maths(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/_(\w)/g, '<sub>$1</sub>');
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/_(\w)/g, '<sub>$1</sub>')
+    // A big-O never breaks across lines; the words after it may.
+    .replace(/O\((?:[^()]|\([^()]*\))*\)/g, '<span class="big-o">$&</span>');
 }
 
 function parseArg(def: ArgDef, raw: string): { value?: number | string; error?: string } {
@@ -24,6 +29,11 @@ function parseArg(def: ArgDef, raw: string): { value?: number | string; error?: 
   const word = text.toLowerCase();
   if (!/^[a-z]{1,12}$/.test(word)) return { error: `${def.label}: use 1 to 12 letters, a to z.` };
   return { value: word };
+}
+
+/** "Skip list" reads as "skip list" mid-sentence; names such as "B+ tree", "AVL tree" and "Bloom filter" keep their capital. */
+function inSentence(name: string): string {
+  return /^(Bloom\b|[A-Z]+\+?\s|[A-Z]{2})/.test(name) ? name : name.charAt(0).toLowerCase() + name.slice(1);
 }
 
 export const LEGEND: { tone: string; label: string }[] = [
@@ -65,7 +75,7 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
   seed();
 
   // ---- page skeleton -------------------------------------------------------
-  const error = h('p.form-error', { role: 'alert' });
+  const error = h('p.form-error', { id: 'op-error', role: 'alert' });
   const opsBar = h('div.ops');
   const tools = h('div.tools');
   const stageHost = h('div');
@@ -73,16 +83,17 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
   const page = h(
     'article.structure', null,
     h('header.page-head', null, h('h1', null, meta.name), h('p.lede', null, meta.blurb)),
-    h('div.controls', null, opsBar, tools, error),
+    // Row one: the operations, with the line for input errors reserved under them. Row two: setup.
+    h('div.controls', null, opsBar, error, tools),
     stageHost,
     h('div.under-stage', null, facts, legend()),
   );
   host.append(page);
-  const stage = new Stage(stageHost, { counters: def.counters });
+  const stage = new Stage(stageHost, { counters: def.counters, name: inSentence(meta.name) });
 
   const refreshFacts = () => {
     facts.replaceChildren();
-    for (const f of def.status?.(state) ?? []) facts.append(h('div', null, h('dt', null, f.label), h('dd', null, f.value)));
+    for (const f of def.status?.(state) ?? []) facts.append(h('div', null, h('dt', null, f.label), h('dd', null, figures(f.value))));
   };
 
   const rest = (message: string) => {
@@ -122,7 +133,10 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
         autocomplete: 'off',
         spellcheck: false,
         placeholder: 'random',
-                oninput: () => (auto[i] = input.value.trim() === ''),
+        oninput: () => {
+          auto[i] = input.value.trim() === '';
+          clearError();
+        },
         onkeydown: (e: KeyboardEvent) => {
           if (e.key === 'Enter') go(group.ops[0]);
         },
@@ -133,7 +147,7 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
     });
     const go = (op: OpDef<unknown>) => {
       stopTour();
-      error.textContent = '';
+      clearError();
       if (auto.some(Boolean) || inputs.some((i) => i.value.trim() === '')) {
         const suggestion = op.suggest?.(state) ?? [];
         inputs.forEach((input, i) => {
@@ -148,17 +162,28 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
         const parsed = parseArg(group.args[i], inputs[i].value);
         if (parsed.error) {
           error.textContent = parsed.error;
+          inputs[i].setAttribute('aria-invalid', 'true');
+          inputs[i].setAttribute('aria-describedby', error.id);
           inputs[i].focus();
           return;
         }
         args.push(parsed.value!);
       }
+      stage.reveal();
       void runOp(op, args);
     };
     const buttons = group.ops.map((op) =>
       h(`button.btn.${op.intent ?? 'neutral'}`, { type: 'button', onclick: () => go(op) }, op.label),
     );
     opsBar.append(h('div.op-group', null, ...fields, h('div.op-buttons', null, ...buttons)));
+  }
+
+  function clearError(): void {
+    error.textContent = '';
+    for (const input of opsBar.querySelectorAll('input[aria-invalid]')) {
+      input.removeAttribute('aria-invalid');
+      input.removeAttribute('aria-describedby');
+    }
   }
 
   // ---- tools ---------------------------------------------------------------
@@ -171,8 +196,10 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
   }
   async function playTour(): Promise<void> {
     stage.finish();
+    clearError();
     seed();
     rest('Starting the tour from the original contents.');
+    stage.reveal();
     touring = true;
     tourBtn.textContent = 'Stop the tour';
     for (const [opId, ...args] of def.tour) {
@@ -261,19 +288,25 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
       h(
         'section.note.wide', null,
         h('h2', null, 'Cost of each operation'),
-        h(
+        scrollRegion(h(
           'div.table-wrap', null,
           h(
-            'table.complexity', null,
+            'table.complexity.stack', null,
             h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'Operation'), h('th', { scope: 'col' }, 'Average'), h('th', { scope: 'col' }, 'Worst case'), h('th', { scope: 'col' }, 'Why'))),
             h(
               'tbody', null,
               info.complexity.map((r) =>
-                h('tr', null, h('th', { scope: 'row' }, r.op), h('td.num', { html: maths(r.average) }), h('td.num', { html: maths(r.worst) }), h('td', null, r.note ?? '')),
+                h(
+                  'tr', null,
+                  h('th', { scope: 'row' }, r.op),
+                  h('td.num', { 'data-label': 'Average', html: maths(r.average) }),
+                  h('td.num', { 'data-label': 'Worst case', html: maths(r.worst) }),
+                  h('td', { 'data-label': 'Why' }, r.note ?? ''),
+                ),
               ),
             ),
           ),
-        ),
+        ), 'Cost of each operation'),
         h('p.space', null, h('strong', null, 'Space: '), h('span', { html: maths(info.space) })),
       ),
       h(

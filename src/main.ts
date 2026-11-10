@@ -19,14 +19,19 @@ function link(path: string, label: string, title?: string): HTMLAnchorElement {
   return a;
 }
 
+// Group labels are not headings: they would come before each page's h1. Each list is named by its label instead.
 const nav = h('nav.site-nav', { 'aria-label': 'Data structures' });
+const navGroup = (label: string, items: HTMLElement[]) => {
+  const id = `nav-${label.toLowerCase().replace(/[^a-z]+/g, '-')}`;
+  return h('div.nav-group', null, h('p.nav-label', { id }, label), h('ul', { 'aria-labelledby': id }, items));
+};
 for (const group of GROUPS) {
   const items = CATALOG.filter((c) => c.group === group).map((c) =>
     h('li', null, isReady(c.id) ? link(`/s/${c.id}`, c.name, c.blurb) : h('span.soon', { title: 'Not built yet' }, c.name)),
   );
-  nav.append(h('div.nav-group', null, h('h2', null, group), h('ul', null, items)));
+  nav.append(navGroup(group, items));
 }
-nav.append(h('div.nav-group', null, h('h2', null, 'Compare'), h('ul', null, h('li', null, link('/compare', 'Head to head', 'Run one workload through every structure')))));
+nav.append(navGroup('Compare', [h('li', null, link('/compare', 'Head to head', 'Run one workload through every structure'))]));
 
 const menu = h('details.menu', null, h('summary', null, 'All structures'), nav);
 const wide = matchMedia('(min-width: 900px)');

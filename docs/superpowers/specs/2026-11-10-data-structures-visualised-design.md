@@ -18,9 +18,16 @@ Operations produce frames; the player consumes them. A frame is a complete scene
 
 One shared stage on every page: a readout showing the followed key and the current comparison, the canvas, a clickable step log, transport (restart, step back, play or pause, step forward, end, scrubber), speed from 0.25× to 8×, and counters.
 
+Stage rules (design council round 1):
+
+- The readout always shows the followed key (the latest probe of the operation) as the magenta pill. A comparison whose left side is that key reads `[key] op [right]`; one about a derived value (a hash, a bit, a distance) shows the key, then the value in a neutral pill. Between comparisons the key stays, dimmed. Before any operation the chip column collapses; during one it has a fixed width, and the sentence a fixed height, so nothing shifts between steps.
+- Scene text never renders below 12 CSS px (scale at least 0.75). A scene that is still too wide scrolls sideways and follows the probe. On narrow screens the canvas takes the height of its content (up to 70% of the viewport); on wider ones it grows only if a scene would otherwise be squeezed.
+- Order is readout, canvas, transport, counters, step log. At 1200px and above the log sits beside the canvas; below that it goes under the counters as an "All steps" disclosure, folded away on phones. Steps not yet reached show only their number.
+- Space always plays or pauses (except in text fields), the arrows step, `[` and `]` change speed. Slow speeds slow the movement too (by the square root of the slow-down). Screen readers hear a step when the reader moves through steps, pauses or reaches the end, never during playback; the home demo is never announced and does not start itself under reduced motion.
+
 ## Design system
 
-- Magenta is reserved for the key being followed. Amber is "being compared now", blue is "visited", green is "found or written", red is "removed or missed".
+- Magenta is reserved for the key being followed. Amber is "being compared now", blue is "visited", green is "found or written", red is "removed or missed" (also dashed, so it does not rely on colour). Categorical hues for grouping stay clear of all five. Charts use a neutral grey, not amber.
 - Type: Atkinson Hyperlegible Next for text and Atkinson Hyperlegible Mono for keys, chosen because the digits are hard to misread.
 - Cool grey paper, white stage, dark ink readout strip. One dark block per page for the interview notes.
 

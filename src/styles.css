@@ -7,13 +7,13 @@
   --surface: #ffffff;
   --ink: #0f1b2d;
   --ink-2: #47566b;
-  --ink-3: #6b7a8f;
+  --ink-3: #5b6a7f;
   --rule: #d3dae3;
   --rule-strong: #8493a8;
 
   --key: #d11a6f;
   --key-soft: #fde4f0;
-  --compare: #c97f00;
+  --compare: #a86a00;
   --compare-soft: #ffefc4;
   --path: #2a63e0;
   --path-soft: #e2ebff;
@@ -151,7 +151,7 @@ select {
   margin-top: 18px;
 }
 
-.nav-group h2 {
+.nav-label {
   font-size: 0.82rem;
   font-weight: 500;
   color: var(--ink-3);
@@ -160,7 +160,9 @@ select {
 
 .site-nav a,
 .site-nav .soon {
-  display: block;
+  display: flex;
+  align-items: center;
+  min-height: 34px;
   padding: 5px 10px;
   margin-left: -10px;
   border-radius: 7px;
@@ -233,25 +235,28 @@ h1 {
 
 /* ---- controls ---------------------------------------------------------- */
 
+/* Two rows on every page: operations, then setup. Both start at the left edge. */
 .controls {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px 28px;
-  align-items: flex-end;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: flex-start;
   margin-bottom: 14px;
 }
 
-.controls .form-error {
-  flex-basis: 100%;
-}
-
-.ops,
-.tools {
+.ops {
   display: flex;
   flex-wrap: wrap;
   gap: 10px 22px;
   align-items: flex-end;
+}
+
+.tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-items: center;
+  /* Text buttons: pull the first label back so it lines up with the fields above. */
+  margin-left: -10px;
 }
 
 .op-group {
@@ -259,6 +264,10 @@ h1 {
   flex-wrap: wrap;
   gap: 8px;
   align-items: flex-end;
+}
+
+.op-group.spread {
+  gap: 8px 20px;
 }
 
 .op-buttons {
@@ -303,8 +312,18 @@ h1 {
   font-weight: 400;
 }
 
-.field.param select {
-  height: 36px;
+.field input[aria-invalid='true'] {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 1px var(--bad);
+}
+
+/* A parameter sits in the setup row: label beside the select, the select as tall as the buttons. */
+.field.param {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 14px;
+  font-size: 0.95rem;
 }
 
 .btn {
@@ -340,16 +359,21 @@ h1 {
   background: var(--bad-soft);
 }
 
+/* Setup actions: quiet text buttons, full-strength ink so they never read as disabled. */
 .btn.quiet {
-  border-color: var(--rule);
+  border-color: transparent;
   background: transparent;
-  font-weight: 550;
-  height: 36px;
+  padding: 0 10px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.22em;
 }
 
 .btn.quiet:hover {
-  border-color: var(--rule-strong);
-  background: var(--surface);
+  background: #e4e9f0;
+  text-decoration-color: currentColor;
 }
 
 .btn:disabled {
@@ -360,27 +384,35 @@ h1 {
 .form-error {
   color: #a52323;
   font-weight: 600;
-  min-height: 0;
-}
-
-.form-error:empty {
-  display: none;
+  font-size: 0.93rem;
+  /* The line is always reserved, so an error appearing does not push the stage down. */
+  min-height: 1.5em;
+  line-height: 1.5;
+  margin: 2px 0 4px;
 }
 
 /* ---- stage ------------------------------------------------------------- */
 
+/*
+ * One column in DOM order (readout, canvas, transport, counters, step log)
+ * until there is room for the log beside the canvas.
+ */
 .stage {
   /* Tall enough to read, short enough that the transport stays on screen on a laptop. */
-  --canvas-h: clamp(330px, calc(100vh - 505px), 560px);
+  --canvas-h: clamp(330px, calc(100vh - 515px), 560px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   overflow: hidden;
+  position: relative;
 }
 
 .readout {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  grid-template-columns: var(--cmp-w, auto) minmax(0, 1fr);
   gap: 6px 28px;
   align-items: center;
   padding: 14px 20px;
@@ -389,17 +421,36 @@ h1 {
   color: #fff;
 }
 
+/* Before any operation there is no key: the sentence starts at the left padding. */
+.readout.at-rest {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.readout.at-rest .readout-cmp:not(.measure) {
+  display: none;
+}
+
 .readout-cmp {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 10px;
   font: 700 1.7rem/1 var(--mono);
-  min-width: 11.5ch;
   min-height: 44px;
+  white-space: nowrap;
+}
+
+.readout-cmp.measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: max-content;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .cmp-key,
+.cmp-left,
 .cmp-other {
   padding: 7px 12px;
   border-radius: 999px;
@@ -408,6 +459,25 @@ h1 {
 .cmp-key {
   background: var(--key);
   color: #fff;
+}
+
+/* The key between comparisons: still there, quieter. */
+.cmp-key.dim {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--key);
+  color: #ffc9e1;
+}
+
+/* The left side of a comparison that is not the key itself (a hash, a distance, a balance). */
+.cmp-left {
+  background: #24324a;
+  box-shadow: inset 0 0 0 1px #3d4f6e;
+  color: #fff;
+  border-radius: 8px;
+}
+
+.cmp-gap {
+  width: 6px;
 }
 
 .cmp-other {
@@ -433,20 +503,23 @@ h1 {
   font-size: 1.14rem;
 }
 
-.stage-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-}
-
-.stage.compact .stage-body {
-  grid-template-columns: minmax(0, 1fr);
-}
-
 .canvas {
+  position: relative;
   height: var(--canvas-h);
+  /* A scene too wide to read at full width scrolls sideways; the renderer sizes the height. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
   background-image: radial-gradient(circle, #e3e8ef 1px, transparent 1.2px);
   background-size: 22px 22px;
   background-position: 11px 11px;
+  background-attachment: local;
+}
+
+.canvas:focus-visible {
+  outline-offset: -3px;
+  border-radius: 0;
 }
 
 .stage.compact {
@@ -460,32 +533,34 @@ svg.scene {
 }
 
 .log-wrap {
-  border-left: 1px solid var(--rule);
-  display: flex;
-  flex-direction: column;
-  height: var(--canvas-h);
+  border-top: 1px solid var(--rule);
 }
 
 .log-title {
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: var(--ink-3);
-  padding: 10px 14px 6px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 10px 20px;
+  min-height: 44px;
+  cursor: pointer;
 }
 
 .log {
-  flex: 1;
   overflow-y: auto;
+  max-height: 300px;
   counter-reset: step;
-  padding: 0 6px 10px;
+  padding: 16px 6px;
   position: relative;
+  scroll-padding-block: 16px;
+  /* Fade the edges so a part-scrolled list reads as continuing, not as cut. */
+  mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0.2) 0, #000 16px, #000 calc(100% - 16px), rgb(0 0 0 / 0.2) 100%);
 }
 
 .log li {
   counter-increment: step;
 }
 
-.log button {
+.log button,
+.log li.ahead {
   display: grid;
   grid-template-columns: 2.1em 1fr;
   width: 100%;
@@ -497,10 +572,14 @@ svg.scene {
   font-size: 0.88rem;
   line-height: 1.35;
   color: var(--ink-3);
+}
+
+.log button {
   cursor: pointer;
 }
 
-.log button::before {
+.log button::before,
+.log li.ahead::before {
   content: counter(step);
   font: 500 0.8rem/1.5 var(--mono);
   color: var(--ink-3);
@@ -508,6 +587,17 @@ svg.scene {
 
 .log button > * {
   grid-column: 2;
+}
+
+/* A step not reached yet: its number, and a quiet rule where the words will be. */
+.log li.ahead {
+  align-items: center;
+}
+
+.log .placeholder {
+  display: block;
+  width: 4.5em;
+  border-top: 2px dotted var(--rule-strong);
 }
 
 .log button:hover {
@@ -524,9 +614,62 @@ svg.scene {
   font-weight: 600;
 }
 
+.log li.current button::before {
+  color: var(--ink-2);
+}
+
 .log code {
   font: 700 0.9rem var(--mono);
   color: inherit;
+}
+
+@media (min-width: 1200px) {
+  .stage:not(.compact) {
+    grid-template-columns: minmax(0, 1fr) 300px;
+    grid-template-areas:
+      'readout readout'
+      'canvas log'
+      'transport transport'
+      'hint hint'
+      'counters counters';
+  }
+
+  .stage:not(.compact) > .readout { grid-area: readout; }
+  .stage:not(.compact) > .canvas { grid-area: canvas; }
+  .stage:not(.compact) > .transport { grid-area: transport; }
+  .stage:not(.compact) > .shortcuts { grid-area: hint; }
+  .stage:not(.compact) > .counters { grid-area: counters; }
+
+  /* Beside the canvas the log is a panel as tall as the canvas, and never sets that height itself. */
+  .log-wrap {
+    grid-area: log;
+    position: relative;
+    border-top: 0;
+    border-left: 1px solid var(--rule);
+  }
+
+  .log-title {
+    list-style: none;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--ink-3);
+    padding: 10px 14px 6px;
+    min-height: 0;
+    cursor: default;
+  }
+
+  .log-title::-webkit-details-marker {
+    display: none;
+  }
+
+  .log {
+    position: absolute;
+    top: 34px;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    max-height: none;
+  }
 }
 
 .transport {
@@ -646,6 +789,37 @@ svg.scene {
   color: #fff;
 }
 
+.shortcuts {
+  display: none;
+  padding: 0 16px 10px;
+  margin-top: -4px;
+  font-size: 0.86rem;
+  color: var(--ink-2);
+}
+
+.shortcuts kbd {
+  font: 600 0.8rem var(--mono);
+  padding: 0 5px;
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #fafbfc;
+  color: var(--ink);
+}
+
+/* Only where there is likely a keyboard: a wide layout without a touch screen as the main pointer. */
+@media (min-width: 900px) {
+  .shortcuts {
+    display: block;
+  }
+}
+
+@media (pointer: coarse) {
+  .shortcuts {
+    display: none;
+  }
+}
+
 .counters {
   display: flex;
   flex-wrap: wrap;
@@ -699,8 +873,14 @@ svg.scene {
   color: var(--ink-2);
 }
 
+/* Figures in mono; words ("of", "none yet") in the text face. */
 .facts dd {
+  color: var(--ink-2);
+}
+
+.facts .fig {
   font: 700 1rem var(--mono);
+  color: var(--ink);
 }
 
 .legend {
@@ -728,7 +908,7 @@ svg.scene {
 .swatch.tone-compare { background: var(--compare-soft); border-color: var(--compare); }
 .swatch.tone-path { background: var(--path-soft); border-color: var(--path); }
 .swatch.tone-ok { background: var(--ok-soft); border-color: var(--ok); }
-.swatch.tone-bad { background: var(--bad-soft); border-color: var(--bad); }
+.swatch.tone-bad { background: var(--bad-soft); border-color: var(--bad); border-style: dashed; }
 
 .home > .legend {
   margin: 14px 2px 0;
@@ -757,20 +937,25 @@ svg.scene {
 .node-title,
 .node-caption {
   font-family: var(--sans) !important;
-  font-size: 12px;
-  fill: var(--ink-3);
+  font-size: 14px;
+  fill: var(--ink-2);
 }
 
 .node-title,
 .node-caption {
-  font-size: 12.5px;
-  fill: var(--ink-2);
   font-weight: 550;
+}
+
+/* A label that is data (a distance so far), not furniture. */
+.cell-sub.value {
+  font-family: var(--mono) !important;
+  font-weight: 650;
+  fill: var(--ink);
 }
 
 .tray {
   fill: #edf0f5;
-  stroke: #b3bfce;
+  stroke: #7d8ba0;
   stroke-width: 1.5;
 }
 
@@ -786,13 +971,17 @@ svg.scene {
 .cell.tone-bad { fill: var(--bad-soft); stroke: var(--bad); stroke-width: 2.5; }
 .cell.tone-key { fill: var(--key-soft); stroke: var(--key); stroke-width: 3; }
 .cell.tone-dim { fill: #f4f6f8; stroke: #cbd3dd; }
-.cell-text.tone-dim { fill: #9aa6b6; }
+.cell-text.tone-dim { fill: #64718a; }
+
+/* Missed or removed is never red alone: the outline is dashed too. */
+.cell.tone-bad,
+.tray.tone-bad { stroke-dasharray: 5 3; }
 .cell-text.tone-key { fill: #97104e; }
 
 /* Categorical tints for grouping. They never signal a state. */
 .hue-0 .cell.tone-idle { fill: #dff3f1; stroke: #17807c; }
 .hue-1 .cell.tone-idle { fill: #e9e3fb; stroke: #5f45c9; }
-.hue-2 .cell.tone-idle { fill: #ffe6d0; stroke: #b0560f; }
+.hue-2 .cell.tone-idle { fill: #ece8dc; stroke: #6b5f3a; }
 .hue-3 .cell.tone-idle { fill: #dbeafa; stroke: #1c69ad; }
 .hue-4 .cell.tone-idle { fill: #e6f2c9; stroke: #56780e; }
 .hue-5 .cell.tone-idle { fill: #e3e7ee; stroke: #44546c; }
@@ -836,7 +1025,7 @@ svg.scene {
 .edge.tone-key .edge-head { fill: var(--key); }
 
 .edge-label {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 650;
   fill: var(--ink-2);
   paint-order: stroke;
@@ -867,7 +1056,7 @@ svg.scene {
 
 .decor-label {
   font-family: var(--sans) !important;
-  font-size: 13px;
+  font-size: 14px;
   fill: var(--ink-2);
 }
 
@@ -1002,9 +1191,14 @@ td.num {
   white-space: nowrap;
 }
 
+.complexity td.num {
+  white-space: normal;
+  min-width: 10ch;
+}
+
 .complexity td:last-child {
   color: var(--ink-2);
-  min-width: 26ch;
+  min-width: 20ch;
 }
 
 .space {
@@ -1047,10 +1241,18 @@ td.num {
   font-size: 0.93rem;
 }
 
+.table-caption {
+  color: var(--ink-2);
+  font-size: 0.93rem;
+  margin-bottom: 8px;
+  max-width: 76ch;
+}
+
 .results td.num {
   text-align: right;
   font-size: 1rem;
   font-weight: 650;
+  font-variant-numeric: tabular-nums;
 }
 
 .results thead th:nth-child(2),
@@ -1069,7 +1271,8 @@ td.num {
   display: block;
   height: 14px;
   border-radius: 3px;
-  background: var(--compare);
+  /* Neutral: amber means "being compared now" and nothing else. */
+  background: var(--rule-strong);
 }
 
 .muted {
@@ -1096,10 +1299,11 @@ td.num {
   }
 
   .menu > summary {
-    display: block;
+    display: flex;
+    align-items: center;
+    min-height: 44px;
     cursor: pointer;
     font-weight: 600;
-    padding: 6px 0;
   }
 
   .menu .site-nav {
@@ -1114,22 +1318,26 @@ td.num {
     padding-top: 24px;
   }
 
-  .stage-body {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .stage {
     --canvas-h: 340px;
   }
 
-  .log-wrap {
-    border-left: 0;
-    border-top: 1px solid var(--rule);
-    height: 170px;
+  /* Chips above the sentence. The readout keeps one height through an operation so the canvas never jumps. */
+  .readout,
+  .readout.at-rest {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
   }
 
-  .readout {
-    grid-template-columns: minmax(0, 1fr);
+  .readout-cmp {
+    font-size: 1.35rem;
+    min-height: 38px;
+    gap: 8px;
+  }
+
+  .readout-msg,
+  .readout-msg.verdict {
+    font-size: 1rem;
   }
 
   .notes {
@@ -1140,6 +1348,104 @@ td.num {
     columns: 1;
   }
 
+}
+
+/* Tables restack on a phone: each row becomes a block with its own labels. */
+@media (max-width: 599px) {
+  .table-wrap {
+    overflow: visible;
+  }
+
+  table.stack,
+  table.stack tbody,
+  table.stack tr,
+  table.stack th,
+  table.stack td {
+    display: block;
+  }
+
+  table.stack thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  table.stack tr {
+    padding: 12px 16px;
+  }
+
+  table.stack tr > * {
+    border-top: 0;
+    padding: 0;
+  }
+
+  table.stack tbody tr + tr,
+  table.stack tbody + tbody tr:first-child {
+    border-top: 1px solid #e6eaf0;
+  }
+
+  table.stack tbody th {
+    white-space: normal;
+    margin-bottom: 4px;
+  }
+
+  table.stack td {
+    margin-top: 4px;
+  }
+
+  table.stack td::before {
+    content: attr(data-label);
+    display: block;
+    font: 400 0.86rem/1.4 var(--sans);
+    color: var(--ink-2);
+  }
+
+  /* Short values sit on the same line as their label. */
+  table.stack td.num {
+    white-space: normal;
+    text-align: right;
+  }
+
+  table.stack td.num::before {
+    display: inline;
+    float: left;
+    margin-right: 12px;
+    text-align: left;
+    line-height: 1.6;
+  }
+
+  table.stack td.num::after {
+    content: '';
+    display: block;
+    clear: both;
+  }
+
+  table.stack .bar-cell {
+    width: auto;
+    min-width: 0;
+    margin: 6px 0 2px;
+  }
+
+  table.stack .bar-cell::before {
+    display: none;
+  }
+
+  .cheat.stack .group-row {
+    background: #f7f9fb;
+    padding-block: 8px;
+  }
+
+  .cheat.stack .group-row th {
+    padding: 0;
+    background: none;
+  }
+
+  .complexity td:last-child,
+  .cheat td:last-child {
+    min-width: 0;
+  }
 }
 
 @media (max-width: 520px) {
@@ -1155,7 +1461,21 @@ td.num {
   .speed-btn {
     flex: 1 1 auto;
     min-width: 0;
+    height: 40px;
     padding: 0 5px;
+  }
+
+  .scrub {
+    height: 40px;
+  }
+
+  .btn.quiet {
+    height: 40px;
+  }
+
+  .site-nav a,
+  .site-nav .soon {
+    min-height: 40px;
   }
 }
 
@@ -1174,4 +1494,31 @@ td.num {
 .cheat td.num {
   white-space: normal;
   min-width: 11ch;
+}
+
+/* The big-O never breaks; only its qualifier wraps, in the text face. */
+.big-o {
+  white-space: nowrap;
+}
+
+.words {
+  font-family: var(--sans);
+}
+
+.qualifier {
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
