@@ -1,5 +1,7 @@
 import { randomInt } from '../../core/rng';
 import type { Rec, Scene, SceneEdge, SceneNode, StructureDef } from '../../core/types';
+import java from './code/SinglyLinkedList.java?raw';
+import python from './code/singly_linked_list.py?raw';
 
 /**
  * Singly linked list of integers with head and tail pointers.
@@ -63,6 +65,7 @@ function insert(s: ListState, key: number, where: 'front' | 'back', rec: Rec): b
     if (rec.recording) {
       const at = locate(s, key);
       if (at) rec.mark(nid(at), 'ok');
+      rec.line('duplicate');
       rec.step(
         `${key} is already in the list, so nothing changes. This page looked it up in a set of keys it keeps on the side; a bare list would have had to walk its nodes to know.`,
         at ? { probe: { text: label, at: nid(at) } } : {},
@@ -71,6 +74,8 @@ function insert(s: ListState, key: number, where: 'front' | 'back', rec: Rec): b
     return false;
   }
   if (rec.recording && s.size >= CAP) {
+    // The cap belongs to the page, not the algorithm, so no line of the body is lit.
+    rec.line('page_limit');
     rec.step(
       `Sorry, this page draws at most ${CAP} nodes so they stay readable, and the list is full. Delete a key to make room. A real linked list has no such limit.`,
     );
@@ -82,6 +87,7 @@ function insert(s: ListState, key: number, where: 'front' | 'back', rec: Rec): b
   const before = s.size;
   s.keys.add(key);
   if (rec.recording) {
+    rec.line('check');
     rec.step(
       `A bare list could only rule out a duplicate by walking every node, so this page keeps a set of its keys on the side. The set says ${key} is new.`,
     );
@@ -90,22 +96,26 @@ function insert(s: ListState, key: number, where: 'front' | 'back', rec: Rec): b
   }
 
   if (!s.head) {
+    rec.line('make');
     rec.step(`Make a node for ${key}. Its next pointer is null, and nothing points to it yet.`, { probe });
     s.head = node;
     s.tail = node;
     s.size++;
     rec.count('writes', 2);
     s.draft = null;
+    rec.line('first');
     rec.step(`The list was empty, so head and tail both take the new node. ${key} is stored with 2 pointer writes.`, { probe });
     return true;
   }
 
   if (where === 'front') {
     const old = s.head;
+    rec.line('make');
     rec.step(`Make a node for ${key}. Nothing points to it yet, so it is not part of the list.`, { probe });
     node.next = old;
     rec.count('writes');
     rec.markEdge(eid(node), 'ok');
+    rec.line('link');
     rec.step(`Write 1: point the new node's next at the current head, ${old.key}. Anyone walking from head still sees the old list.`, { probe });
     s.head = node;
     rec.count('writes');
@@ -113,6 +123,7 @@ function insert(s: ListState, key: number, where: 'front' | 'back', rec: Rec): b
     s.draft = null;
     rec.clearMarks();
     rec.mark(nid(node), 'key');
+    rec.line('move');
     rec.step(
       `Write 2: move head to the new node. ${key} is now first after 2 pointer writes and no walk. It would cost the same with ${plural(before, 'node')} or a million.`,
       { probe },
@@ -121,10 +132,12 @@ function insert(s: ListState, key: number, where: 'front' | 'back', rec: Rec): b
   }
 
   const old = s.tail!;
+  rec.line('make');
   rec.step(`Make a node for ${key}. Its next pointer is null because it will be the last node.`, { probe });
   old.next = node;
   rec.count('writes');
   rec.markEdge(eid(old), 'ok');
+  rec.line('link');
   rec.step(`Write 1: the tail pointer leads straight to the last node, ${old.key}. Change its next pointer from null to the new node.`, { probe });
   s.tail = node;
   rec.count('writes');
@@ -132,6 +145,7 @@ function insert(s: ListState, key: number, where: 'front' | 'back', rec: Rec): b
   s.draft = null;
   rec.clearMarks();
   rec.mark(nid(node), 'key');
+  rec.line('move');
   rec.step(
     `Write 2: move tail to the new node. ${key} is now last after 2 pointer writes. Without a tail pointer, getting here would have meant walking ${before === 1 ? 'the node' : `all ${before} nodes`} first.`,
     { probe },
@@ -146,9 +160,11 @@ export function search(s: ListState, key: number, rec: Rec): boolean {
   const label = String(key);
   if (!s.head) {
     rec.markCell(NULL_ID, 0, 'bad');
+    rec.line('start', 'missing');
     rec.step(`The list is empty: head is null, so there is nothing to walk and ${key} is not here.`, { probe: { text: label, at: NULL_ID } });
     return false;
   }
+  rec.line('start');
   rec.step(`Start at head. A list has no index, so the only way to reach a node is to follow next pointers from the front.`, {
     probe: { text: label, at: nid(s.head) },
   });
@@ -159,19 +175,23 @@ export function search(s: ListState, key: number, rec: Rec): boolean {
     const probe = { text: label, at: nid(cur) };
     rec.mark(nid(cur), 'compare');
     if (cur.key === key) {
+      rec.line('compare');
       rec.compare(key, '=', cur.key, `match`, { probe });
       rec.mark(nid(cur), 'ok');
+      rec.line('found');
       rec.step(
         `Found ${key} after reading ${seen} of the ${plural(s.size, 'node')}, one comparison each. The further along a key sits, the longer the walk.`,
         { probe },
       );
       return true;
     }
+    rec.line('compare', 'next');
     rec.compare(key, '≠', cur.key, cur.next ? `not this one, follow its next pointer` : `not this one, and its next pointer is null`, { probe });
     rec.mark(nid(cur), 'path');
     rec.markEdge(eid(cur), 'path');
   }
   rec.markCell(NULL_ID, 0, 'bad');
+  rec.line('missing');
   rec.step(`Reached null, the end of the list, so ${key} is not here. A miss always reads every node: ${seen} this time.`, {
     probe: { text: label, at: NULL_ID },
   });
@@ -181,9 +201,11 @@ export function search(s: ListState, key: number, rec: Rec): boolean {
 export function remove(s: ListState, key: number, rec: Rec): boolean {
   const label = String(key);
   if (!s.head) {
+    rec.line('start', 'missing');
     rec.step(`The list is empty, so there is nothing to delete.`);
     return false;
   }
+  rec.line('start');
   rec.step(
     `Start at head. Unlinking a node means changing the node before it, and a node cannot look backwards, so the walk remembers the previous node as it goes.`,
     { probe: { text: label, at: nid(s.head) } },
@@ -198,9 +220,11 @@ export function remove(s: ListState, key: number, rec: Rec): boolean {
     const probe = { text: label, at: nid(cur) };
     rec.mark(nid(cur), 'compare');
     if (cur.key === key) {
+      rec.line('compare');
       rec.compare(key, '=', cur.key, `match, this is the node to unlink`, { probe });
       break;
     }
+    rec.line('compare', 'next');
     rec.compare(key, '≠', cur.key, cur.next ? `not this one, remember it as prev and move on` : `not this one, and its next pointer is null`, { probe });
     rec.mark(nid(cur), 'path');
     rec.markEdge(eid(cur), 'path');
@@ -212,6 +236,7 @@ export function remove(s: ListState, key: number, rec: Rec): boolean {
   if (!cur) {
     s.prev = null;
     rec.markCell(NULL_ID, 0, 'bad');
+    rec.line('missing');
     rec.step(`Reached null without a match. ${key} is not in the list, so nothing is deleted. The walk read all ${plural(seen, 'node')}.`, {
       probe: { text: label, at: NULL_ID },
     });
@@ -228,6 +253,7 @@ export function remove(s: ListState, key: number, rec: Rec): boolean {
     rec.count('writes');
     writes++;
     rec.markEdge(eid(prev), 'ok');
+    rec.line('unlink');
     rec.step(
       next
         ? `Write prev's next pointer to skip ${key}: ${prev.key} now points at ${next.key}. Nothing in the list leads to ${key} any more.`
@@ -238,6 +264,7 @@ export function remove(s: ListState, key: number, rec: Rec): boolean {
     s.head = next;
     rec.count('writes');
     writes++;
+    rec.line('unlink_head');
     rec.step(
       next
         ? `${key} is the head, so there is no previous node to rewire. Move head to its next node, ${next.key}.`
@@ -249,6 +276,7 @@ export function remove(s: ListState, key: number, rec: Rec): boolean {
     s.tail = prev;
     rec.count('writes');
     writes++;
+    rec.line('move_tail');
     rec.step(
       prev
         ? `${key} was also the tail, so the tail pointer moves back to prev, ${prev.key}. Forgetting this write is a classic bug.`
@@ -261,6 +289,7 @@ export function remove(s: ListState, key: number, rec: Rec): boolean {
   s.ghost = null;
   s.prev = null;
   rec.clearMarks();
+  rec.line('done');
   rec.step(
     `${key} is deleted and its node can be freed. Finding it took ${plural(seen, 'comparison')}; unlinking it took ${plural(writes, 'pointer write')}. The walk is the cost, not the unlink.`,
   );
@@ -348,10 +377,10 @@ const def: StructureDef<ListState> = {
   create: () => create(),
   seed: [23, 7, 61, 42, 15].map((k) => ['append', k] as [string, number]),
   ops: [
-    { id: 'prepend', label: 'Prepend', intent: 'primary', args: [KEY], run: (s, [k], rec) => void prepend(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
-    { id: 'append', label: 'Append', intent: 'primary', args: [KEY], run: (s, [k], rec) => void append(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
-    { id: 'search', label: 'Search', args: [KEY], run: (s, [k], rec) => void search(s, Number(k), rec), suggest: (s) => [keyAt(s, 0.8)] },
-    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], run: (s, [k], rec) => void remove(s, Number(k), rec), suggest: (s) => [keyAt(s, 0.5)] },
+    { id: 'prepend', label: 'Prepend', intent: 'primary', args: [KEY], code: ['prepend', 'node'], run: (s, [k], rec) => void prepend(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
+    { id: 'append', label: 'Append', intent: 'primary', args: [KEY], code: ['append', 'node'], run: (s, [k], rec) => void append(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
+    { id: 'search', label: 'Search', args: [KEY], code: ['search', 'node'], run: (s, [k], rec) => void search(s, Number(k), rec), suggest: (s) => [keyAt(s, 0.8)] },
+    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], code: ['delete', 'node'], run: (s, [k], rec) => void remove(s, Number(k), rec), suggest: (s) => [keyAt(s, 0.5)] },
   ],
   layout,
   counters: [
@@ -374,6 +403,7 @@ const def: StructureDef<ListState> = {
   // Fill runs with recording off, where there is no cap, so it holds itself to the cap: once full it re-offers a key already present, which is a no-op.
   fill: (s) => ['append', s.size >= CAP && s.head ? s.head.key : absentKey(s)],
   bench: { insert: 'append', search: 'search' },
+  source: { python, java },
   info: {
     summary:
       'A linked list is a chain of nodes. Each node holds a key and a pointer to the next node, and the list itself keeps just two pointers, to the first node (head) and the last (tail). Nothing is stored by position, so adding or removing a node is a pointer write or two, and finding one means walking from the head.',

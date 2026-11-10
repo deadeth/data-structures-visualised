@@ -1,6 +1,8 @@
 import { tidyTree } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef } from '../../core/types';
+import java from './code/BinarySearchTree.java?raw';
+import python from './code/binary_search_tree.py?raw';
 
 /**
  * Plain binary search tree of integers. Nothing ever rebalances it.
@@ -143,6 +145,7 @@ function descend(s: BstState, key: number, rec: Rec, mode: 'search' | 'insert' |
     w.comparisons++;
     if (key === k) {
       const verdict = mode === 'insert' ? 'match, already stored' : mode === 'delete' ? 'match, this is the node to delete' : 'match';
+      rec.line('match');
       rec.compare(key, '=', k, verdict, { probe });
       w.node = node;
       return w;
@@ -166,6 +169,8 @@ function descend(s: BstState, key: number, rec: Rec, mode: 'search' | 'insert' |
       verdict = `${word}, but there is no ${side} child`;
       message = `${key} is ${word} than ${k}, but ${k} has no ${side} child. The walk has run out of tree.`;
     }
+    // An insert that finds the spot free stops on the test for it; every other move takes the child pointer.
+    rec.line(!next && mode === 'insert' ? `${side}_free` : side);
     rec.compare(key, goLeft ? '<' : '>', k, verdict, { probe, message });
     rec.mark(nid(node), 'path');
     dimSubtree(rec, node, other);
@@ -181,13 +186,16 @@ function descend(s: BstState, key: number, rec: Rec, mode: 'search' | 'insert' |
 
 export function search(s: BstState, key: number, rec: Rec): boolean {
   if (!s.root) {
+    rec.line('start', 'missing');
     rec.step(`The tree is empty, so ${key} is not here.`);
     return false;
   }
+  rec.line('start');
   rec.step(`Start at the root. Each comparison picks one side and throws the other away.`, { probe: { text: String(key), at: nid(s.root) } });
   const w = descend(s, key, rec, 'search');
   if (w.node) {
     rec.mark(nid(w.node), 'ok');
+    rec.line('found');
     rec.step(`Found ${key} after ${plural(w.comparisons, 'comparison')}, one per level on the way down. A search never costs more than the height of the tree.`, {
       probe: { text: String(key), at: nid(w.node) },
     });
@@ -195,6 +203,7 @@ export function search(s: BstState, key: number, rec: Rec): boolean {
   }
   const last = w.parent!;
   rec.mark(nid(last), 'bad');
+  rec.line('missing');
   rec.step(`${key} is not in the tree. The empty ${w.side} spot under ${last.key} is the only place it could be. That took ${plural(w.comparisons, 'comparison')}.`);
   return false;
 }
@@ -206,21 +215,25 @@ export function insert(s: BstState, key: number, rec: Rec): boolean {
     s.size++;
     rec.count('writes');
     rec.mark(nid(root), 'key');
+    rec.line('root');
     rec.step(`The tree is empty, so ${key} becomes the root. No comparisons needed.`, { probe: { text: String(key), at: nid(root) } });
     return true;
   }
+  rec.line('start');
   rec.step(`Start at the root. Smaller keys go left and larger keys go right, until the walk reaches an empty spot.`, {
     probe: { text: String(key), at: nid(s.root) },
   });
   const w = descend(s, key, rec, 'insert');
   if (w.node) {
     rec.mark(nid(w.node), 'ok');
+    rec.line('duplicate');
     rec.step(`${key} is already stored, so nothing changes. The tree holds each key once.`);
     return false;
   }
   const parent = w.parent!;
   const level = w.level + 1;
   // The limits exist only to keep the drawing readable. With recording off the tree grows freely.
+  // Their frames keep the line of the last comparison lit: the walk found the free spot and stopped there.
   if (rec.recording && s.size >= MAX_KEYS) {
     rec.step(
       `${key} belongs under ${parent.key}, but this page stops at ${MAX_KEYS} keys so the drawing stays readable. Nothing was added. Delete a key or reset to make room.`,
@@ -242,6 +255,7 @@ export function insert(s: BstState, key: number, rec: Rec): boolean {
 
   rec.mark(nid(node), 'key');
   rec.markEdge(eid(parent, node), 'ok');
+  rec.line(`attach_${w.side}`);
   rec.step(`Attach ${key} as the ${w.side} child of ${parent.key}. A new key always becomes a leaf, and nothing else in the tree moves.`, {
     probe: { text: String(key), at: nid(node) },
   });
@@ -259,20 +273,24 @@ export function insert(s: BstState, key: number, rec: Rec): boolean {
   }
   rec.clearMarks();
   rec.mark(nid(node), 'key');
+  rec.line('done');
   rec.step(`${cost} ${shape}`);
   return true;
 }
 
 export function remove(s: BstState, key: number, rec: Rec): boolean {
   if (!s.root) {
+    rec.line('start', 'missing');
     rec.step(`The tree is empty, so there is nothing to delete.`);
     return false;
   }
+  rec.line('start');
   rec.step(`To delete ${key}, first find it, exactly as a search would.`, { probe: { text: String(key), at: nid(s.root) } });
   const w = descend(s, key, rec, 'delete');
   const node = w.node;
   if (!node) {
     rec.mark(nid(w.parent!), 'bad');
+    rec.line('missing');
     rec.step(`${key} is not in the tree, so there is nothing to delete. That took ${plural(w.comparisons, 'comparison')}.`);
     return false;
   }
@@ -283,11 +301,14 @@ export function remove(s: BstState, key: number, rec: Rec): boolean {
     else if (above.left === old) above.left = next;
     else above.right = next;
   };
+  /** The line of the listing's relink helper that such a call runs. */
+  const relinkLine = (above: BstNode | null, old: BstNode) => (!above ? 'relink_root' : above.left === old ? 'relink_left' : 'relink_right');
   const probe: Probe = { text: String(key), at: nid(node) };
   let writes = 1;
 
   if (node.left && node.right) {
     rec.mark(nid(node), 'key');
+    rec.line('two_children');
     rec.step(
       `${key} has two children, so it cannot simply be unlinked. Find its in-order successor, the smallest key larger than ${key}, and let that key take over.`,
       { probe },
@@ -297,7 +318,9 @@ export function remove(s: BstState, key: number, rec: Rec): boolean {
     rec.count('reads');
     rec.markEdge(eid(above, succ), 'path');
     rec.mark(nid(succ), 'compare');
+    rec.line('succ_start');
     rec.step(`The successor is in the right subtree, where every key is larger than ${key}. Step right once, to ${succ.key}, then look for the smallest key there.`, { probe });
+    rec.line('succ_left');
     while (succ.left) {
       rec.mark(nid(succ), 'path');
       rec.markEdge(eid(succ, succ.left), 'path');
@@ -308,15 +331,18 @@ export function remove(s: BstState, key: number, rec: Rec): boolean {
       if (rec.recording) rec.step(`${above.key} has a left child, so there is something smaller. Walk left to ${succ.key}.`, { probe });
     }
     rec.mark(nid(succ), 'ok');
+    rec.line('succ_found');
     rec.step(`${succ.key} has no left child, so nothing in this subtree is smaller. ${succ.key} is the successor of ${key}.`, { probe });
     node.key = succ.key;
     rec.count('writes');
     rec.mark(nid(node), 'ok');
     rec.mark(nid(succ), 'bad');
+    rec.line('overwrite');
     rec.step(
       `Write ${succ.key} over ${key}. The node stays where it is and keeps both children: only its key changes. For a moment ${succ.key} is in the tree twice.`,
     );
     const up = succ.right;
+    rec.line('remove_succ', relinkLine(above, succ));
     relink(above, succ, up);
     rec.count('writes');
     writes = 2;
@@ -329,6 +355,7 @@ export function remove(s: BstState, key: number, rec: Rec): boolean {
     const child = (node.left ?? node.right)!;
     rec.mark(nid(node), 'bad');
     rec.mark(nid(child), 'ok');
+    rec.line('one_child', relinkLine(parent, node));
     rec.step(
       parent
         ? `${key} has one child, ${child.key}. That child takes its place. Everything under ${child.key} was already on the correct side of ${parent.key}, so nothing else moves.`
@@ -339,6 +366,7 @@ export function remove(s: BstState, key: number, rec: Rec): boolean {
     rec.count('writes');
   } else {
     rec.mark(nid(node), 'bad');
+    rec.line('leaf', relinkLine(parent, node));
     rec.step(
       parent
         ? `${key} is a leaf, with no children. This is the easy case: unlink it from ${parent.key} and it is gone.`
@@ -355,6 +383,7 @@ export function remove(s: BstState, key: number, rec: Rec): boolean {
   // In the two-children case the node survives, holding the successor's key.
   if (writes === 2) rec.mark(nid(node), 'ok');
   const cost = `${plural(w.comparisons, 'comparison')} to find it and ${plural(writes, 'write')} to remove it`;
+  rec.line('done');
   rec.step(
     s.size
       ? `${key} is deleted: ${cost}. The tree now holds ${plural(s.size, 'key')} in ${plural(height(s), 'level')}.`
@@ -451,9 +480,9 @@ const def: StructureDef<BstState> = {
   // Arrival order matters: this order gives a bushy tree. The same keys sorted would give a chain.
   seed: [50, 27, 73, 14, 38, 62, 85, 33, 45].map((k) => ['insert', k] as [string, number]),
   ops: [
-    { id: 'insert', label: 'Insert', intent: 'primary', args: [KEY], run: (s, [k], rec) => void insert(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
-    { id: 'search', label: 'Search', args: [KEY], run: (s, [k], rec) => void search(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
-    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], run: (s, [k], rec) => void remove(s, Number(k), rec), suggest: (s) => [deleteSuggestion(s)] },
+    { id: 'insert', label: 'Insert', intent: 'primary', args: [KEY], code: ['insert', 'node'], run: (s, [k], rec) => void insert(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
+    { id: 'search', label: 'Search', args: [KEY], code: ['search', 'node'], run: (s, [k], rec) => void search(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
+    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], code: ['delete', 'relink', 'node'], run: (s, [k], rec) => void remove(s, Number(k), rec), suggest: (s) => [deleteSuggestion(s)] },
   ],
   layout,
   counters: [
@@ -477,6 +506,7 @@ const def: StructureDef<BstState> = {
   // "Add random keys" stays inside the drawing limits. When the tree is full it re-offers a stored key, which is a no-op.
   fill: (s) => ['insert', roomyKey(s) ?? s.root?.key ?? randomInt(1, 99)],
   bench: { insert: 'insert', search: 'search' },
+  source: { python, java },
   info: {
     summary:
       'A binary search tree stores one key per node, with smaller keys in the left subtree and larger keys in the right. Each comparison throws away one side, so a lookup costs one comparison per level. Nothing keeps the tree short, though: its shape depends entirely on the order the keys arrived in.',

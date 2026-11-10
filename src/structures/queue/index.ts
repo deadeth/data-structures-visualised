@@ -2,6 +2,8 @@ import { PROBE_H, probeWidth } from '../../core/fit';
 import { CELL_H, boxWidth } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef } from '../../core/types';
+import java from './code/RingBufferQueue.java?raw';
+import python from './code/ring_buffer_queue.py?raw';
 import { info } from './info';
 
 /**
@@ -246,11 +248,13 @@ export function enqueue(s: QueueState, key: number, rec: Rec): boolean {
   const label = String(key);
   const waiting: Probe = { text: label, at: PRODUCER };
   rec.mark(HUB, 'compare');
+  rec.line('check');
   if (s.size === s.capacity) {
     rec.compare(`size ${s.size}`, '=', `capacity ${s.capacity}`, `the buffer is full, so nothing can be written`, { probe: waiting });
     rec.count('rejected');
     rec.mark(HUB, 'bad');
     rec.mark(PRODUCER, 'bad');
+    rec.line('rejected');
     rec.step(
       `There is no free slot, so nothing is written and tail stays on slot ${s.tail}. The producer must now wait, drop ${key} or return an error.`,
       { probe: waiting },
@@ -267,6 +271,7 @@ export function enqueue(s: QueueState, key: number, rec: Rec): boolean {
   s.slots[at] = key;
   rec.count('writes');
   rec.mark(slotId(at), 'key');
+  rec.line('write');
   rec.step(
     `Write ${key} into slot ${at}, the slot tail points at. Tail always marks the next free slot, so there is nothing to search for or shift.`,
     { probe: rec.recording ? tagProbe(s, TAIL, label) : undefined },
@@ -278,6 +283,7 @@ export function enqueue(s: QueueState, key: number, rec: Rec): boolean {
   const full = s.size === s.capacity;
   const wrapped = next === 0;
   rec.mark(TAIL, 'ok');
+  rec.line('advance');
   rec.step(
     `tail = (${at} + 1) mod ${s.capacity} = ${next}. ` +
       (wrapped && full
@@ -291,6 +297,7 @@ export function enqueue(s: QueueState, key: number, rec: Rec): boolean {
 
   rec.clearMarks();
   rec.mark(slotId(at), 'key');
+  rec.line('done');
   rec.step(`${key} is enqueued. It took one check and one write, whatever the queue holds. ${used(s)}.`);
   return true;
 }
@@ -298,9 +305,11 @@ export function enqueue(s: QueueState, key: number, rec: Rec): boolean {
 /** Remove and return the oldest item, or null when the buffer is empty. */
 export function dequeue(s: QueueState, rec: Rec): number | null {
   rec.mark(HUB, 'compare');
+  rec.line('check');
   if (s.size === 0) {
     rec.compare(`size ${s.size}`, '=', 0, `there is nothing to read`);
     rec.mark(HUB, 'bad');
+    rec.line('empty');
     rec.step(
       `Nothing is dequeued. One check showed the queue is empty: head and tail both sit on slot ${s.head}, and a real consumer would wait here until something is enqueued.`,
     );
@@ -314,6 +323,7 @@ export function dequeue(s: QueueState, rec: Rec): number | null {
   const label = String(value);
   rec.count('reads');
   rec.mark(slotId(at), 'key');
+  rec.line('read');
   rec.step(`Read ${value} from slot ${at}, the slot head points at. It has waited longest, so it leaves first: first in, first out.`, {
     probe: rec.recording ? tagProbe(s, HEAD, label) : undefined,
   });
@@ -322,6 +332,7 @@ export function dequeue(s: QueueState, rec: Rec): number | null {
   s.slots[at] = null;
   rec.mark(slotId(at), 'bad');
   rec.mark(CONSUMER, 'ok');
+  rec.line('free');
   rec.step(`${value} goes to the consumer and slot ${at} is free again. Real ring buffers rarely wipe the slot: moving head past it is enough.`, {
     probe: gone,
   });
@@ -332,6 +343,7 @@ export function dequeue(s: QueueState, rec: Rec): number | null {
   const empty = s.size === 0;
   const wrapped = next === 0;
   rec.mark(HEAD, 'ok');
+  rec.line('advance');
   rec.step(
     `head = (${at} + 1) mod ${s.capacity} = ${next}. ` +
       (wrapped && empty
@@ -345,6 +357,7 @@ export function dequeue(s: QueueState, rec: Rec): number | null {
   );
 
   rec.clearMarks();
+  rec.line('done');
   rec.step(`${value} is dequeued. It took one check and one read, and nothing had to shift. ${used(s)}.`, { probe: gone });
   return value;
 }
@@ -370,10 +383,11 @@ const def: StructureDef<QueueState> = {
       label: 'Enqueue',
       intent: 'primary',
       args: [{ name: 'key', label: 'Key', kind: 'int', min: 0, max: 999 }],
+      code: ['enqueue', 'fields'],
       run: (s, [k], rec) => void enqueue(s, Number(k), rec),
       suggest: () => [randomInt(1, 99)],
     },
-    { id: 'dequeue', label: 'Dequeue', args: [], run: (s, _args, rec) => void dequeue(s, rec) },
+    { id: 'dequeue', label: 'Dequeue', args: [], code: ['dequeue', 'fields'], run: (s, _args, rec) => void dequeue(s, rec) },
   ],
   layout,
   counters: [
@@ -391,6 +405,7 @@ const def: StructureDef<QueueState> = {
   // the fourth is rejected, and the key that was turned away gets in once a dequeue has made room.
   tour: [['enqueue', 56], ['enqueue', 9], ['enqueue', 74], ['enqueue', 50], ['dequeue'], ['enqueue', 50]],
   info,
+  source: { python, java },
 };
 
 export default def;

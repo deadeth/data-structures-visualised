@@ -2,6 +2,8 @@ import { probeWidth } from '../../core/fit';
 import { CELL_PAD, CHAR_W } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Compare, Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef } from '../../core/types';
+import java from './code/HashTable.java?raw';
+import python from './code/hash_table.py?raw';
 
 /**
  * Hash table of integers with separate chaining.
@@ -79,6 +81,7 @@ function find(s: HashState, key: number, rec: Rec): { b: number; pos: number } {
   rec.count('reads');
   if (rec.recording) {
     rec.mark(bid(b), 'path');
+    rec.line('bucket');
     rec.step(`Go straight to bucket ${b}. The hash says where ${key} must live, so no other bucket is read.`, {
       probe: { text: String(key), at: bid(b), place: 'left' },
       compare: { left: `${key} mod ${n}`, op: '=', right: b, verdict: `go straight to bucket ${b}` },
@@ -91,9 +94,11 @@ function find(s: HashState, key: number, rec: Rec): { b: number; pos: number } {
     rec.mark(kid(k), 'compare');
     const probe: Probe = { text: String(key), at: kid(k), place: 'left' };
     if (k === key) {
+      rec.line('scan', 'hit');
       rec.compare(key, '=', k, 'match', { probe });
       return { b, pos: i };
     }
+    rec.line('scan', 'next');
     rec.compare(key, '≠', k, i < chain.length - 1 ? 'a different key in the same bucket, follow the chain' : 'a different key, and the chain ends here', { probe });
     rec.mark(kid(k), 'path');
   }
@@ -104,6 +109,7 @@ export function search(s: HashState, key: number, rec: Rec): boolean {
   const { b, pos } = find(s, key, rec);
   if (!rec.recording) return pos >= 0;
   const walked = pos >= 0 ? pos + 1 : s.buckets[b].length;
+  rec.line('result');
   if (pos >= 0) {
     const others = s.size - walked;
     rec.mark(kid(key), 'ok');
@@ -125,6 +131,7 @@ export function insert(s: HashState, key: number, rec: Rec): boolean {
   const { b, pos } = find(s, key, rec);
   if (pos >= 0) {
     rec.mark(kid(key), 'ok');
+    rec.line('duplicate');
     rec.step(`${key} is already stored. Nothing to do.`, { probe: { text: String(key), at: kid(key), place: 'left' } });
     return false;
   }
@@ -137,6 +144,7 @@ export function insert(s: HashState, key: number, rec: Rec): boolean {
     rec.mark(bid(b), 'path');
     rec.mark(kid(key), 'key');
     rec.markEdge(eid(key), 'ok');
+    rec.line('append');
     rec.step(
       chain.length === 1
         ? `Bucket ${b} is empty, so ${key} is new. Store it as the first node of the chain.`
@@ -148,6 +156,7 @@ export function insert(s: HashState, key: number, rec: Rec): boolean {
       rec.clearMarks();
       rec.mark(kid(key), 'key');
       const n = s.buckets.length;
+      rec.line('load', 'done');
       rec.step(
         `${key} is stored in bucket ${b}. ${plural(s.size, 'key')} in ${n} buckets is a load factor of ${ratio(s.size, n)}` +
           (overloaded(s.size + 1, n) ? `. One more key will push it past 0.75 and force a resize.` : `, and the table grows when that passes 0.75.`),
@@ -160,6 +169,7 @@ export function insert(s: HashState, key: number, rec: Rec): boolean {
     const n = s.buckets.length;
     rec.clearMarks();
     rec.mark(kid(key), 'key');
+    rec.line('done');
     rec.step(
       `${key} is stored in bucket ${key % n}. Rehashing all ${s.size} keys brought the load factor down to ${ratio(s.size, n)}, so chains stay short.`,
     );
@@ -178,6 +188,7 @@ function resize(s: HashState, rec: Rec, followed: number): void {
   if (rec.recording) {
     rec.clearMarks();
     rec.mark(kid(followed), 'key');
+    rec.line('load');
     rec.step(
       `${plural(s.size, 'key')} in ${was} buckets is a load factor of ${ratio(s.size, was)}, past the limit of 0.75. The table has to grow before the chains get any longer.`,
     );
@@ -185,12 +196,15 @@ function resize(s: HashState, rec: Rec, followed: number): void {
   }
   s.buckets = fresh;
   if (mig) {
+    rec.line('grow');
     rec.step(
       `Double the array to ${n} buckets${n === START_BUCKETS * 2 ? ', drawn as a second column' : ''}. The hash is now key mod ${n}, so every key is hashed again: it stays put or moves up by exactly ${was}.` +
         (perKey ? '' : ` With this many keys, the moves are shown ${was > MAX_REHASH_FRAMES ? 'a few buckets' : 'a bucket'} at a time.`),
     );
   }
 
+  // Every frame from here to the end of the resize is a key, or a batch of keys, being rehashed.
+  rec.line('rehash');
   const chunk = Math.ceil(was / MAX_REHASH_FRAMES);
   let lastKey = -1;
   let lastBucket = -1;
@@ -252,6 +266,7 @@ export function remove(s: HashState, key: number, rec: Rec): boolean {
   const chain = s.buckets[b];
   if (pos < 0) {
     rec.mark(bid(b), 'bad');
+    rec.line('missing');
     rec.step(
       chain.length ? `${key} is not in the table, so there is nothing to delete.` : `Bucket ${b} is empty, so ${key} is not in the table. Nothing to delete.`,
     );
@@ -261,6 +276,7 @@ export function remove(s: HashState, key: number, rec: Rec): boolean {
     rec.mark(kid(key), 'bad');
     const before = pos === 0 ? `bucket ${b}` : `${chain[pos - 1]}`;
     const after = pos === chain.length - 1 ? `${before} now ends the chain` : `${before} now points to ${chain[pos + 1]}`;
+    rec.line('unlink');
     rec.step(`Found ${key}. Unlink it by changing one pointer: ${after}.`, { probe: { text: String(key), at: kid(key), place: 'left' } });
   }
   chain.splice(pos, 1);
@@ -270,6 +286,7 @@ export function remove(s: HashState, key: number, rec: Rec): boolean {
     const n = s.buckets.length;
     rec.clearMarks();
     rec.mark(bid(b), 'path');
+    rec.line('done');
     rec.step(`${key} is deleted, leaving ${plural(s.size, 'key')} in ${n} buckets (load factor ${ratio(s.size, n)}). This table grows but never shrinks.`);
   }
   return true;
@@ -391,11 +408,12 @@ const def: StructureDef<HashState> = {
   // 42 and 50 both hash to bucket 2.
   seed: [16, 42, 50, 13, 87].map((k) => ['insert', k] as [string, number]),
   ops: [
-    { id: 'insert', label: 'Insert', intent: 'primary', args: [KEY], run: (s, [k], rec) => void insert(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
-    { id: 'search', label: 'Search', args: [KEY], run: (s, [k], rec) => void search(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
-    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], run: (s, [k], rec) => void remove(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
+    { id: 'insert', label: 'Insert', intent: 'primary', args: [KEY], code: ['insert', 'resize', 'find'], run: (s, [k], rec) => void insert(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
+    { id: 'search', label: 'Search', args: [KEY], code: ['search', 'find'], run: (s, [k], rec) => void search(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
+    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], code: ['delete', 'find'], run: (s, [k], rec) => void remove(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
   ],
   layout,
+  source: { python, java },
   counters: [
     { key: 'comparisons', label: 'Comparisons' },
     { key: 'reads', label: 'Buckets and nodes read' },

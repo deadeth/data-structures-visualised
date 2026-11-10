@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LANGS, listing } from '../../core/code';
 import { Recorder } from '../../core/recorder';
 import { makeRng } from '../../core/rng';
 import type { Frame } from '../../core/types';
@@ -260,5 +261,36 @@ describe('skip list', () => {
       expect(args.length).toBe(op.args.length);
     }
     expect(def.status!(s).length).toBe(3);
+  });
+
+  it('names a code line on every frame, in both listings, and uses every anchor', () => {
+    const lists = new Map(def.ops.map((op) => [op.id, LANGS.map(({ id }) => listing(def.source![id], id, op.code!))]));
+    const named = new Map<string, Set<string>>(def.ops.map((op) => [op.id, new Set<string>()]));
+    for (const [seed, space] of [
+      [5, 12],
+      [9, 150],
+    ]) {
+      const rnd = makeRng(seed * 7919);
+      const s = create(seed);
+      for (let i = 0; i < 2000; i++) {
+        const r = rnd();
+        const k = Math.floor(rnd() * space);
+        const id = r < 0.4 ? 'insert' : r < 0.7 ? 'delete' : 'search';
+        const rec = loud(s);
+        def.ops.find((o) => o.id === id)!.run(s, [k], rec);
+        expect(rec.frames.length).toBeGreaterThan(1);
+        for (const f of rec.frames) {
+          expect(f.lines?.length, `${id} ${k}: "${f.message.slice(0, 60)}" names no line`).toBeGreaterThan(0);
+          for (const a of f.lines!) {
+            named.get(id)!.add(a);
+            for (const l of lists.get(id)!) expect(l.anchors.has(a), `${id}: no "${a}" in its listing`).toBe(true);
+          }
+        }
+      }
+    }
+    for (const [id, [py, java]] of lists) {
+      expect([...py.anchors.keys()].sort()).toEqual([...java.anchors.keys()].sort());
+      for (const a of py.anchors.keys()) expect(named.get(id)!.has(a), `${id}: anchor "${a}" is never named`).toBe(true);
+    }
   });
 });

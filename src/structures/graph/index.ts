@@ -1,5 +1,7 @@
 import { randomInt } from '../../core/rng';
 import type { Cell, Rec, Scene, SceneEdge, SceneNode, StructureDef, Tone } from '../../core/types';
+import java from './code/Graph.java?raw';
+import python from './code/graph.py?raw';
 import { info } from './info';
 
 /**
@@ -151,6 +153,7 @@ function begin(s: GraphState, algo: Algo, start: number, target: number): Run {
 }
 
 function notANode(s: GraphState, arg: number | string, rec: Rec): void {
+  rec.line('call');
   rec.step(`Sorry, "${arg}" is not a node in this graph. Please pick a letter from ${s.names[0]} to ${s.names[s.names.length - 1]}.`);
 }
 
@@ -166,6 +169,7 @@ export function bfs(s: GraphState, start: number, rec: Rec): number[] {
   run.seen[start] = true;
   run.dist[start] = 0;
   run.frontier.push({ node: start, from: -1, edge: -1, d: 0 });
+  rec.line('begin');
   rec.step(`Breadth-first search from ${S}: mark ${S} as seen and put it in the queue. Weights are ignored here, so every edge counts as one hop.`, {
     probe: { text: S, at: nid(start) },
   });
@@ -176,6 +180,7 @@ export function bfs(s: GraphState, start: number, rec: Rec): number[] {
     const probe = { text: U, at: nid(u) };
     run.order.push(u);
     rec.count('reads');
+    rec.line('take');
     rec.step(
       u === start
         ? `Take ${U} from the front of the queue and look at its neighbours in alphabetical order.`
@@ -196,9 +201,11 @@ export function bfs(s: GraphState, start: number, rec: Rec): number[] {
         run.parent[v] = u;
         run.parentEdge[v] = link.edge;
         run.frontier.push({ node: v, from: u, edge: link.edge, d: 0 });
+        rec.line('check', 'enqueue');
         rec.compare(V, '=', 'new', `not seen before, add ${V} to the back of the queue`, { probe });
         rec.markEdge(edge.id, 'path');
       } else {
+        rec.line('check');
         rec.compare(V, '=', 'seen', `already seen, skip`, { probe });
         rec.markEdge(edge.id, run.parentEdge[u] === link.edge || run.parentEdge[v] === link.edge ? 'path' : 'dim');
       }
@@ -208,6 +215,7 @@ export function bfs(s: GraphState, start: number, rec: Rec): number[] {
   run.done = true;
   if (rec.recording) {
     rec.clearMarks();
+    rec.line('done');
     rec.step(
       `BFS order: ${list(s, run.order)}, nearest first, so each node was reached by the fewest hops. ` +
         `Cost: ${plural(run.order.length, 'node')} expanded and ${plural(checks, 'edge check')}, because every edge is looked at from both ends.`,
@@ -224,6 +232,7 @@ export function dfs(s: GraphState, start: number, rec: Rec): number[] {
   const n = s.names.length;
   const S = s.names[start];
   run.frontier.push({ node: start, from: -1, edge: -1, d: 0 });
+  rec.line('begin');
   rec.step(`Depth-first search from ${S}, with a stack doing the job recursion would do. Push ${S}.`, { probe: { text: S, at: nid(start) } });
   let checks = 0;
   let last = -1;
@@ -234,6 +243,7 @@ export function dfs(s: GraphState, start: number, rec: Rec): number[] {
     const U = s.names[u];
     const probe = { text: U, at: nid(u) };
     if (run.seen[u]) {
+      rec.line('pop', 'stale');
       rec.compare(U, '=', 'visited', `old entry, discard`, {
         probe,
         message: `Pop ${U}. It has been visited since this entry was pushed, so the entry is out of date and is discarded.`,
@@ -247,6 +257,7 @@ export function dfs(s: GraphState, start: number, rec: Rec): number[] {
     rec.count('reads');
     if (top.edge >= 0) rec.markEdge(s.edges[top.edge].id, 'path');
     const F = top.from >= 0 ? s.names[top.from] : '';
+    rec.line('pop', 'visit');
     rec.compare(U, '=', 'new', `visit ${U}`, {
       probe,
       message:
@@ -273,9 +284,11 @@ export function dfs(s: GraphState, start: number, rec: Rec): number[] {
       if (!run.seen[v]) {
         run.frontier.push({ node: v, from: u, edge: link.edge, d: 0 });
         lastPushed++;
+        rec.line('check', 'push');
         rec.compare(V, '=', 'new', `not visited, push ${V}`, { probe });
         rec.markEdge(edge.id, 'idle');
       } else {
+        rec.line('check');
         rec.compare(V, '=', 'visited', `already visited, skip`, { probe });
         rec.markEdge(edge.id, run.parentEdge[u] === link.edge || run.parentEdge[v] === link.edge ? 'path' : 'dim');
       }
@@ -288,6 +301,8 @@ export function dfs(s: GraphState, start: number, rec: Rec): number[] {
   if (rec.recording) {
     const left = run.frontier.length;
     rec.clearMarks();
+    if (run.order.length === n) rec.line('all_visited', 'done');
+    else rec.line('done');
     rec.step(
       `DFS order: ${list(s, run.order)}. It followed one route as deep as it could before coming back for the alternatives, ` +
         `at a cost of ${plural(run.order.length, 'node')} expanded and ${plural(checks, 'edge check')}` +
@@ -370,6 +385,7 @@ export function dijkstra(s: GraphState, from: number, to: number, rec: Rec): { p
   const T = s.names[to];
   run.dist[from] = 0;
   heapPush(run.frontier, { node: from, from: -1, edge: -1, d: 0 });
+  rec.line('begin');
   rec.step(`Dijkstra from ${S} to ${T}: every node starts at distance ∞ except ${S}, which is 0. Put ${S} in the priority queue.`, {
     probe: { text: `${S} 0`, at: nid(from) },
   });
@@ -380,6 +396,7 @@ export function dijkstra(s: GraphState, from: number, to: number, rec: Rec): { p
     const U = s.names[u];
     const probe = { text: `${U} ${top.d}`, at: nid(u) };
     if (run.seen[u]) {
+      rec.line('pop', 'stale');
       rec.step(`Take ${U} ${top.d} from the priority queue. ${U} was already settled at ${run.dist[u]}, so this older entry is out of date and is discarded.`, { probe });
       continue;
     }
@@ -387,6 +404,7 @@ export function dijkstra(s: GraphState, from: number, to: number, rec: Rec): { p
     run.order.push(u);
     rec.count('reads');
     if (u === to) {
+      rec.line('pop', 'settle', 'target');
       rec.step(
         u === from
           ? `Take ${U} 0 from the priority queue. ${U} is the target as well as the start, so there is nothing to search.`
@@ -395,6 +413,7 @@ export function dijkstra(s: GraphState, from: number, to: number, rec: Rec): { p
       );
       break;
     }
+    rec.line('pop', 'settle');
     rec.step(
       u === from
         ? `Take ${U} 0 from the priority queue. Now relax each edge out of ${U}: would going through ${U} give the neighbour a shorter distance?`
@@ -419,6 +438,7 @@ export function dijkstra(s: GraphState, from: number, to: number, rec: Rec): { p
         run.parent[v] = u;
         run.parentEdge[v] = link.edge;
         heapPush(run.frontier, { node: v, from: u, edge: link.edge, d: cand });
+        rec.line('relax', 'improve');
         rec.compare(`${V} via ${U}: ${cand}`, '<', cur === Infinity ? '∞' : cur, `shorter, update`, {
           probe,
           message:
@@ -429,6 +449,7 @@ export function dijkstra(s: GraphState, from: number, to: number, rec: Rec): { p
         if (old >= 0) rec.markEdge(s.edges[old].id, 'dim');
         rec.markEdge(edge.id, 'path');
       } else {
+        rec.line('relax');
         rec.compare(`${V} via ${U}: ${cand}`, '≥', cur, `no better, skip`, {
           probe,
           message: `Through ${U}, ${V} would cost ${top.d} + ${link.w} = ${cand}. No better than ${cur}, skip.`,
@@ -449,10 +470,12 @@ export function dijkstra(s: GraphState, from: number, to: number, rec: Rec): { p
   if (rec.recording) {
     rec.clearMarks();
     if (!run.path.length) {
+      rec.line('unreachable');
       rec.step(`The priority queue is empty and ${T} was never reached. There is no route from ${S} to ${T}.`);
     } else {
       const edges = run.path.length - 1;
       const few = fewestHops(s, from, to);
+      rec.line('trace', 'done');
       rec.step(
         `Shortest path: ${list(s, run.path, ' → ')}, total weight ${run.cost}, found by settling ${run.order.length} of ${s.names.length} nodes with ${plural(checks, 'relaxation check')}.` +
           (few.hops < edges
@@ -602,6 +625,7 @@ const def: StructureDef<GraphState> = {
       label: 'Breadth-first',
       intent: 'primary',
       args: [{ name: 'start', label: 'Start node', kind: 'word' }],
+      code: ['bfs', 'graph'],
       run: traverse(bfs),
       suggest: (s) => [randomNode(s)],
     },
@@ -609,6 +633,7 @@ const def: StructureDef<GraphState> = {
       id: 'dfs',
       label: 'Depth-first',
       args: [{ name: 'start', label: 'Start node', kind: 'word' }],
+      code: ['dfs', 'graph'],
       run: traverse(dfs),
       suggest: (s) => [randomNode(s)],
     },
@@ -619,6 +644,7 @@ const def: StructureDef<GraphState> = {
         { name: 'from', label: 'From', kind: 'word' },
         { name: 'to', label: 'To', kind: 'word' },
       ],
+      code: ['dijkstra', 'graph'],
       run: (s, [a, b], rec) => {
         const from = nodeIndex(s, a);
         const to = nodeIndex(s, b);
@@ -654,6 +680,7 @@ const def: StructureDef<GraphState> = {
     ['dijkstra', 'A', 'H'],
   ],
   info,
+  source: { python, java },
 };
 
 export default def;

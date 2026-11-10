@@ -1,6 +1,8 @@
 import { tidyTree } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Compare, Rec, Scene, SceneEdge, SceneNode, StructureDef } from '../../core/types';
+import java from './code/AvlTree.java?raw';
+import python from './code/avl_tree.py?raw';
 
 /**
  * AVL tree of integers.
@@ -155,6 +157,7 @@ function descend(s: AvlState, key: number, rec: Rec, path: AvlNode[], mode: Mode
   let n = s.root!;
   if (rec.recording) {
     rec.mark(nid(n), 'path');
+    rec.line('start');
     rec.step(`Start at the root, ${n.key}. Smaller keys are down the left branch, larger keys down the right.`, {
       probe: { text: String(key), at: nid(n) },
     });
@@ -167,11 +170,13 @@ function descend(s: AvlState, key: number, rec: Rec, path: AvlNode[], mode: Mode
     const extra = rec.recording ? { probe: { text: String(key), at: id } } : undefined;
     rec.mark(id, 'compare');
     if (key === n.key) {
+      rec.line('match');
       rec.compare(key, '=', n.key, 'match', extra);
       return true;
     }
     const side: Side = key < n.key ? 'left' : 'right';
     const next = n[side];
+    rec.line(side);
     rec.compare(key, side === 'left' ? '<' : '>', n.key, (next ? GO : mode === 'insert' ? FREE : DEAD_END)[side], extra);
     rec.mark(id, 'path');
     if (!next) return false;
@@ -221,11 +226,13 @@ function retrace(s: AvlState, path: AvlNode[], rec: Rec, what: 'insert' | 'delet
       const zigzag = heavy === 'left' ? by < 0 : by > 0;
       if (rec.recording) {
         rec.mark(nid(n), 'bad');
+        rec.line(`${heavy}_heavy`);
         rec.step(
           `At ${n.key} the left side is ${tall(ht(n.left))} and the right side is ${tall(ht(n.right))}: balance ${signed(b)}. A gap of two levels is not allowed, so ${n.key} must be rebalanced.`,
           { compare: { left: `${n.key}: balance ${signed(b)}`, op: b > 1 ? '>' : '<', right: b > 1 ? '1' : '−1', verdict: `${n.key} is ${heavy}-heavy, rotate` } },
         );
         rec.mark(nid(y), 'compare');
+        rec.line(`${heavy}_inner`);
         if (zigzag) {
           rec.step(
             `The extra height is on the inside: ${n.key} leans ${heavy}, but its ${heavy} child ${y.key} leans ${away}. One rotation would only tip this zig-zag the other way, so it takes two.`,
@@ -256,6 +263,7 @@ function retrace(s: AvlState, path: AvlNode[], rec: Rec, what: 'insert' | 'delet
           rec.mark(nid(x), 'ok');
           rec.mark(nid(y), 'ok');
           if (fresh) rec.mark(nid(fresh), 'key');
+          rec.line(`${heavy}_first`, `rotate_${heavy}`);
           rec.step(rotationText('First,', y, x, moved, heavy));
         }
       }
@@ -273,15 +281,19 @@ function retrace(s: AvlState, path: AvlNode[], rec: Rec, what: 'insert' | 'delet
         rec.mark(nid(n), 'ok');
         if (zigzag) rec.mark(nid(y), 'ok');
         if (fresh) rec.mark(nid(fresh), 'key');
+        rec.line(`${heavy}_final`, `rotate_${away}`);
         rec.step(
           rotationText(zigzag ? 'Then' : '', n, top, moved, away) + (moved ? '' : ' A rotation only rewires pointers: no keys are compared.'),
         );
         const where = i === 0 ? `${top.key} is the new root, and the tree` : `This part of the tree, now headed by ${top.key},`;
         if (top.h === before) {
+          rec.line('unchanged', 'stop');
           rec.step(`${where} is ${tall(top.h)} again, the same as before the ${what}. Nothing ${i === 0 ? 'else' : `above ${top.key}`} needs to change.`);
         } else if (i > 0) {
+          rec.line('unchanged');
           rec.step(`${where} is one level shorter than before the ${what}, so the check carries on at its parent, ${parent!.key}.`);
         } else {
+          rec.line('unchanged');
           rec.step(`${where} is one level shorter than before the ${what}. There is nothing above the root to check.`);
         }
         rec.mark(nid(top), 'path');
@@ -306,6 +318,8 @@ function retrace(s: AvlState, path: AvlNode[], rec: Rec, what: 'insert' | 'delet
       }
       const cmp: Compare = { left: `${n.key}: balance ${signed(b)}`, op: b < 0 ? '≥' : '≤', right: b < 0 ? '−1' : '1', verdict };
       rec.mark(nid(n), 'compare');
+      if (changed) rec.line('balance', 'unchanged');
+      else rec.line('balance', 'unchanged', 'stop');
       rec.step(
         `At ${n.key} the left side is ${tall(ht(n.left))} and the right side is ${tall(ht(n.right))}: balance ${signed(b)}, within the allowed −1 to +1.${tail}`,
         { compare: cmp },
@@ -333,6 +347,7 @@ function cost(comparisons: number, rotations: number): string {
 export function search(s: AvlState, key: number, rec: Rec): boolean {
   s.tick++;
   if (!s.root) {
+    rec.line('result');
     rec.step(`The tree is empty, so ${key} cannot be in it.`);
     return false;
   }
@@ -340,6 +355,7 @@ export function search(s: AvlState, key: number, rec: Rec): boolean {
   const found = descend(s, key, rec, path, 'search');
   if (!rec.recording) return found;
   const last = path[path.length - 1];
+  rec.line('result');
   if (found) {
     rec.mark(nid(last), 'ok');
     rec.step(
@@ -356,6 +372,7 @@ export function search(s: AvlState, key: number, rec: Rec): boolean {
 export function insert(s: AvlState, key: number, rec: Rec): boolean {
   s.tick++;
   if (rec.recording && s.size >= CAP && !has(s, key)) {
+    rec.line('call');
     rec.step(
       `Sorry, ${key} was not inserted: this page keeps the tree to ${CAP} keys so that every node stays readable. Please delete a key first, or press Reset.`,
     );
@@ -369,6 +386,7 @@ export function insert(s: AvlState, key: number, rec: Rec): boolean {
     rec.count('writes');
     if (rec.recording) {
       rec.mark(nid(root), 'key');
+      rec.line('first');
       rec.step(`The tree is empty, so ${key} becomes the root. No comparisons needed.`);
     }
     return true;
@@ -377,6 +395,7 @@ export function insert(s: AvlState, key: number, rec: Rec): boolean {
   if (descend(s, key, rec, path, 'insert')) {
     if (rec.recording) {
       rec.mark(nid(path[path.length - 1]), 'ok');
+      rec.line('duplicate');
       rec.step(`${key} is already stored. The tree holds each key once, so nothing changes.`);
     }
     return false;
@@ -398,6 +417,7 @@ export function insert(s: AvlState, key: number, rec: Rec): boolean {
     s.streak = extreme ? (Math.sign(s.streak) === edge ? s.streak + edge : edge) : 0;
     rec.mark(nid(node), 'key');
     rec.markEdge(eid(parent, node), 'path');
+    rec.line(`attach_${side}`);
     rec.step(`${key} becomes the ${side} child of ${parent.key}, because a new key always starts as a leaf. Now walk back up the path and check the balance of each node on it.`);
   } else {
     s.streak = 0;
@@ -408,6 +428,7 @@ export function insert(s: AvlState, key: number, rec: Rec): boolean {
   if (rec.recording) {
     rec.clearMarks();
     rec.mark(nid(node), 'key');
+    rec.line('done');
     const run = Math.abs(s.streak);
     if (run >= 2) {
       rec.step(
@@ -424,6 +445,7 @@ export function remove(s: AvlState, key: number, rec: Rec): boolean {
   s.tick++;
   s.streak = 0;
   if (!s.root) {
+    rec.line('missing');
     rec.step(`The tree is empty, so there is nothing to delete.`);
     return false;
   }
@@ -431,6 +453,7 @@ export function remove(s: AvlState, key: number, rec: Rec): boolean {
   if (!descend(s, key, rec, path, 'delete')) {
     if (rec.recording) {
       rec.mark(nid(path[path.length - 1]), 'bad');
+      rec.line('missing');
       rec.step(`${key} is not in the tree, so there is nothing to delete.`);
     }
     return false;
@@ -443,6 +466,7 @@ export function remove(s: AvlState, key: number, rec: Rec): boolean {
     // Two children: the in-order successor (smallest key in the right subtree) takes this node's place.
     if (rec.recording) {
       rec.mark(nid(node), 'bad');
+      rec.line('two_children');
       rec.step(
         `Found ${key}. It has two children, so it cannot simply be unlinked: its in-order successor, the smallest key in its right subtree, takes its place.`,
         { probe: { text: String(key), at: nid(node) } },
@@ -456,6 +480,7 @@ export function remove(s: AvlState, key: number, rec: Rec): boolean {
         rec.markEdge(eid(above, succ), 'path');
         rec.mark(nid(succ), succ.left ? 'path' : 'ok');
         const how = above === node ? `Step right from ${key} to ${succ.key}.` : `Step left to ${succ.key}.`;
+        rec.line(above === node ? 'step_right' : 'step_left');
         rec.step(
           succ.left
             ? `${how} It has a left child, so there is a smaller key below it: keep going left.`
@@ -479,6 +504,7 @@ export function remove(s: AvlState, key: number, rec: Rec): boolean {
       rec.clearMarks();
       markPath(path, path.length, rec);
       rec.mark(nid(node), 'ok');
+      rec.line('copy_key', above === node ? 'splice_right' : 'splice_left');
       rec.step(
         `${succ.key} moves up into ${key}'s place${orphan ? `, ${orphan.key} takes the spot ${succ.key} left behind` : ''} and ${key} is gone. ` +
           `The order still holds because ${succ.key} was the next key after ${key}, so now check balances from ${above.key} upwards.`,
@@ -488,6 +514,7 @@ export function remove(s: AvlState, key: number, rec: Rec): boolean {
     const child = node.left ?? node.right;
     if (rec.recording) {
       rec.mark(nid(node), 'bad');
+      rec.line('one_child');
       rec.step(
         child
           ? `Found ${key}. It has one child, ${child.key}, which can take its place.`
@@ -502,6 +529,7 @@ export function remove(s: AvlState, key: number, rec: Rec): boolean {
       rec.clearMarks();
       markPath(path, path.length, rec);
       if (child) rec.mark(nid(child), 'ok');
+      rec.line('unlink');
       const gone = child
         ? `${key} is unlinked and ${child.key} moves up one level${parent ? ` to hang from ${parent.key}` : ' to become the root'}.`
         : `${key} is unlinked${parent ? ` from ${parent.key}` : ''}.`;
@@ -514,6 +542,7 @@ export function remove(s: AvlState, key: number, rec: Rec): boolean {
 
   if (rec.recording) {
     rec.clearMarks();
+    rec.line('done');
     rec.step(`${key} is deleted after ${cost(comparisons, rotations)}. ${summary(s)}`);
   }
   return true;
@@ -575,9 +604,9 @@ const def: StructureDef<AvlState> = {
   create: () => create(),
   seed: [50, 30, 70, 20, 40, 60, 10].map((k) => ['insert', k] as [string, number]),
   ops: [
-    { id: 'insert', label: 'Insert', intent: 'primary', args: [KEY], run: (s, [k], rec) => void insert(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
-    { id: 'search', label: 'Search', args: [KEY], run: (s, [k], rec) => void search(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
-    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], run: (s, [k], rec) => void remove(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
+    { id: 'insert', label: 'Insert', intent: 'primary', args: [KEY], code: ['insert', 'retrace', 'rotate', 'heights', 'descend'], run: (s, [k], rec) => void insert(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
+    { id: 'search', label: 'Search', args: [KEY], code: ['search', 'descend'], run: (s, [k], rec) => void search(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
+    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], code: ['delete', 'retrace', 'rotate', 'heights', 'descend'], run: (s, [k], rec) => void remove(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
   ],
   layout,
   counters: [
@@ -605,6 +634,7 @@ const def: StructureDef<AvlState> = {
   // The quick-fill button runs with recording off, so it keeps to the display limit itself.
   fill: (s) => (s.size < CAP ? ['insert', absentKey(s)] : ['search', s.root!.key]),
   bench: { insert: 'insert', search: 'search' },
+  source: { python, java },
   info: {
     summary:
       'An AVL tree is a binary search tree that stores a height in every node and never lets the two sides of any node differ by more than one level. After each insert or delete it walks back up the path it came down and fixes any node that has tipped over with a rotation, which rewires two or three pointers. The tree therefore stays shallow whatever order the keys arrive in, and every lookup is O(log n).',

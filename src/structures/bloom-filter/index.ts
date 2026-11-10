@@ -1,6 +1,8 @@
 import { CELL_H } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef } from '../../core/types';
+import java from './code/BloomFilter.java?raw';
+import python from './code/bloom_filter.py?raw';
 
 /**
  * Bloom filter over integer keys 0 to 999.
@@ -71,6 +73,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 /** Add a key. Returns how many bits changed from 0 to 1. */
 export function add(s: BloomState, key: number, rec: Rec): number {
   const label = String(key);
+  rec.line('start');
   rec.step(`Add ${key}. The filter does not store the key. Each of its ${K} hash functions turns ${key} into a bit position, and that bit is set to 1.`);
   const mine: number[] = [];
   let fresh = 0;
@@ -81,6 +84,7 @@ export function add(s: BloomState, key: number, rec: Rec): number {
     const again = mine.includes(bit);
     if (rec.recording) {
       if (!again) rec.mark(bid(bit), 'path');
+      rec.line('hash');
       rec.step(`${working(i, key, s.m)} Move to bit ${bit}.`, { probe });
     }
     if (s.bits[bit] === 0) {
@@ -91,10 +95,13 @@ export function add(s: BloomState, key: number, rec: Rec): number {
       mine.push(bit);
       rec.count('writes');
       rec.mark(bid(bit), 'ok');
+      rec.line('set');
       rec.step(`Bit ${bit} was 0. Set it to 1.`, { probe });
     } else if (again) {
+      rec.line('test');
       rec.step(`Bit ${bit} is already 1. Another of this key's own hashes set it a moment ago, so there is nothing to write.`, { probe });
     } else {
+      rec.line('test');
       rec.step(
         s.setBy[bit] === key
           ? `Bit ${bit} is already 1, from the first time ${key} was added. Nothing to write.`
@@ -108,6 +115,7 @@ export function add(s: BloomState, key: number, rec: Rec): number {
   if (rec.recording) {
     const cost = `Cost: ${K} hashes and ${plural(fresh, 'bit write', 'bit writes')}, however many keys are in the filter.`;
     const fill = `${s.ones} of ${s.m} bits are 1.`;
+    rec.line('done');
     rec.step(
       repeat
         ? `${key} was added before, so all ${K} bits were already 1 and nothing changed. ${cost}`
@@ -123,6 +131,7 @@ export function add(s: BloomState, key: number, rec: Rec): number {
 /** Check a key. Returns false for "definitely not in the set", true for "probably present". */
 export function check(s: BloomState, key: number, rec: Rec): boolean {
   const label = String(key);
+  rec.line('start');
   rec.step(`Check ${key}. Hash it the same ${K} ways and read those bits. A single 0 proves ${key} was never added.`);
   const seen: number[] = [];
   let probe: Probe | undefined;
@@ -131,8 +140,10 @@ export function check(s: BloomState, key: number, rec: Rec): boolean {
     probe = { text: label, at: bid(bit) };
     if (rec.recording) {
       rec.mark(bid(bit), 'compare');
+      rec.line('hash');
       rec.step(`${working(i, key, s.m)} Look at bit ${bit}.`, { probe });
     }
+    rec.line('test');
     if (s.bits[bit] === 0) {
       rec.compare(`bit ${bit}`, '=', 0, `not set, so stop`, {
         probe,
@@ -140,6 +151,7 @@ export function check(s: BloomState, key: number, rec: Rec): boolean {
       });
       if (rec.recording) {
         rec.mark(bid(bit), 'bad');
+        rec.line('absent');
         rec.step(
           `${key} is definitely not in the set. One 0 was enough: the check read ${plural(i + 1, 'bit', 'bits')} out of ${K} and stopped. A "no" from a Bloom filter is never wrong.`,
           { probe },
@@ -157,6 +169,8 @@ export function check(s: BloomState, key: number, rec: Rec): boolean {
     rec.mark(bid(bit), 'path');
     if (!seen.includes(bit)) seen.push(bit);
   }
+  // The filter gives one answer here. Only the page can tell a real hit from a false positive.
+  rec.line('probably');
   if (s.added.has(key)) {
     if (rec.recording) {
       for (const bit of seen) rec.mark(bid(bit), 'ok');
@@ -287,10 +301,11 @@ const def: StructureDef<BloomState> = {
   create: (params) => create(params.bits ?? 32),
   seed: SEED_KEYS.map((k) => ['add', k] as [string, number]),
   ops: [
-    { id: 'add', label: 'Add', intent: 'primary', args: [KEY], run: (s, [k], rec) => void add(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
-    { id: 'check', label: 'Check', args: [KEY], run: (s, [k], rec) => void check(s, Number(k), rec), suggest: (s) => [suggestCheck(s)] },
+    { id: 'add', label: 'Add', intent: 'primary', args: [KEY], code: ['add', 'hash'], run: (s, [k], rec) => void add(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
+    { id: 'check', label: 'Check', args: [KEY], code: ['check', 'hash'], run: (s, [k], rec) => void check(s, Number(k), rec), suggest: (s) => [suggestCheck(s)] },
   ],
   layout,
+  source: { python, java },
   counters: [
     { key: 'comparisons', label: 'Bits checked' },
     { key: 'writes', label: 'Bits newly set' },

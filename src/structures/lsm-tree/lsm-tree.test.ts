@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LANGS, listing } from '../../core/code';
 import { probeWidth } from '../../core/fit';
 import { cellCentre, nodeSize } from '../../core/geometry';
 import { Recorder } from '../../core/recorder';
@@ -416,5 +417,35 @@ describe('LSM tree', () => {
     }
     check(s);
     checkFrames([{ scene: def.layout(s), message: 'filled', counters: {} }]);
+  });
+
+  it('names a code line on every frame, in both listings, and uses every anchor', () => {
+    const lists = new Map(def.ops.map((op) => [op.id, LANGS.map(({ id }) => listing(def.source![id], id, op.code!))]));
+    const named = new Set<string>();
+    for (const seed of [3, 11]) {
+      const rnd = makeRng(seed * 104729);
+      const s = def.create({});
+      const space = seed === 3 ? 40 : 400;
+      for (let i = 0; i < 2500; i++) {
+        const r = rnd();
+        const k = Math.floor(rnd() * space);
+        const [id, args]: [string, number[]] =
+          r < 0.45 ? ['put', [k]] : r < 0.65 ? ['delete', [k]] : r < 0.9 ? ['get', [k]] : r < 0.95 ? ['flush', []] : ['compact', []];
+        const rec = loud(s);
+        def.ops.find((o) => o.id === id)!.run(s, args, rec);
+        expect(rec.frames.length).toBeGreaterThan(0);
+        for (const f of rec.frames) {
+          expect(f.lines?.length, `${id} ${k}: "${f.message.slice(0, 60)}" names no line`).toBeGreaterThan(0);
+          for (const a of f.lines!) {
+            named.add(a);
+            for (const l of lists.get(id)!) expect(l.anchors.has(a), `${id}: no "${a}" in its listing`).toBe(true);
+          }
+        }
+      }
+    }
+    for (const [py, java] of lists.values()) {
+      expect([...py.anchors.keys()].sort()).toEqual([...java.anchors.keys()].sort());
+      for (const a of py.anchors.keys()) expect(named.has(a), `anchor "${a}" is never named`).toBe(true);
+    }
   });
 });

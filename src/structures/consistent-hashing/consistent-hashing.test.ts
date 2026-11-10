@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { listing } from '../../core/code';
 import { nodeSize } from '../../core/geometry';
 import { Recorder } from '../../core/recorder';
 import { makeRng } from '../../core/rng';
@@ -191,6 +192,40 @@ describe('consistent hash ring', () => {
       const [fillOp, fillKey] = def.fill!(s);
       expect(fillOp).toBe('put');
       expect(typeof fillKey).toBe('number');
+    }
+  });
+
+  it('names a line of both listings on every frame, on every path', () => {
+    const seen = new Set<string>();
+    for (const vnodes of [1, 3]) {
+      const rnd = makeRng(40 + vnodes);
+      const s = create(vnodes);
+      const pick = (k: number): [string, ...(number | string)[]] => {
+        const roll = rnd();
+        if (roll < 0.35) return ['put', k];
+        if (roll < 0.55) return ['delete', k];
+        if (roll < 0.75) return ['lookup', k];
+        if (roll < 0.88) return ['addServer'];
+        return ['removeServer', 'abcdefz'[Math.floor(rnd() * 7)]];
+      };
+      for (let i = 0; i < 1500; i++) {
+        const [id, ...args] = pick(Math.floor(rnd() * 1000));
+        const op = def.ops.find((o) => o.id === id) as OpDef<RingState>;
+        const rec = loud(s);
+        op.run(s, args, rec);
+        const anchors = (['python', 'java'] as const).map((lang) => listing(def.source![lang], lang, op.code!).anchors);
+        for (const f of rec.frames) {
+          expect(f.lines?.length, `${id}: "${f.message}"`).toBeGreaterThan(0);
+          for (const a of f.lines!) {
+            for (const known of anchors) expect(known.has(a), `${id} names "${a}"`).toBe(true);
+            seen.add(`${id}:${a}`);
+          }
+        }
+      }
+    }
+    // The rare paths were reached too: a full ring, a wrap past 359, the last server and an unknown name.
+    for (const a of ['addServer:full', 'addServer:covered', 'lookup:wrap', 'removeServer:last', 'removeServer:unknown', 'put:duplicate', 'delete:missing']) {
+      expect(seen.has(a), a).toBe(true);
     }
   });
 });

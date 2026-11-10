@@ -1,5 +1,7 @@
 import { makeRng, randomInt } from '../../core/rng';
 import type { Decor, Rec, Scene, SceneEdge, SceneNode, StructureDef } from '../../core/types';
+import java from './code/SkipList.java?raw';
+import python from './code/skip_list.py?raw';
 import { info } from './info';
 
 /**
@@ -131,6 +133,7 @@ function descend(s: SkipState, key: number, rec: Rec, mode: Mode): Walk {
   if (rec.recording) {
     const top = s.level - 1;
     rec.mark(bid(x, top), 'path');
+    rec.line('start');
     rec.step(
       s.level === 1
         ? `Start at the head. Only level 1 is in use, so this is a plain walk along a linked list.`
@@ -145,6 +148,7 @@ function descend(s: SkipState, key: number, rec: Rec, mode: Mode): Walk {
       const nxt = x.next[i];
       if (nxt === null) {
         if (rec.recording) {
+          rec.line(i > 0 ? 'down' : 'bottom');
           rec.step(
             i > 0
               ? `Level ${lv} ends here: the next pointer is nil. Drop down to level ${i}.`
@@ -177,6 +181,7 @@ function descend(s: SkipState, key: number, rec: Rec, mode: Mode): Walk {
       const probe = { text, at: on };
       rec.mark(on, 'compare');
       if (nxt.key < key) {
+        rec.line('right');
         let skipped = 0;
         for (let n = x.next[0]; n && n !== nxt; n = n.next[0]) skipped++;
         rec.compare(key, '>', nxt.key, `move right to ${nxt.key}`, {
@@ -196,6 +201,8 @@ function descend(s: SkipState, key: number, rec: Rec, mode: Mode): Walk {
         const first = hitLevel < 0;
         hit = nxt;
         if (first) hitLevel = i;
+        // A delete keeps walking: the match is one more pointer to remember.
+        rec.line(mode === 'delete' ? 'hit' : 'match');
         if (mode === 'search') {
           rec.compare(key, '=', nxt.key, `match, move right onto ${key}`, {
             probe,
@@ -222,6 +229,7 @@ function descend(s: SkipState, key: number, rec: Rec, mode: Mode): Walk {
         break;
       }
       // The next key is too big: this level cannot take us any closer.
+      rec.line(i > 0 ? 'down' : 'bottom');
       if (i > 0) {
         if (nxt === over) {
           rec.compare(key, '<', nxt.key, `still too far, drop down to level ${i}`, {
@@ -273,6 +281,7 @@ export function search(s: SkipState, key: number, rec: Rec): boolean {
       if (n === node) break;
     }
     const cost = plural(w.comparisons, 'comparison');
+    rec.line('found');
     rec.step(
       w.comparisons < rank
         ? `Found ${key} after ${cost}. Walking the bottom level alone would have taken ${rank}: the upper levels skipped the rest.`
@@ -283,6 +292,7 @@ export function search(s: SkipState, key: number, rec: Rec): boolean {
   }
   const pred = w.update[0];
   rec.markEdge(pid(pred, 0), 'bad');
+  rec.line('miss');
   rec.step(
     s.size === 0
       ? `The list is empty, so ${key} is not in it.`
@@ -294,6 +304,7 @@ export function search(s: SkipState, key: number, rec: Rec): boolean {
 export function insert(s: SkipState, key: number, rec: Rec): boolean {
   const w = descend(s, key, rec, 'insert');
   if (w.hit) {
+    rec.line('duplicate');
     if (rec.recording) rec.step(`${key} is already in the list. A set keeps each key once, so nothing changes.`, { probe: { text: String(key), at: bid(w.hit, w.hitLevel) } });
     return false;
   }
@@ -302,6 +313,7 @@ export function insert(s: SkipState, key: number, rec: Rec): boolean {
 
   if (rec.recording) {
     s.pending = { key, height: 1 };
+    rec.line('place');
     rec.step(
       `${key} belongs ${gap(w.update[0], w.update[0].next[0])}. The last node visited on each level is remembered: its pointer changes if the coin flips take the tower that high.`,
       { probe: { text, at: ghost(1) } },
@@ -313,6 +325,7 @@ export function insert(s: SkipState, key: number, rec: Rec): boolean {
   while (h < s.maxLevel) {
     if (s.rnd() >= P) {
       if (rec.recording) {
+        rec.line('tails');
         rec.step(
           h === 1
             ? `Flip: tails. ${key} stays on level 1 only, as half of all keys do.`
@@ -325,6 +338,7 @@ export function insert(s: SkipState, key: number, rec: Rec): boolean {
     h++;
     if (rec.recording) {
       s.pending!.height = h;
+      rec.line('heads');
       rec.step(
         h === s.maxLevel
           ? `Flip: heads, so ${key} also gets a level ${h} pointer. That is the tallest a tower can be here, so the flipping stops.`
@@ -348,6 +362,8 @@ export function insert(s: SkipState, key: number, rec: Rec): boolean {
       rec.mark(bid(node, i), 'key');
       rec.markEdge(pid(pred, i), 'ok');
       rec.markEdge(pid(node, i), 'ok');
+      if (fresh) rec.line('grow', 'splice');
+      else rec.line('splice');
       rec.step(
         fresh
           ? `Level ${i + 1} was empty until now. The head points to ${key} there, and ${key} points to nil.`
@@ -360,6 +376,7 @@ export function insert(s: SkipState, key: number, rec: Rec): boolean {
   s.pointers += h;
   s.pending = null;
   if (rec.recording) {
+    rec.line('done');
     rec.step(
       `${key} is stored with a tower ${plural(h, 'level')} tall. That took ${plural(w.comparisons, 'comparison')} and ${2 * h} pointer writes, and nothing was rebalanced.`,
       { probe: { text, at: bid(node, h - 1) } },
@@ -375,6 +392,7 @@ export function remove(s: SkipState, key: number, rec: Rec): boolean {
     if (rec.recording) {
       const pred = w.update[0];
       rec.markEdge(pid(pred, 0), 'bad');
+      rec.line('missing');
       rec.step(
         s.size === 0
           ? `The list is empty, so there is nothing to delete.`
@@ -387,6 +405,7 @@ export function remove(s: SkipState, key: number, rec: Rec): boolean {
   const h = node.next.length;
   rec.count('reads');
   if (rec.recording) {
+    rec.line('found');
     rec.step(
       h === 1
         ? `Found ${key}. One pointer leads to it, so one pointer has to change.`
@@ -405,6 +424,8 @@ export function remove(s: SkipState, key: number, rec: Rec): boolean {
     if (emptied) s.level--;
     if (rec.recording) {
       rec.markEdge(pid(pred, i), 'ok');
+      if (emptied) rec.line('unlink', 'shrink');
+      else rec.line('unlink');
       rec.step(
         `Level ${i + 1}: ${name(pred)} now points past ${key} to ${name(succ)}.` +
           (emptied ? ` Level ${i + 1} has no keys left, so it drops out of use.` : i === 0 ? ` Nothing points to ${key} any more.` : ''),
@@ -415,6 +436,7 @@ export function remove(s: SkipState, key: number, rec: Rec): boolean {
   s.size--;
   s.pointers -= h;
   if (rec.recording) {
+    rec.line('done');
     rec.step(
       `${key} is deleted: ${plural(h, 'pointer')} rewritten after ${plural(w.comparisons, 'comparison')}, with no rebalancing. The list holds ${plural(s.size, 'key')} on ${plural(s.level, 'level')}.`,
     );
@@ -513,9 +535,9 @@ const def: StructureDef<SkipState> = {
   create: (p) => create(DEFAULT_SEED, p.maxLevel ?? MAX_LEVEL),
   seed: [8, 15, 23, 31, 38, 46, 54, 61, 69, 77, 85, 93].map((k) => ['insert', k] as [string, number]),
   ops: [
-    { id: 'insert', label: 'Insert', intent: 'primary', args: [KEY], run: (s, [k], rec) => void insert(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
-    { id: 'search', label: 'Search', args: [KEY], run: (s, [k], rec) => void search(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
-    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], run: (s, [k], rec) => void remove(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
+    { id: 'insert', label: 'Insert', intent: 'primary', args: [KEY], code: ['insert', 'random_height'], run: (s, [k], rec) => void insert(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
+    { id: 'search', label: 'Search', args: [KEY], code: ['search'], run: (s, [k], rec) => void search(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
+    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], code: ['delete'], run: (s, [k], rec) => void remove(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
   ],
   layout,
   counters: [
@@ -539,6 +561,7 @@ const def: StructureDef<SkipState> = {
   // Five levels suit a dozen keys on screen but would cripple a list of thousands,
   // so the head-to-head run lifts the cap, as a real skip list would.
   bench: { insert: 'insert', search: 'search', variants: [{ label: 'Skip list', params: { maxLevel: 24 } }] },
+  source: { python, java },
   info,
 };
 
