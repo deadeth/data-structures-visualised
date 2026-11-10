@@ -1,0 +1,129 @@
+import type { Frame } from './types';
+
+export const SPEEDS = [0.25, 0.5, 1, 2, 4, 8] as const;
+const BASE_STEP_MS = 1150;
+
+const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/**
+ * Moves through a list of frames. Knows nothing about drawing: it calls
+ * `render(frame, ms)` and `changed()` and leaves the rest to the stage.
+ */
+export class Player {
+  frames: Frame[] = [];
+  index = 0;
+  playing = false;
+  speed = 1;
+  private timer = 0;
+
+  constructor(
+    private readonly render: (frame: Frame, ms: number) => void,
+    private readonly changed: () => void,
+    private readonly ended: () => void,
+  ) {}
+
+  get stepMs(): number {
+    return BASE_STEP_MS / this.speed;
+  }
+
+  private get tweenMs(): number {
+    return reducedMotion() ? 0 : Math.min(520, this.stepMs * 0.62);
+  }
+
+  get atEnd(): boolean {
+    return this.index >= this.frames.length - 1;
+  }
+
+  load(frames: Frame[], autoplay: boolean): void {
+    clearTimeout(this.timer);
+    this.frames = frames;
+    this.index = 0;
+    this.playing = false;
+    if (!frames.length) return;
+    this.render(frames[0], autoplay ? this.tweenMs : 0);
+    if (autoplay && frames.length > 1) {
+      this.playing = true;
+      this.schedule();
+    }
+    this.changed();
+    if (frames.length <= 1) this.ended();
+  }
+
+  private schedule(): void {
+    clearTimeout(this.timer);
+    this.timer = window.setTimeout(() => {
+      if (!this.playing) return;
+      if (this.atEnd) {
+        this.playing = false;
+        this.changed();
+        this.ended();
+        return;
+      }
+      this.index++;
+      this.render(this.frames[this.index], this.tweenMs);
+      this.changed();
+      if (this.atEnd) {
+        // Let the last frame land before reporting the end.
+        this.timer = window.setTimeout(() => {
+          this.playing = false;
+          this.changed();
+          this.ended();
+        }, this.stepMs);
+      } else {
+        this.schedule();
+      }
+    }, this.stepMs);
+  }
+
+  play(): void {
+    if (!this.frames.length) return;
+    if (this.atEnd) {
+      this.index = 0;
+      this.render(this.frames[0], 0);
+    }
+    this.playing = true;
+    this.changed();
+    this.schedule();
+  }
+
+  pause(): void {
+    clearTimeout(this.timer);
+    this.playing = false;
+    this.changed();
+  }
+
+  toggle(): void {
+    if (this.playing) this.pause();
+    else this.play();
+  }
+
+  /** Move by one frame and stop playing. */
+  step(delta: 1 | -1): void {
+    this.seek(this.index + delta, true);
+  }
+
+  seek(index: number, smooth = false): void {
+    if (!this.frames.length) return;
+    clearTimeout(this.timer);
+    this.playing = false;
+    const next = Math.max(0, Math.min(this.frames.length - 1, index));
+    const ms = smooth && Math.abs(next - this.index) === 1 && !reducedMotion() ? 240 : 0;
+    this.index = next;
+    this.render(this.frames[next], ms);
+    this.changed();
+  }
+
+  /** Jump to the last frame without animating. */
+  finish(): void {
+    if (!this.frames.length) return;
+    const wasPlaying = this.playing;
+    this.seek(this.frames.length - 1);
+    if (wasPlaying) this.ended();
+  }
+
+  setSpeed(speed: number): void {
+    this.speed = speed;
+    if (this.playing) this.schedule();
+    this.changed();
+  }
+}
