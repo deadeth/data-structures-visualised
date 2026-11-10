@@ -1,6 +1,8 @@
 import { CELL_H } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef } from '../../core/types';
+import java from './code/ConsistentHashRing.java?raw';
+import python from './code/consistent_hash_ring.py?raw';
 import { info } from './info';
 
 /**
@@ -246,6 +248,7 @@ function locate(s: RingState, pos: number, rec: Rec, probe: Probe): { point: Poi
   let lo = 0;
   let hi = live.length;
   let comparisons = 0;
+  rec.line('search');
   rec.step(
     `The client keeps the ${plural(live.length, 'point')} in a sorted list: ${live.map((p) => `${p.pos}°`).join(', ')}. It binary-searches that list for the first point at or after ${pos}°. No server is contacted yet.`,
     { probe },
@@ -257,10 +260,12 @@ function locate(s: RingState, pos: number, rec: Rec, probe: Probe): { point: Poi
     rec.count('reads');
     rec.mark(pid(p), 'compare');
     if (pos <= p.pos) {
+      rec.line('compare', 'earlier');
       rec.compare(`h(${probe.text}) = ${pos}°`, '≤', `${p.pos}°`, `${p.server}'s point is at or after the key, so it could be the owner: look earlier for a closer one`, { probe });
       hi = mid;
       rec.mark(pid(p), 'path');
     } else {
+      rec.line('compare', 'later');
       rec.compare(`h(${probe.text}) = ${pos}°`, '>', `${p.pos}°`, `${p.server}'s point is behind the key, so the owner is later in the list`, { probe });
       lo = mid + 1;
       rec.mark(pid(p), 'dim');
@@ -272,6 +277,9 @@ function locate(s: RingState, pos: number, rec: Rec, probe: Probe): { point: Poi
   rec.mark(pid(point), 'ok');
   return { point, wrapped, comparisons };
 }
+
+/** The line of the search that settled on the owner: the wrap to the first point, or the plain return. */
+const settled = (hit: { wrapped: boolean }): string => (hit.wrapped ? 'wrap' : 'owner');
 
 const found = (key: number, pos: number, hit: { point: Point; wrapped: boolean }): string =>
   hit.wrapped
@@ -286,11 +294,13 @@ export function lookup(s: RingState, key: number, rec: Rec): string {
   const probe: Probe = { text, at: CURSOR, place: outward(pos) };
   const stored = s.keys.has(key);
   if (stored) rec.mark(kid(key), 'key');
+  rec.line('hash');
   rec.step(
     `${formula(key)}, so key ${key} belongs at ${pos}° on the ring${stored ? '' : ' (it is not stored, but any key has a place)'}. Its server is the first point clockwise from there.`,
     { probe },
   );
   const hit = locate(s, pos, rec, probe);
+  rec.line(settled(hit), 'found');
   rec.step(
     `${found(key, pos, hit)} The search took ${plural(hit.comparisons, 'comparison')} over ${plural(livePoints(s).length, 'point')}, all on the client, so the request goes straight to ${hit.point.server}.`,
     { probe: { text, at: pid(hit.point), place: outward(hit.point.pos) } },
@@ -306,6 +316,7 @@ export function put(s: RingState, key: number, rec: Rec): boolean {
   begin(s, pos, rec);
   if (s.keys.has(key)) {
     rec.mark(kid(key), 'key');
+    rec.line('duplicate');
     rec.step(`${key} is already stored, on server ${ownerOf(s, key)}. A ring holds each key once, so there is nothing to do.`, {
       probe: { text, at: kid(key) },
     });
@@ -314,6 +325,7 @@ export function put(s: RingState, key: number, rec: Rec): boolean {
   }
   const lane = laneFor(s, pos);
   const probe: Probe = { text, at: CURSOR, place: outward(pos) };
+  rec.line('hash');
   if (lane < 0) {
     rec.step(`${formula(key)}. This small drawing has no room left for another key near ${pos}°, so ${key} is not added. Delete a key or try a different one.`, {
       probe,
@@ -327,6 +339,7 @@ export function put(s: RingState, key: number, rec: Rec): boolean {
   if (rec.recording) s.born = key;
   rec.count('writes');
   rec.mark(kid(key), 'key');
+  rec.line(settled(hit), 'store');
   rec.step(
     `${found(key, pos, hit)} The write goes to ${hit.point.server}, which now holds ${plural(tally(s).get(hit.point.server) ?? 0, 'key')}. Keys are tinted with their server's colour.`,
     { probe: { text, at: kid(key) } },
@@ -341,18 +354,22 @@ export function remove(s: RingState, key: number, rec: Rec): boolean {
   const text = String(key);
   begin(s, pos, rec);
   if (!s.keys.has(key)) {
+    rec.line('hash', 'missing');
     rec.step(`${formula(key)}. No key ${key} is stored at ${pos}°, so there is nothing to delete.`, { probe: { text, at: CURSOR, place: outward(pos) } });
     end(s);
     return false;
   }
   const probe: Probe = { text, at: kid(key) };
   rec.mark(kid(key), 'key');
+  rec.line('hash');
   rec.step(`${formula(key)}, so key ${key} sits at ${pos}° on the ring. Find its server the same way a read would.`, { probe });
   const hit = locate(s, pos, rec, probe);
   rec.mark(kid(key), 'bad');
+  rec.line(settled(hit), 'route');
   rec.step(`${found(key, pos, hit)} Only ${hit.point.server} can hold it, so the delete goes there and nowhere else.`, { probe });
   s.keys.delete(key);
   rec.count('writes');
+  rec.line('remove');
   rec.step(`${key} is deleted from server ${hit.point.server}, which now holds ${plural(tally(s).get(hit.point.server) ?? 0, 'key')}. No other key or server was touched.`);
   end(s);
   return true;
@@ -374,6 +391,7 @@ export function addServer(s: RingState, rec: Rec): { name: string; moved: number
   begin(s, 0, rec);
   s.cursor = null;
   if (s.servers.length >= MAX_SERVERS) {
+    rec.line('full');
     rec.step(`This drawing stops at ${MAX_SERVERS} servers. Remove one before adding another.`);
     return null;
   }
@@ -384,6 +402,7 @@ export function addServer(s: RingState, rec: Rec): { name: string; moved: number
   const points = join(s, name, false);
   for (const p of points) rec.mark(pid(p), 'ok');
   rec.mark(tid(name), 'ok');
+  rec.line('join');
   rec.step(
     `Server ${name} joins with ${plural(points.length, 'point')} at ${list(points.map((p) => `${p.pos}°`))}. A real ring gets these by hashing the server's name; this page uses a fixed table so the picture stays readable. No key has moved yet.`,
   );
@@ -401,6 +420,7 @@ export function addServer(s: RingState, rec: Rec): { name: string; moved: number
     moved.push(...here);
     rec.count('moved', here.length);
     for (const k of moved) rec.mark(kid(k), 'ok');
+    rec.line('take_arc', loser === name ? 'covered' : here.length ? 'move' : 'in_arc');
     rec.step(
       `${name}'s point at ${p.pos}° takes over the arc from ${prev ? prev.pos : p.pos}° round to ${p.pos}°` +
         (loser === name ? `, which ${name} already covered from a point further on.` : `, which belonged to ${loser}.`) +
@@ -412,6 +432,7 @@ export function addServer(s: RingState, rec: Rec): { name: string; moved: number
 
   rec.clearMarks();
   const total = s.keys.size;
+  rec.line('done');
   rec.step(
     `${name} is in. ${moved.length} of ${plural(total, 'key')} moved, all to ${name}, and no key moved between the old servers.` +
       versusMod(total, before, before + 1, naive),
@@ -425,10 +446,12 @@ export function removeServer(s: RingState, which: string, rec: Rec): { name: str
   s.cursor = null;
   const name = String(which).trim().toUpperCase().charAt(0);
   if (!s.servers.includes(name)) {
+    rec.line('unknown');
     rec.step(`There is no server called "${String(which).trim()}". The ring has ${list(s.servers)}.`);
     return null;
   }
   if (s.servers.length === 1) {
+    rec.line('last');
     rec.step(`${name} is the last server. If it left, its keys would have nowhere to go, so it stays.`);
     return null;
   }
@@ -439,6 +462,7 @@ export function removeServer(s: RingState, which: string, rec: Rec): { name: str
   for (const p of points) rec.mark(pid(p), 'bad');
   rec.mark(tid(name), 'bad');
   for (const k of mine) rec.mark(kid(k), 'bad');
+  rec.line('leave');
   rec.step(
     `Server ${name} leaves, or fails. Its ${points.length === 1 ? 'point comes' : `${points.length} points come`} off the ring at ${list(points.map((p) => `${p.pos}°`))}. ` +
       (mine.length ? `It held ${list(mine)}. Each of those now belongs to the next point clockwise.` : `It held no keys, so nothing needs a new home.`),
@@ -450,10 +474,12 @@ export function removeServer(s: RingState, which: string, rec: Rec): { name: str
   rec.clearMarks();
   for (const k of mine) rec.mark(kid(k), 'ok');
   if (mine.length) {
+    rec.line('rehome');
     rec.step(`${mine.map((k) => `${k} goes to ${ownerOf(s, k)}`).join(', ')}. Every other key still hashes to the same server as before.`);
   }
   rec.clearMarks();
   const total = s.keys.size;
+  rec.line('done');
   rec.step(
     `${name} is gone. ${mine.length} of ${plural(total, 'key')} moved, only the ones ${name} held.` +
       versusMod(total, before, before - 1, naive) +
@@ -508,15 +534,16 @@ const def: StructureDef<RingState> = {
   create: (p) => create(p.vnodes ?? 1),
   seed: [14, 23, 32, 50, 59, 63, 68, 77, 86, 95, 104, 113].map((k) => ['put', k] as [string, number]),
   ops: [
-    { id: 'lookup', label: 'Look up', args: [KEY], run: (s, [k], rec) => void lookup(s, Number(k), rec), suggest: (s) => [storedKey(s)] },
-    { id: 'put', label: 'Put', intent: 'primary', args: [KEY], run: (s, [k], rec) => void put(s, Number(k), rec), suggest: (s) => [freshKey(s)] },
-    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], run: (s, [k], rec) => void remove(s, Number(k), rec), suggest: (s) => [storedKey(s)] },
-    { id: 'addServer', label: 'Add a server', args: [], run: (s, _a, rec) => void addServer(s, rec) },
+    { id: 'lookup', label: 'Look up', args: [KEY], code: ['lookup', 'locate', 'hash'], run: (s, [k], rec) => void lookup(s, Number(k), rec), suggest: (s) => [storedKey(s)] },
+    { id: 'put', label: 'Put', intent: 'primary', args: [KEY], code: ['put', 'locate', 'hash'], run: (s, [k], rec) => void put(s, Number(k), rec), suggest: (s) => [freshKey(s)] },
+    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], code: ['delete', 'locate', 'hash'], run: (s, [k], rec) => void remove(s, Number(k), rec), suggest: (s) => [storedKey(s)] },
+    { id: 'addServer', label: 'Add a server', args: [], code: ['add_server', 'locate', 'hash'], run: (s, _a, rec) => void addServer(s, rec) },
     {
       id: 'removeServer',
       label: 'Remove server',
       intent: 'danger',
       args: [{ name: 'server', label: 'Server', kind: 'word' }],
+      code: ['remove_server', 'locate', 'hash'],
       run: (s, [name], rec) => void removeServer(s, String(name), rec),
       suggest: (s) => [busiest(s).toLowerCase()],
     },
@@ -546,6 +573,7 @@ const def: StructureDef<RingState> = {
   ],
   fill: (s) => ['put', freshKey(s)],
   info,
+  source: { python, java },
 };
 
 export default def;

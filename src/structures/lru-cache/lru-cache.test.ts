@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { listing } from '../../core/code';
 import { nodeSize } from '../../core/geometry';
 import { Recorder } from '../../core/recorder';
 import { makeRng } from '../../core/rng';
@@ -271,5 +272,33 @@ describe('LRU cache', () => {
     }
     const empty = def.create({ capacity: 3 });
     expect(getOp.suggest!(empty).length).toBe(1);
+  });
+
+  it('names a line of both listings on every frame, on every path', () => {
+    const seen = new Set<string>();
+    for (const capacity of [1, 2, 4]) {
+      const rnd = makeRng(500 + capacity);
+      const s = create(capacity);
+      for (let i = 0; i < 1500; i++) {
+        const id = rnd() < 0.5 ? 'get' : 'put';
+        const op = def.ops.find((o) => o.id === id)!;
+        const rec = loud(s);
+        op.run(s, [Math.floor(rnd() * (capacity * 2 + 2))], rec);
+        const anchors = (['python', 'java'] as const).map((lang) => listing(def.source![lang], lang, op.code!).anchors);
+        for (const f of rec.frames) {
+          expect(f.lines?.length, `${id}: "${f.message}"`).toBeGreaterThan(0);
+          for (const a of f.lines!) {
+            for (const known of anchors) expect(known.has(a), `${id} names "${a}"`).toBe(true);
+            seen.add(`${id}:${a}`);
+          }
+        }
+      }
+    }
+    // Both listings were walked end to end, including an eviction from a list of one.
+    for (const lang of ['python', 'java'] as const) {
+      for (const op of def.ops) {
+        for (const a of listing(def.source![lang], lang, op.code!).anchors.keys()) expect(seen.has(`${op.id}:${a}`) || (op.id === 'get' && /^(unlink_head|attach_tail)$/.test(a)), `${op.id}:${a}`).toBe(true);
+      }
+    }
   });
 });

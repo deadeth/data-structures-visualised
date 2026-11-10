@@ -1,6 +1,8 @@
 import { CELL_GAP, CELL_H, tidyTree } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef, Tone } from '../../core/types';
+import java from './code/MinHeap.java?raw';
+import python from './code/min_heap.py?raw';
 
 /**
  * Binary min-heap of integers, stored in an array.
@@ -47,11 +49,13 @@ function tone(rec: Rec, it: Item, t: Tone): void {
 
 export function peek(s: HeapState, rec: Rec): number | undefined {
   if (s.items.length === 0) {
+    rec.line('empty');
     rec.step(`The heap is empty, so there is no minimum to read.`);
     return undefined;
   }
   const top = s.items[0];
   tone(rec, top, 'ok');
+  rec.line('peek');
   rec.step(`The minimum is always at index 0, the root: here ${top.key}. Reading it takes no comparisons and no search, so peek is O(1).`, {
     probe: { text: String(top.key), at: tid(top) },
   });
@@ -60,6 +64,7 @@ export function peek(s: HeapState, rec: Rec): number | undefined {
 
 export function insert(s: HeapState, key: number, rec: Rec): boolean {
   if (s.items.length >= s.capacity) {
+    rec.line('full');
     rec.step(
       `Sorry, the heap on this page stops at ${s.capacity} items so that every level stays readable, and it is full. Extract the minimum to make room, then try ${key} again.`,
     );
@@ -71,9 +76,11 @@ export function insert(s: HeapState, key: number, rec: Rec): boolean {
   const probe: Probe = { text: String(key), at: tid(it) };
   tone(rec, it, 'key');
   if (i === 0) {
+    rec.line('append', 'done');
     rec.step(`The heap was empty, so ${key} goes in at index 0 and is the root. Nothing to compare.`, { probe });
     return true;
   }
+  rec.line('append');
   rec.step(`Append ${key} at the end of the array, index ${i}. In the tree that is the next free place on the bottom level, so the shape stays complete.`, {
     probe,
   });
@@ -91,6 +98,7 @@ export function insert(s: HeapState, key: number, rec: Rec): boolean {
         : `The parent of index ${i} is index ${p}, which holds ${parent.key}.`;
     comparisons++;
     if (key >= parent.key) {
+      rec.line('parent', 'compare_up', 'stop_up');
       rec.compare(key, '≥', parent.key, `heap order holds, stop`, {
         probe,
         message: `${where} ${key} is not smaller, so heap order already holds and the sift up stops.`,
@@ -100,6 +108,7 @@ export function insert(s: HeapState, key: number, rec: Rec): boolean {
       rec.markEdge(`e${i}`, 'idle');
       break;
     }
+    rec.line('parent', 'compare_up');
     rec.compare(key, '<', parent.key, `swap up`, {
       probe,
       message: `${where} A parent must not be larger than its child, so ${key} swaps up.`,
@@ -110,6 +119,7 @@ export function insert(s: HeapState, key: number, rec: Rec): boolean {
     swaps++;
     tone(rec, parent, 'path');
     rec.markEdge(`e${i}`, 'path');
+    rec.line('swap_up');
     rec.step(
       p === 0
         ? `Swap: ${key} rises to index 0 and ${parent.key} drops to index ${i}. ${key} is at the root, so there is nothing above it to compare.`
@@ -124,6 +134,7 @@ export function insert(s: HeapState, key: number, rec: Rec): boolean {
   rec.clearMarks();
   tone(rec, it, 'key');
   const n = s.items.length;
+  rec.line('done');
   if (swaps === 0) {
     rec.step(`${key} stays at index ${i}: 1 comparison and no swaps. A new key that is no smaller than its parent costs O(1), and with keys in random order the average insert is O(1) too.`);
   } else if (i === 0) {
@@ -141,15 +152,18 @@ export function insert(s: HeapState, key: number, rec: Rec): boolean {
 export function extractMin(s: HeapState, rec: Rec): number | undefined {
   const size = s.items.length;
   if (size === 0) {
+    rec.line('empty');
     rec.step(`The heap is empty, so there is no minimum to extract.`);
     return undefined;
   }
   const top = s.items[0];
   tone(rec, top, 'bad');
+  rec.line('top', 'last');
   if (size === 1) {
     rec.step(`${top.key} is the only item, so it is the minimum. Take it out.`);
     s.items.pop();
     rec.clearMarks();
+    rec.line('done');
     rec.step(`Removed ${top.key} with no comparisons. The heap is now empty.`);
     return top.key;
   }
@@ -166,6 +180,7 @@ export function extractMin(s: HeapState, rec: Rec): number | undefined {
   s.items.pop();
   rec.unmark(tid(top));
   rec.unmark(aid(top));
+  rec.line('fill');
   rec.step(`${key} moves from index ${size - 1} to index 0. It came from the bottom level, so it is probably too large for the root and has to sift down.`, {
     probe,
   });
@@ -195,16 +210,19 @@ export function extractMin(s: HeapState, rec: Rec): number | undefined {
       comparisons++;
       if (right.key < left.key) {
         c = r;
+        rec.line('children', 'pick', 'pick_right');
         rec.compare(left.key, '>', right.key, `the right child, ${right.key}, is the smaller`, {
           probe,
           message: `${where} Compare them with each other first: only the smaller one, ${right.key}, could sit above the other.`,
         });
       } else if (right.key === left.key) {
+        rec.line('children', 'pick');
         rec.compare(left.key, '=', right.key, `a tie, so take the left child`, {
           probe,
           message: `${where} They hold the same key, so either could sit above the other. Take the left one.`,
         });
       } else {
+        rec.line('children', 'pick');
         rec.compare(left.key, '<', right.key, `the left child, ${left.key}, is the smaller`, {
           probe,
           message: `${where} Compare them with each other first: only the smaller one, ${left.key}, could sit above the other.`,
@@ -225,7 +243,10 @@ export function extractMin(s: HeapState, rec: Rec): number | undefined {
     }
     const child = s.items[c];
     comparisons++;
+    // With one child there was no frame for finding it, so this one shows those lines as well.
+    const finding = r < n ? [] : ['children', 'pick'];
     if (key <= child.key) {
+      rec.line(...finding, 'compare_down', 'stop_down');
       rec.compare(key, '≤', child.key, `heap order holds, stop`, {
         probe,
         message: `${lead} ${key} is not larger than ${child.key}, so heap order holds and the sift down stops.`,
@@ -236,6 +257,7 @@ export function extractMin(s: HeapState, rec: Rec): number | undefined {
       stopped = true;
       break;
     }
+    rec.line(...finding, 'compare_down');
     rec.compare(key, '>', child.key, `swap down`, {
       probe,
       message: `${lead} ${key} is larger than ${child.key}, and a parent must not be larger than its child, so they swap.`,
@@ -246,6 +268,8 @@ export function extractMin(s: HeapState, rec: Rec): number | undefined {
     swaps++;
     tone(rec, child, 'path');
     rec.markEdge(`e${c}`, 'path');
+    if (2 * c + 1 >= n) rec.line('swap_down', 'leaf');
+    else rec.line('swap_down');
     rec.step(
       2 * c + 1 >= n
         ? `Swap: ${child.key} rises to index ${i} and ${key} drops to index ${c}. Index ${c} has no children, because ${2 * c + 1} is past the end of the array.`
@@ -260,6 +284,7 @@ export function extractMin(s: HeapState, rec: Rec): number | undefined {
   rec.clearMarks();
   tone(rec, it, 'key');
   const cost = `${plural(comparisons, 'comparison')} and ${plural(swaps, 'swap')}`;
+  rec.line('done');
   if (n === 1) {
     rec.step(`Removed ${top.key}. ${key} is the only item left, so it is the new minimum and there was nothing to compare.`);
   } else if (swaps === 0) {
@@ -353,9 +378,9 @@ const def: StructureDef<HeapState> = {
   create: () => create(),
   seed: [12, 30, 21, 47, 38, 90, 84].map((k) => ['insert', k] as [string, number]),
   ops: [
-    { id: 'insert', label: 'Insert', intent: 'primary', args: [KEY], run: (s, [k], rec) => void insert(s, Number(k), rec), suggest: () => [randomInt(1, 99)] },
-    { id: 'extractMin', label: 'Extract min', intent: 'danger', args: [], run: (s, _args, rec) => void extractMin(s, rec) },
-    { id: 'peek', label: 'Peek', args: [], run: (s, _args, rec) => void peek(s, rec) },
+    { id: 'insert', label: 'Insert', intent: 'primary', args: [KEY], code: ['insert', 'sift_up'], run: (s, [k], rec) => void insert(s, Number(k), rec), suggest: () => [randomInt(1, 99)] },
+    { id: 'extractMin', label: 'Extract min', intent: 'danger', args: [], code: ['extract_min', 'sift_down'], run: (s, _args, rec) => void extractMin(s, rec) },
+    { id: 'peek', label: 'Peek', args: [], code: ['peek'], run: (s, _args, rec) => void peek(s, rec) },
   ],
   layout,
   counters: [
@@ -369,6 +394,7 @@ const def: StructureDef<HeapState> = {
   ],
   tour: [['peek'], ['insert', 5], ['extractMin'], ['insert', 70], ['extractMin']],
   fill: () => ['insert', randomInt(1, 99)],
+  source: { python, java },
   info: {
     summary:
       'A binary heap is a complete binary tree packed into a plain array, with one rule: no parent is larger than its children. That is enough to keep the smallest item at index 0 at all times, and it is much cheaper to maintain than full sorted order.',

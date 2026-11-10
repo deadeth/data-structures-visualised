@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { listing } from '../../core/code';
 import { Recorder } from '../../core/recorder';
 import { makeRng } from '../../core/rng';
 import type { Frame } from '../../core/types';
@@ -225,5 +226,36 @@ describe('binary heap', () => {
     expect(op).toBe('insert');
     expect(key).toBeGreaterThanOrEqual(0);
     expect(key).toBeLessThanOrEqual(999);
+  });
+
+  it('names a line of both listings on every frame, on every path', () => {
+    const seen = new Set<string>();
+    for (const capacity of [1, 2, 6, CAPACITY]) {
+      const rnd = makeRng(700 + capacity);
+      const s = create(capacity);
+      for (let i = 0; i < 1500; i++) {
+        const roll = rnd();
+        // Phases of mostly inserting and mostly extracting, so the heap is seen both full and empty.
+        const filling = Math.floor(i / 60) % 2 === 0;
+        const id = roll < 0.1 ? 'peek' : roll < (filling ? 0.8 : 0.3) ? 'insert' : 'extractMin';
+        const op = def.ops.find((o) => o.id === id)!;
+        const rec = loud(s);
+        op.run(s, id === 'insert' ? [Math.floor(rnd() * 40)] : [], rec);
+        const anchors = (['python', 'java'] as const).map((lang) => listing(def.source![lang], lang, op.code!).anchors);
+        for (const f of rec.frames) {
+          expect(f.lines?.length, `${id}: "${f.message}"`).toBeGreaterThan(0);
+          for (const a of f.lines!) {
+            for (const known of anchors) expect(known.has(a), `${id} names "${a}"`).toBe(true);
+            seen.add(`${id}:${a}`);
+          }
+        }
+      }
+    }
+    // Every marked line of both listings was reached.
+    for (const lang of ['python', 'java'] as const) {
+      for (const op of def.ops) {
+        for (const a of listing(def.source![lang], lang, op.code!).anchors.keys()) expect(seen.has(`${op.id}:${a}`), `${op.id}:${a}`).toBe(true);
+      }
+    }
   });
 });

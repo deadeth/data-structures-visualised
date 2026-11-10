@@ -1,5 +1,7 @@
 import { randomInt } from '../../core/rng';
 import type { StructureDef } from '../../core/types';
+import java from './code/LsmTree.java?raw';
+import python from './code/lsm_tree.py?raw';
 import { info } from './info';
 import { layout } from './layout';
 import { MEM_CAP, compact, create, flush, get, liveKeys, put, remove, writeAmp, type LsmState } from './lsm';
@@ -45,6 +47,10 @@ function deepKey(s: LsmState): number {
   return deepest.length ? deepest[randomInt(0, deepest.length - 1)] : presentKey(s);
 }
 
+/** What a flush can set off: the limit checks, then a compaction and its merge. */
+const COMPACTION = ['compact_level', 'merge', 'cascade'];
+const WRITE_PATH = ['scan', 'flush', 'settle', ...COMPACTION];
+
 const puts = (...keys: number[]) => keys.map((k) => ['put', k] as [string, number]);
 
 const def: StructureDef<LsmState> = {
@@ -65,11 +71,11 @@ const def: StructureDef<LsmState> = {
     ...puts(16, 39, 64),
   ],
   ops: [
-    { id: 'put', label: 'Put', intent: 'primary', args: [KEY], run: (s, [k], rec) => put(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
-    { id: 'get', label: 'Get', args: [KEY], run: (s, [k], rec) => void get(s, Number(k), rec), suggest: (s) => [deepKey(s)] },
-    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], run: (s, [k], rec) => remove(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
-    { id: 'flush', label: 'Flush memtable', args: [], run: (s, _args, rec) => flush(s, rec) },
-    { id: 'compact', label: 'Compact', args: [], run: (s, _args, rec) => compact(s, rec) },
+    { id: 'put', label: 'Put', intent: 'primary', args: [KEY], code: ['put', ...WRITE_PATH], run: (s, [k], rec) => put(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
+    { id: 'get', label: 'Get', args: [KEY], code: ['get', 'find_table', 'scan'], run: (s, [k], rec) => void get(s, Number(k), rec), suggest: (s) => [deepKey(s)] },
+    { id: 'delete', label: 'Delete', intent: 'danger', args: [KEY], code: ['delete', ...WRITE_PATH], run: (s, [k], rec) => remove(s, Number(k), rec), suggest: (s) => [presentKey(s)] },
+    { id: 'flush', label: 'Flush memtable', args: [], code: ['flush', 'settle', ...COMPACTION], run: (s, _args, rec) => flush(s, rec) },
+    { id: 'compact', label: 'Compact', args: [], code: ['compact', ...COMPACTION], run: (s, _args, rec) => compact(s, rec) },
   ],
   layout,
   counters: [
@@ -93,6 +99,7 @@ const def: StructureDef<LsmState> = {
   ],
   fill: (s) => ['put', absentKey(s)],
   bench: { insert: 'put', search: 'get' },
+  source: { python, java },
   info,
 };
 

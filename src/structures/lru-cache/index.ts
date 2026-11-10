@@ -1,5 +1,7 @@
 import { randomInt } from '../../core/rng';
 import type { Cell, Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef } from '../../core/types';
+import java from './code/LruCache.java?raw';
+import python from './code/lru_cache.py?raw';
 import { info } from './info';
 
 /**
@@ -106,12 +108,14 @@ function indexOf(s: LruState, x: LNode): number {
 function find(s: LruState, key: number, rec: Rec, verdict: string): LNode | undefined {
   const text = String(key);
   rec.mark(MAP, 'path');
+  rec.line('lookup');
   rec.step(`Hash ${key} and look in the map. That is one lookup, and it costs the same in a cache of four keys or four million.`, {
     probe: atMap(key),
   });
   const x = s.map.get(key);
   if (!x) return undefined;
   rec.markCell(MAP, x.slot, 'compare');
+  rec.line('check');
   rec.compare(key, '=', x.key, verdict, { probe: { text, at: MAP, cell: x.slot } });
   rec.markCell(MAP, x.slot, 'path');
   return x;
@@ -130,6 +134,7 @@ function moveToHead(s: LruState, x: LNode, rec: Rec, write: (n: number) => void)
   unlink(s, x);
   write(2);
   if (rec.recording) s.loose = { node: x, gap, front: false };
+  rec.line('unlink_prev', after ? 'unlink_next' : 'unlink_tail');
   if (after) {
     rec.markEdge(nextId(before, after), 'ok');
     rec.markEdge(prevId(after, before), 'ok');
@@ -143,12 +148,14 @@ function moveToHead(s: LruState, x: LNode, rec: Rec, write: (n: number) => void)
   write(2);
   if (rec.recording) s.loose = { node: x, gap, front: true };
   rec.markEdge(nextId(x, oldHead), 'ok');
+  rec.line('aim');
   rec.step(`Carry ${x.key} to the front. Its next pointer aims at the current head, ${oldHead.key}, and its prev pointer is cleared. Two more writes.`, { probe });
 
   attach(s, x);
   write(2);
   s.loose = null;
   rec.markEdge(prevId(oldHead, x), 'ok');
+  rec.line('attach_old', 'attach');
   rec.step(`${oldHead.key}'s prev pointer and the cache's head pointer now aim at ${x.key}. Two more writes and it is linked in at the front.`, { probe });
 }
 
@@ -164,7 +171,9 @@ export function get(s: LruState, key: number, rec: Rec): boolean {
     s.misses++;
     rec.count('misses');
     rec.mark(MAP, 'bad');
+    rec.line('check');
     rec.step(`No entry for ${key}. The map alone answers "not cached", so the list is never searched.`, { probe: atMap(key) });
+    rec.line('miss');
     rec.step(`Miss. Nothing in the cache changes. The caller has to fetch ${key} from the slow store behind the cache, and would normally put it afterwards.`);
     return false;
   }
@@ -173,10 +182,12 @@ export function get(s: LruState, key: number, rec: Rec): boolean {
   const probe: Probe = { text: String(key), at: nid(x) };
   rec.markEdge(pid(x), 'path');
   rec.mark(nid(x), 'path');
+  rec.line('is_head');
   if (s.head === x) {
     rec.step(`The entry points straight at the node. Nobody walked the list to find it.`, { probe });
     rec.clearMarks();
     rec.mark(nid(x), 'ok');
+    rec.line('hit');
     rec.step(`Hit. ${key} is already the most recent, so nothing moves. Cost: one hash lookup and no pointer writes.`, { probe });
     return true;
   }
@@ -184,6 +195,7 @@ export function get(s: LruState, key: number, rec: Rec): boolean {
   moveToHead(s, x, rec, write);
   rec.clearMarks();
   rec.mark(nid(x), 'ok');
+  rec.line('hit');
   rec.step(`Hit. ${key} is now the most recent and ${s.tail!.key} is next in line to be evicted. Cost: one hash lookup and ${writes} pointer writes, whatever the size of the cache.`, { probe });
   return true;
 }
@@ -205,10 +217,12 @@ export function put(s: LruState, key: number, rec: Rec): number | null {
     const probe: Probe = { text, at: nid(found) };
     rec.markEdge(pid(found), 'path');
     rec.mark(nid(found), 'path');
+    rec.line('refresh', 'is_head');
     if (s.head === found) {
       rec.step(`Follow the pointer to the node. A real cache would overwrite the stored value here.`, { probe });
       rec.clearMarks();
       rec.mark(nid(found), 'ok');
+      rec.line('refreshed');
       rec.step(`${key} was already cached and already the most recent, so nothing moves. Cost: one hash lookup and no pointer writes.`, { probe });
       return null;
     }
@@ -216,15 +230,18 @@ export function put(s: LruState, key: number, rec: Rec): number | null {
     moveToHead(s, found, rec, write);
     rec.clearMarks();
     rec.mark(nid(found), 'ok');
+    rec.line('refreshed');
     rec.step(`${key} was already cached, so the put only refreshed it. No new node and no eviction. Cost: one hash lookup and ${writes} pointer writes.`, { probe });
     return null;
   }
 
   const waiting = atMap(key);
+  rec.line('check');
   rec.step(`No entry for ${key}, so it is a new key and needs a node of its own. First check whether there is room.`, { probe: waiting });
 
   let evicted: number | null = null;
   const size = s.map.size;
+  rec.line('room');
   if (size >= s.capacity) {
     rec.compare(`size ${size}`, '=', `capacity ${s.capacity}`, 'full, evict the least recent', { probe: waiting });
     const victim = s.tail!;
@@ -232,11 +249,13 @@ export function put(s: LruState, key: number, rec: Rec): number | null {
     rec.mark(nid(victim), 'bad');
     rec.markCell(MAP, victim.slot, 'bad');
     rec.markEdge(pid(victim), 'bad');
+    rec.line('victim');
     rec.step(`The tail holds ${victim.key}, the key that has gone longest without being used. The list keeps it at the end, so picking the victim needs no search.`, { probe: waiting });
 
     unlink(s, victim);
     write(2);
     if (rec.recording) s.loose = { node: victim, gap: size - 1, front: false };
+    rec.line(before ? 'unlink_prev' : 'unlink_head', 'unlink_tail');
     rec.step(
       before
         ? `Unlink ${victim.key} from the list. ${before.key}'s next pointer is cleared and ${before.key} becomes the tail. Two pointer writes.`
@@ -252,6 +271,7 @@ export function put(s: LruState, key: number, rec: Rec): number | null {
     rec.count('evictions');
     evicted = victim.key;
     rec.markCell(MAP, victim.slot, 'idle');
+    rec.line('forget');
     rec.step(`Delete ${victim.key} from the map as well, or the map would point at a node that no longer exists. ${victim.key} is evicted and its map slot is free.`, { probe: waiting });
   } else {
     rec.compare(`size ${size}`, '<', `capacity ${s.capacity}`, 'room for one more, nothing is evicted', { probe: waiting });
@@ -267,6 +287,7 @@ export function put(s: LruState, key: number, rec: Rec): number | null {
   rec.markCell(MAP, x.slot, 'key');
   rec.markEdge(pid(x), 'ok');
   if (oldHead) rec.markEdge(nextId(x, oldHead), 'ok');
+  rec.line('create', 'aim');
   rec.step(
     oldHead
       ? `Create a node for ${key} and add a map entry that points at it. The node's next pointer aims at the current head, ${oldHead.key}. Three writes: one map entry and the node's two pointers.`
@@ -277,6 +298,7 @@ export function put(s: LruState, key: number, rec: Rec): number | null {
   write(2);
   s.loose = null;
   if (oldHead) rec.markEdge(prevId(oldHead, x), 'ok');
+  rec.line(oldHead ? 'attach_old' : 'attach_tail', 'attach');
   rec.step(
     oldHead
       ? `${oldHead.key}'s prev pointer and the cache's head pointer now aim at ${key}. Two more writes and it is linked in at the front.`
@@ -287,6 +309,7 @@ export function put(s: LruState, key: number, rec: Rec): number | null {
   rec.mark(nid(x), 'key');
   rec.markCell(MAP, x.slot, 'key');
   const full = s.map.size >= s.capacity;
+  rec.line('done');
   rec.step(
     evicted != null
       ? `${key} is cached as the most recent, and ${evicted} was evicted to make room. Cost: one hash lookup and ${writes} pointer writes, with no searching at any point.`
@@ -400,8 +423,8 @@ const def: StructureDef<LruState> = {
   create: (params) => create(params.capacity ?? 4),
   seed: [41, 12, 27].map((k) => ['put', k] as [string, number]),
   ops: [
-    { id: 'get', label: 'Get', intent: 'primary', args: [KEY], run: (s, [k], rec) => void get(s, Number(k), rec), suggest: (s) => [cachedKey(s)] },
-    { id: 'put', label: 'Put', args: [KEY], run: (s, [k], rec) => void put(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
+    { id: 'get', label: 'Get', intent: 'primary', args: [KEY], code: ['get', 'unlink', 'push_front'], run: (s, [k], rec) => void get(s, Number(k), rec), suggest: (s) => [cachedKey(s)] },
+    { id: 'put', label: 'Put', args: [KEY], code: ['put', 'unlink', 'push_front'], run: (s, [k], rec) => void put(s, Number(k), rec), suggest: (s) => [absentKey(s)] },
   ],
   layout,
   counters: [
@@ -426,6 +449,7 @@ const def: StructureDef<LruState> = {
     ['put', 41],
   ],
   info,
+  source: { python, java },
 };
 
 export default def;
