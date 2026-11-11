@@ -1,0 +1,1111 @@
+/*
+ * Interview extras: "Lead it" and "Likely pushes" on the design page, rehearsal mode and the crib.
+ * Ink, greys and the site's cards only. Magenta is the tour token's alone and is not used here.
+ */
+
+/* ---- on the design page ---------------------------------------------------- */
+
+.dx-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 20px;
+}
+
+.dx h2:focus,
+.dx h3:focus,
+.dx-push summary.by-link:focus {
+  outline: none;
+}
+
+.dx h2:focus-visible:not(.by-link),
+.dx h3:focus-visible:not(.by-link),
+.dx-push summary:focus-visible:not(.by-link) {
+  outline: 3px solid var(--path);
+  outline-offset: 4px;
+}
+
+.dx-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  margin: 0 0 10px;
+}
+
+.page-head > .dx-actions {
+  margin: 16px 0 0;
+}
+
+.dx-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 15px;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.dx-action:hover {
+  background: #e9edf3;
+}
+
+.dx-action.primary {
+  background: var(--ink);
+  color: #fff;
+}
+
+.dx-action.primary:hover {
+  background: #22324b;
+}
+
+.dx-sub {
+  margin-top: 26px;
+}
+
+.dx-sub h3 {
+  font-size: 1.12rem;
+  font-weight: 750;
+  line-height: 1.25;
+  margin-bottom: 10px;
+  scroll-margin-top: 80px;
+}
+
+.dx h2 {
+  scroll-margin-top: 80px;
+}
+
+.dx-say {
+  color: var(--ink-2);
+  margin-bottom: 10px;
+}
+
+/* The opening reads as a script: one spoken paragraph after another, set off by a rule. */
+.note .dx-script {
+  display: grid;
+  gap: 10px;
+  padding: 4px 0 4px 18px;
+  border-left: 3px solid var(--ink);
+  counter-reset: none;
+}
+
+.note .dx-script li {
+  padding-left: 0;
+  max-width: 72ch;
+  font-size: 1.06rem;
+  line-height: 1.55;
+}
+
+.note .dx-script li::before,
+.note .dx-phases li::before,
+.note .dx-pushes > li::before {
+  content: none;
+}
+
+.note .dx-phases {
+  display: grid;
+  gap: 12px;
+  counter-reset: phase;
+}
+
+.note .dx-phases > li {
+  counter-increment: phase;
+  position: relative;
+  padding: 12px 16px 14px 56px;
+  max-width: none;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: #f6f8fb;
+}
+
+.note .dx-phases > li::before {
+  content: counter(phase);
+  position: absolute;
+  left: 14px;
+  top: 12px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--ink);
+  border-radius: 50%;
+  background: var(--surface);
+  font: 700 0.95rem/1 var(--mono);
+}
+
+.dx-phase-name {
+  font-weight: 750;
+  margin-bottom: 2px;
+}
+
+.dx-phases p + p {
+  margin-top: 2px;
+}
+
+.dx-k {
+  font-weight: 650;
+  color: var(--ink-2);
+}
+
+.dx-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 40px;
+}
+
+.dx-teams {
+  display: grid;
+  gap: 2px;
+}
+
+.dx-teams dd {
+  max-width: 70ch;
+  margin-bottom: 10px;
+}
+
+.dx-teams dt {
+  font-weight: 700;
+}
+
+/* Likely pushes: each question opens to the points of a good answer. */
+.dx-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.note .dx-pushes {
+  display: grid;
+  gap: 8px;
+}
+
+.note .dx-pushes > li {
+  padding: 0;
+  max-width: none;
+}
+
+.dx-push {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  scroll-margin-top: 90px;
+}
+
+.dx-push[open] {
+  border-color: var(--rule-strong);
+  background: #f6f8fb;
+}
+
+.dx-push summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 48px;
+  padding: 11px 16px;
+  font-weight: 650;
+  cursor: pointer;
+  list-style: none;
+  border-radius: var(--radius-s);
+}
+
+.dx-push summary::-webkit-details-marker {
+  display: none;
+}
+
+.dx-push summary:hover .dx-push-q {
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 0.18em;
+}
+
+/* The number doubles as the open/closed mark: a chevron sits after it. */
+.dx-push-n {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 2.6em;
+  font: 700 0.95rem/1.6 var(--mono);
+  color: var(--ink-2);
+}
+
+.dx-push-n::after {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 6px solid currentColor;
+  border-block: 4.5px solid transparent;
+  transition: transform 0.15s;
+}
+
+.dx-push[open] .dx-push-n::after {
+  transform: rotate(90deg);
+}
+
+.dx-push-q {
+  max-width: 70ch;
+}
+
+.dx-push-a {
+  padding: 0 16px 14px calc(16px + 2.6em + 12px);
+}
+
+/* ---- shared by rehearsal and the crib -------------------------------------- */
+
+.dx-page {
+  max-width: 880px;
+}
+
+.dx-back {
+  margin-bottom: 14px;
+}
+
+.dx-back a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  font-weight: 600;
+}
+
+.dx-back a::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-right: 8px;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.dx-empty {
+  max-width: 62ch;
+  margin-top: 12px;
+}
+
+.dx-hint {
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+
+.dx-dot {
+  color: var(--ink-3);
+}
+
+/* ---- rehearsal ---------------------------------------------------------------- */
+
+.dx-question {
+  margin: 20px 0 16px;
+  padding: 16px 20px 18px;
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--ink);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+.dx-question .dx-k {
+  font-size: 0.86rem;
+  margin-bottom: 2px;
+}
+
+.dx-question-text {
+  font-size: 1.22rem;
+  font-weight: 700;
+  line-height: 1.35;
+  max-width: 60ch;
+}
+
+.dx-clock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 20px;
+  padding: 14px 20px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.dx-clock-read {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.dx-clock-figure {
+  font: 700 2.4rem/1.1 var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.dx-clock-note {
+  color: var(--ink-2);
+}
+
+.dx-clock.over .dx-clock-note {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.dx-clock-btns {
+  display: flex;
+  gap: 8px;
+}
+
+.dx-start {
+  min-width: 96px;
+}
+
+/* The progress strip: one segment per stage, as wide as its minutes. */
+.dx-strip {
+  margin: 18px 0 20px;
+  scroll-margin-top: 16px;
+}
+
+.dx-strip ol {
+  display: flex;
+  gap: 4px;
+}
+
+.dx-strip li {
+  flex-basis: 0;
+  min-width: 0;
+}
+
+.dx-seg {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 0 4px;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.dx-seg-bar {
+  display: block;
+  height: 10px;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: 3px;
+  background: var(--surface);
+}
+
+.dx-seg.done .dx-seg-bar {
+  background: var(--rule-strong);
+}
+
+.dx-seg[aria-current='step'] .dx-seg-bar {
+  border-color: var(--ink);
+  background: var(--ink);
+}
+
+.dx-seg-label {
+  display: block;
+  margin-top: 5px;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dx-seg-n {
+  font-family: var(--mono);
+  font-weight: 700;
+}
+
+.dx-seg[aria-current='step'] .dx-seg-label {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.dx-seg:hover .dx-seg-label {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.dx-seg-mins {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.dx-stage,
+.dx-summary {
+  padding: 22px 26px 26px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.dx-stage-meta {
+  font-size: 0.92rem;
+  color: var(--ink-2);
+}
+
+.dx-stage h2,
+.dx-summary h2 {
+  font-size: 1.6rem;
+  line-height: 1.15;
+  font-weight: 780;
+  letter-spacing: -0.012em;
+  margin: 2px 0 6px;
+}
+
+.dx-stage h2:focus,
+.dx-summary h2:focus {
+  outline: none;
+}
+
+.dx-stage h2:focus-visible,
+.dx-summary h2:focus-visible {
+  outline: 3px solid var(--path);
+  outline-offset: 4px;
+}
+
+.dx-stage-clock {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px 4px;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: 14px;
+  font: 600 0.92rem/1.4 var(--sans);
+}
+
+.dx-stage-clock .fig {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.dx-stage-pip {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+.dx-stage-clock.over {
+  border-color: var(--ink);
+  font-weight: 750;
+}
+
+.dx-stage-clock.over .dx-stage-pip {
+  border-radius: 1px;
+}
+
+.dx-prompt {
+  margin: 14px 0 18px;
+  font-size: 1.1rem;
+  max-width: 64ch;
+}
+
+.dx-notes-label {
+  display: block;
+  font-weight: 650;
+}
+
+.dx-notes-label + .dx-hint {
+  margin-bottom: 6px;
+}
+
+.dx-notes {
+  display: block;
+  width: 100%;
+  min-height: 140px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  font: 400 1rem/1.5 var(--sans);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.dx-notes:hover {
+  border-color: var(--ink-2);
+}
+
+.dx-notes:focus-visible {
+  outline: 3px solid var(--path);
+  outline-offset: 1px;
+  border-color: var(--ink);
+}
+
+.dx-reveal {
+  margin-top: 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: #f6f8fb;
+}
+
+.dx-reveal summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 0 14px;
+  font-weight: 650;
+  cursor: pointer;
+  list-style: none;
+  border-radius: var(--radius-s);
+}
+
+.dx-reveal summary::-webkit-details-marker {
+  display: none;
+}
+
+.dx-reveal summary::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 6px solid currentColor;
+  border-block: 4.5px solid transparent;
+  transition: transform 0.15s;
+}
+
+.dx-reveal[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.dx-reveal fieldset {
+  margin: 0;
+  padding: 0 14px 14px;
+  border: 0;
+  min-width: 0;
+}
+
+.dx-reveal legend {
+  padding: 0;
+  margin-bottom: 6px;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+
+.dx-cover {
+  display: grid;
+  gap: 2px;
+}
+
+.dx-cover li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.dx-cover input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 12px 0 0 2px;
+  accent-color: var(--ink);
+}
+
+.dx-cover label {
+  flex: 1;
+  padding: 10px 0;
+  cursor: pointer;
+}
+
+.dx-nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.dx-summary .dx-nav {
+  justify-content: flex-start;
+  margin-top: 24px;
+}
+
+.dx-summary-lead {
+  font-size: 1.1rem;
+  margin-bottom: 18px;
+}
+
+.dx-summary-list {
+  display: grid;
+  gap: 14px;
+}
+
+.dx-sum {
+  padding: 16px 18px 18px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: #f6f8fb;
+}
+
+.dx-sum h3 {
+  font-size: 1.12rem;
+  font-weight: 750;
+}
+
+.dx-sum h4 {
+  margin: 12px 0 4px;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.dx-sum-meta {
+  font-size: 0.92rem;
+  color: var(--ink-2);
+}
+
+.dx-sum-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 24px;
+}
+
+.dx-got li,
+.dx-missed li {
+  position: relative;
+  padding-left: 24px;
+  margin-top: 3px;
+}
+
+/* A tick for covered, an open ring for missed: the shape carries it, not the colour. */
+.dx-got li::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0.32em;
+  width: 6px;
+  height: 11px;
+  border-right: 2.5px solid var(--ok);
+  border-bottom: 2.5px solid var(--ok);
+  transform: rotate(40deg);
+}
+
+.dx-missed li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.4em;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--ink-3);
+  border-radius: 50%;
+}
+
+.dx-none {
+  color: var(--ink-2);
+}
+
+.dx-sum-notes {
+  white-space: pre-wrap;
+  max-width: 72ch;
+}
+
+.dx-sum-link {
+  margin-top: 10px;
+  color: var(--ink-2);
+}
+
+.dx-sum-link a {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ---- the crib, on screen ------------------------------------------------------ */
+
+.dx-crib-page {
+  max-width: 900px;
+}
+
+.dx-crib-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 14px;
+}
+
+.dx-crib-bar .dx-back {
+  margin: 0;
+}
+
+.dx-crib-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dx-crib {
+  padding: 30px 34px 34px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.dx-crib h1 {
+  font-size: clamp(1.6rem, 2.6vw, 2rem);
+}
+
+.dx-crib-kind {
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.dx-crib-q {
+  margin-top: 8px;
+  font-size: 1.08rem;
+  font-weight: 650;
+  max-width: 70ch;
+}
+
+.dx-crib-sec {
+  margin-top: 22px;
+}
+
+.dx-crib-note {
+  margin-top: 6px;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+
+.dx-crib-sec h2 {
+  font-size: 1.12rem;
+  font-weight: 780;
+  margin-bottom: 6px;
+  padding-bottom: 3px;
+  border-bottom: 1.5px solid var(--ink);
+}
+
+.dx-crib-script,
+.dx-crib-phases {
+  display: grid;
+  gap: 6px;
+  padding-left: 1.4em;
+  list-style: decimal;
+}
+
+.dx-crib-script li,
+.dx-crib-phases li {
+  max-width: 80ch;
+}
+
+.dx-crib-why {
+  color: var(--ink-2);
+}
+
+.dx-crib .table-wrap {
+  border: 0;
+  border-radius: 0;
+}
+
+.dx-crib-table {
+  table-layout: fixed;
+}
+
+.dx-crib-table th,
+.dx-crib-table td {
+  padding: 5px 10px 5px 0;
+}
+
+/* The name column a third of the width, the value the rest: a long name must not squeeze its value into a strip. */
+.dx-crib-table thead th:first-child {
+  width: 36%;
+}
+
+.dx-crib-table tbody th {
+  font-weight: 650;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.dx-crib-top {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 30px;
+}
+
+.dx-crib-pcols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 30px;
+}
+
+.dx-crib-pushes {
+  padding-left: 1.4em;
+  list-style: decimal;
+}
+
+.dx-crib-pushes > li {
+  break-inside: avoid;
+  margin-bottom: 10px;
+}
+
+.dx-crib-pq {
+  font-weight: 700;
+}
+
+.dx-crib-pushes ul {
+  margin-top: 2px;
+}
+
+.dx-crib-pushes ul li {
+  position: relative;
+  padding-left: 14px;
+}
+
+.dx-crib-pushes ul li::before {
+  content: '';
+  position: absolute;
+  left: 1px;
+  top: 0.66em;
+  width: 6px;
+  height: 1.5px;
+  background: var(--ink-3);
+}
+
+/* ---- narrower screens --------------------------------------------------------- */
+
+@media (max-width: 899px) {
+  .dx-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 599px) {
+  .dx-seg-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .dx-seg-label {
+    text-align: center;
+  }
+
+  .dx-stage,
+  .dx-summary,
+  .dx-crib {
+    padding: 18px 16px 20px;
+  }
+
+  .dx-clock {
+    padding: 12px 16px;
+  }
+
+  .dx-clock-figure {
+    font-size: 2rem;
+  }
+
+  .dx-sum-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dx-push summary {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .dx-push-n {
+    min-width: 2.2em;
+  }
+
+  .dx-push-a {
+    padding: 0 12px 12px 12px;
+  }
+
+  .dx-crib-pcols,
+  .dx-crib-top {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Under the page title on a phone, the two ways in are plain links on one row, so the diagram stays near the top. */
+  .page-head > .dx-actions {
+    gap: 4px 18px;
+    margin-top: 10px;
+  }
+
+  .page-head > .dx-actions .dx-action {
+    min-height: 32px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--ink);
+    font-size: 0.97rem;
+    text-decoration: underline;
+    text-decoration-color: var(--rule-strong);
+    text-decoration-thickness: 1.5px;
+    text-underline-offset: 0.22em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dx-push-n::after,
+  .dx-reveal summary::before {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .dx-seg[aria-current='step'] .dx-seg-bar,
+  .dx-seg.done .dx-seg-bar,
+  .dx-stage-pip {
+    background: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .dx-got li::before {
+    border-color: CanvasText;
+  }
+}
+
+/* ---- the crib, printed -------------------------------------------------------- */
+
+@media print {
+  @page {
+    size: A4;
+    margin: 10mm 11mm;
+  }
+
+  html.crib-mode body {
+    background: #fff;
+    color: #000;
+    font-size: 10pt;
+    line-height: 1.26;
+  }
+
+  html.crib-mode .sidebar,
+  html.crib-mode .skip,
+  html.crib-mode .dx-crib-bar,
+  html.crib-mode #search-status {
+    display: none !important;
+  }
+
+  html.crib-mode .shell {
+    display: block;
+  }
+
+  html.crib-mode main {
+    padding: 0;
+    max-width: none;
+  }
+
+  html.crib-mode .dx-crib-page {
+    max-width: none;
+  }
+
+  html.crib-mode .dx-crib {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    color: #000;
+  }
+
+  html.crib-mode .dx-crib h1 {
+    font-size: 15pt;
+    line-height: 1.15;
+    letter-spacing: 0;
+  }
+
+  html.crib-mode .dx-crib-kind,
+  html.crib-mode .dx-crib-note,
+  html.crib-mode .dx-crib-why,
+  html.crib-mode .dx-k {
+    color: #000;
+  }
+
+  html.crib-mode .dx-crib-why {
+    font-style: italic;
+  }
+
+  html.crib-mode .dx-crib-note {
+    font-size: 8.5pt;
+    margin-top: 2pt;
+  }
+
+  html.crib-mode .dx-crib-q {
+    font-size: 10.5pt;
+    margin-top: 3pt;
+  }
+
+  html.crib-mode .dx-crib-sec {
+    margin-top: 7pt;
+  }
+
+  html.crib-mode .dx-crib-sec h2 {
+    font-size: 11pt;
+    margin-bottom: 3pt;
+    padding-bottom: 1pt;
+    border-bottom: 1pt solid #000;
+    break-after: avoid;
+  }
+
+  html.crib-mode .dx-crib-script,
+  html.crib-mode .dx-crib-phases {
+    gap: 2pt;
+  }
+
+  html.crib-mode .dx-crib-script li,
+  html.crib-mode .dx-crib-phases li {
+    max-width: none;
+  }
+
+  html.crib-mode .dx-crib table {
+    font-size: 9.5pt;
+  }
+
+  html.crib-mode .dx-crib thead th {
+    color: #000;
+    font-size: 8.5pt;
+    font-weight: 700;
+    border-bottom: 1pt solid #000;
+  }
+
+  html.crib-mode .dx-crib tbody tr + tr > * {
+    border-top: 0.5pt solid #999;
+  }
+
+  html.crib-mode .dx-crib-table th,
+  html.crib-mode .dx-crib-table td {
+    padding: 2pt 8pt 2pt 0;
+  }
+
+  html.crib-mode .dx-crib tr {
+    break-inside: avoid;
+  }
+
+  html.crib-mode .dx-crib-pcols,
+  html.crib-mode .dx-crib-top {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 14pt;
+  }
+
+  html.crib-mode .dx-crib-pushes > li {
+    margin-bottom: 4pt;
+  }
+
+  html.crib-mode .dx-crib-pushes ul li::before {
+    background: #000;
+  }
+
+  html.crib-mode a {
+    color: #000;
+    text-decoration: none;
+  }
+}

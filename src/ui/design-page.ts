@@ -1,5 +1,7 @@
 import './design.css';
 import { h, tableRoles } from '../core/dom';
+import type { Extras } from '../designs/extras/types';
+import { extrasParts } from './design-extras';
 import { MODES, type Component, type Design, type Flow } from '../designs/types';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -194,7 +196,7 @@ type Seg =
  * A system design as an interactive diagram: a guided tour that follows one
  * URL round the loop, and boxes that open to explain themselves.
  */
-export async function mountDesign(host: HTMLElement, design: Design, open?: { kind: string; id: string }): Promise<() => void> {
+export async function mountDesign(host: HTMLElement, design: Design, open?: { kind: string; id: string }, extras?: Extras): Promise<() => void> {
   const W = design.size.w;
   const H = design.size.h;
   const base = `#/d/${design.id}`;
@@ -553,6 +555,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       }, L),
     ),
   );
+  // The interview extras, when written: "Lead it" and "Likely pushes" go after the notes and before the glossary.
+  const ex = extras ? extrasParts(design, extras) : null;
   const notes = h(
     'div.notes', null,
     ...design.brief.map((b) => h('section.note.hld-card', null, h('h2', null, b.heading), list(b.points))),
@@ -571,6 +575,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     ),
     h('section.note.wide.hld-card', null, h('h2', null, 'Failure drills'), h('dl.hld-drills', null, design.drills.flatMap((d) => [h('dt', null, d.name), h('dd', null, d.what)]))),
     h('section.note.wide.interview', null, h('h2', null, 'Say this in the interview'), list(design.interview)),
+    ...(ex?.sections ?? []),
     h(
       'section.note.wide.hld-card', { id: 'glossary' },
       h('h2', null, 'Glossary'),
@@ -596,7 +601,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     ),
   );
 
-  const page = h('article.design', null, h('header.page-head', null, h('h1', null, design.name), h('p.lede', null, design.blurb)), stage, status, detail, notes);
+  const page = h('article.design', null, h('header.page-head', null, h('h1', null, design.name), h('p.lede', null, design.blurb), ex?.links), stage, status, detail, notes);
   host.append(page);
 
   // ---- state ---------------------------------------------------------------------
@@ -2721,7 +2726,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
           term.scrollIntoView({ block: 'center' });
           (term.querySelector('dt') as HTMLElement).focus({ preventScroll: true });
         } else missing('glossary term');
-      }
+      } else if (ex) ex.open(open);
     });
   }
 
