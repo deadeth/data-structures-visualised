@@ -39,8 +39,11 @@ export interface Component {
 /** How two components talk. Each mode has its own line style and chip, explained in the legend. */
 export type Mode = 'local' | 'call' | 'async' | 'write' | 'external';
 
+/** The one rule for in-process chips, as the key states it. It holds on the diagram, on the tour and in the detail. */
+export const LOCAL_RULE = 'In-process call: thin line; its chip shows when the line is live or selected.';
+
 export const MODES: { id: Mode; label: string; about: string; note: string }[] = [
-  { id: 'local', label: 'In-process call', about: 'About in-process calls', note: 'Same machine, no network. Cannot be lost, cannot be slow. Drawn as a thin arrow with no chip.' },
+  { id: 'local', label: 'In-process call', about: 'About in-process calls', note: 'Same machine, no network. Cannot be lost, cannot be slow. Drawn as a thin line; its chip shows when the line is live or selected.' },
   { id: 'call', label: 'Network call', about: 'About network calls', note: 'Request and reply. The caller waits, so it needs a timeout.' },
   { id: 'async', label: 'Message log', about: 'About message logs', note: 'Asynchronous. The sender does not wait and the reader sets its own pace.' },
   { id: 'write', label: 'Storage write', about: 'About storage writes', note: 'Durable once acknowledged. Written so that doing it twice is harmless.' },
@@ -75,7 +78,7 @@ export interface Flow {
   via: string;
   /**
    * Where along the path the chip sits, 0 to 1. Every connection has a chip, so every one can be opened from the
-   * keyboard; an in-process chip is only drawn while the line is live, pointed at, focused or open.
+   * keyboard; an in-process chip is only drawn while the line is live or selected (open, pointed at or focused).
    */
   chip?: number;
   /** Off the hot path: used for recovery or reprocessing, not on every fetch. Hidden until asked for. */

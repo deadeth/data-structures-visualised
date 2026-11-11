@@ -1,6 +1,6 @@
 import './design.css';
 import { h, tableRoles } from '../core/dom';
-import { MODES, type Component, type Design, type Flow } from '../designs/types';
+import { LOCAL_RULE, MODES, type Component, type Design, type Flow } from '../designs/types';
 
 const NS = 'http://www.w3.org/2000/svg';
 const SPEEDS = [0.5, 1, 2] as const;
@@ -8,7 +8,7 @@ const SPEED_NAMES: Record<number, string> = { 0.5: 'Half speed', 1: 'Normal spee
 /** Token travel at 1x, in diagram units a second. */
 const PACE = 260;
 /** The shortest leg at 1x, so that a short hop still reads as movement. */
-const MIN_LEG = 700;
+const MIN_LEG = 900;
 /** The shortest leg at any speed. */
 const FLOOR_LEG = 450;
 /** The pause at a turn (a question reaching its answer), at 1x. */
@@ -17,25 +17,29 @@ const HOLD = 250;
 const FADE = 120;
 /** Further than this from the last stop, the token fades across rather than jumping. */
 const JUMP = 30;
-/** Chip height, in diagram units. */
-const CHIP_H = 30;
+/** Chip height, in diagram units: tall enough that its words sit 6px inside its outline at the smallest scale. */
+const CHIP_H = 37;
 /** The token: a dot on the line, and its label on a pill beside it. */
 const DOT_R = 6;
-const PILL_H = 26;
+const PILL_H = 34;
 /** Space between the dot and the nearest edge of its pill. */
 const PILL_GAP = 9;
 /** Purpose labels keep this far from every other line, box and chip. */
 const LABEL_CLEAR = 6;
+/** ...and further from lines (their white halo eats into the gap) and from chips. */
+const LABEL_LINE_CLEAR = 8;
+const LABEL_CHIP_CLEAR = 9;
 /** From this width the opened detail shares the screen with the diagram. */
 const WIDE = '(min-width: 1366px)';
 /**
  * The smallest scale the diagram is drawn at before it pans: its smallest text
- * (16 units) is then 12.2px, and a 1280-unit diagram fits a 1024px screen.
- * Matches design.css. The diagram never zooms below this on the tour; it pans.
+ * (16.5 units) is then 13px, and a 1280-unit diagram still fits a 1024px
+ * screen with a scrollbar. Matches design.css. The diagram never zooms below
+ * this on the tour; it pans.
  */
-const BASE_SCALE = 0.76;
-/** "Fit to width" never shrinks below this: it is an overview, not a reading size. */
-const FIT_FLOOR = 0.5;
+const BASE_SCALE = 0.788;
+/** The largest scale: its smallest text is then 15.8px. Wider than that, the extra width is margin. Matches design.css. */
+const MAX_SCALE = 0.96;
 /** The sticky readout may take at most this share of the screen's height. */
 const HEAD_SHARE = 0.4;
 const COLD_KEY = 'dsv.recovery';
@@ -119,16 +123,37 @@ const gapOf = (a: Box, b: Box) => {
 };
 const ptGap = (p: Pt, b: Box) => Math.hypot(Math.max(0, b.x - p.x, p.x - (b.x + b.w)), Math.max(0, b.y - p.y, p.y - (b.y + b.h)));
 
-/** A sample of the legend's shapes, drawn in the diagram's own classes. */
+/** Line samples are this long on screen, in pixels. */
+const SAMPLE_PX = 60;
+/**
+ * A sample of a line style, drawn in the diagram's own classes. Drawn at the
+ * diagram's own scale (see sizeSample), so its stroke and dashes are the
+ * widths and lengths the reader sees on the diagram.
+ */
 function lineSample(mode: string, cold = false, chip = true): SVGSVGElement {
-  const s2 = el('svg', { viewBox: '0 0 56 24', width: 56, height: 24, 'aria-hidden': 'true' });
-  s2.append(el('path', { d: 'M2,12 H52' }, `hld-flow mode-${mode}${cold ? ' cold' : ''} sample`));
+  const s2 = el('svg', { width: SAMPLE_PX, height: 24, 'aria-hidden': 'true' }, 'hld-sample');
+  s2.append(el('path', {}, `hld-flow mode-${mode}${cold ? ' cold' : ''} sample`));
   if (chip) {
-    const g = el('g', { transform: 'translate(27,12)' }, `hld-chip mode-${mode}${cold ? ' cold' : ''} sample`);
-    g.append(el('rect', { x: -12, y: -8, width: 24, height: 16, rx: 8 }, 'hld-chip-box'));
+    const g = el('g', {}, `hld-chip mode-${mode}${cold ? ' cold' : ''} sample`);
+    g.append(el('rect', {}, 'hld-chip-box'));
     s2.append(g);
-  } else s2.append(el('path', { d: 'M44,7 L52,12 L44,17 z' }, 'hld-tip'));
+  } else s2.append(el('path', {}, 'hld-tip'));
+  sizeSample(s2, 0.85);
   return s2;
+}
+/** Redraw a line sample for the diagram's scale k: 1 unit is k pixels, as on the diagram. */
+function sizeSample(s2: SVGSVGElement, k: number): void {
+  const L = SAMPLE_PX / k;
+  const m = 12 / k;
+  s2.setAttribute('viewBox', `0 0 ${L.toFixed(2)} ${(24 / k).toFixed(2)}`);
+  const [line, extra] = Array.from(s2.children) as SVGElement[];
+  line.setAttribute('d', `M${(2 / k).toFixed(2)},${m.toFixed(2)} H${(L - 2 / k).toFixed(2)}`);
+  if (extra.tagName === 'g') {
+    // The chip sits at the start, so most of the sample shows the line's own dash.
+    extra.setAttribute('transform', `translate(${(14 / k).toFixed(2)},${m.toFixed(2)})`);
+    const r = extra.firstElementChild as SVGRectElement;
+    for (const [a, v] of [['x', -12], ['y', -8], ['width', 24], ['height', 16], ['rx', 8]] as const) r.setAttribute(a, (v / k).toFixed(2));
+  } else extra.setAttribute('d', `M${(L - 10 / k).toFixed(2)},${(m - 5 / k).toFixed(2)} L${(L - 2 / k).toFixed(2)},${m.toFixed(2)} L${(L - 10 / k).toFixed(2)},${(m + 5 / k).toFixed(2)} z`);
 }
 function boxSample(kind: string): SVGSVGElement {
   const s2 = el('svg', { viewBox: '0 0 40 26', width: 40, height: 26, 'aria-hidden': 'true' }, `hld-node kind-${kind} sample`);
@@ -136,7 +161,7 @@ function boxSample(kind: string): SVGSVGElement {
     s2.append(el('path', { d: 'M2,7 A18,4 0 0 1 38,7 V20 A18,4 0 0 1 2,20 Z' }, 'hld-box'));
     s2.append(el('path', { d: 'M2,7 A18,4 0 0 0 38,7' }, 'hld-cap'));
   } else {
-    s2.append(el('rect', { x: 2, y: 3, width: 36, height: 20, rx: kind === 'input' ? 10 : 5 }, 'hld-box'));
+    s2.append(el('rect', { x: 2, y: 3, width: 36, height: 20, rx: kind === 'input' ? 8 : 4 }, 'hld-box'));
     if (kind === 'queue') s2.append(el('path', { d: 'M8,18 v-4 M14,18 v-4 M20,18 v-4 M26,18 v-4 M32,18 v-4' }, 'hld-shelf'));
   }
   return s2;
@@ -195,8 +220,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   svg.style.setProperty('--hld-w', String(W));
   svg.style.setProperty('--hld-h', String(H));
   const defs = el('defs');
-  for (const [id, cls] of [['hld-arrow', 'hld-tip'], ['hld-arrow-live', 'hld-tip live'], ['hld-arrow-linked', 'hld-tip linked'], ['hld-arrow-quiet', 'hld-tip quiet']] as const) {
-    const m = el('marker', { id, viewBox: '0 0 10 10', refX: 8.5, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' });
+  // Markers scale with the stroke: a live or selected line (about 3 units against 1.6) gets a smaller marker, so its head is about 1.4 times the usual one.
+  for (const [id, cls, size] of [['hld-arrow', 'hld-tip', 7], ['hld-arrow-live', 'hld-tip live', 5.2], ['hld-arrow-linked', 'hld-tip linked', 5.2], ['hld-arrow-quiet', 'hld-tip quiet', 7]] as const) {
+    const m = el('marker', { id, viewBox: '0 0 10 10', refX: 8.5, refY: 5, markerWidth: size, markerHeight: size, orient: 'auto-start-reverse' });
     m.append(el('path', { d: 'M0,0 L10,5 L0,10 z' }, cls));
     defs.append(m);
   }
@@ -246,7 +272,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     chip.dataset.flow = fl.id;
     const ring = el('rect', { y: -CHIP_H / 2 - 5, height: CHIP_H + 10, rx: CHIP_H / 2 + 5 }, 'hld-ring');
     const chipRect = el('rect', { y: -CHIP_H / 2, height: CHIP_H, rx: CHIP_H / 2 }, 'hld-chip-box');
-    const chipText = el('text', { y: 5.5, 'text-anchor': 'middle' });
+    const chipText = el('text', { y: 4.65, 'text-anchor': 'middle' });
     chipText.textContent = fl.via;
     chip.append(ring, chipRect, chipText);
     chip.addEventListener('click', (e) => pickFlow(fl.id, e.detail === 0 ? 'key' : 'pointer', chip));
@@ -279,26 +305,29 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   const nodeEls = new Map<string, SVGGElement>();
   for (const c of design.components) {
     const { w, h: hh } = sizeOf(c);
-    const rx = c.kind === 'input' ? hh / 2 : 10;
+    // An input is a rounded tab, rounder than a service's box but not a full pill, so its words keep clear of the ends.
+    const rx = c.kind === 'input' ? Math.min(20, hh / 2) : 10;
     const g = el('g', { transform: `translate(${c.x - w / 2},${c.y - hh / 2})`, tabindex: -1, role: 'button', 'aria-expanded': 'false', 'aria-controls': DETAIL_ID, 'aria-label': `${c.name}. ${c.tech}. Component.` }, `hld-node kind-${c.kind}`);
     g.dataset.id = c.id;
     g.append(el('rect', { x: -6, y: -6, width: w + 12, height: hh + 12, rx: rx + 6 }, 'hld-ring'));
     // A store is a cylinder, so its shape cannot be read as a box with a link under its text.
-    const CAP = 7;
+    const CAP = 6;
     if (c.kind === 'store') {
       g.append(el('path', { d: `M0,${CAP} A${w / 2},${CAP} 0 0 1 ${w},${CAP} V${hh - CAP} A${w / 2},${CAP} 0 0 1 0,${hh - CAP} Z` }, 'hld-box'));
       g.append(el('path', { d: `M0,${CAP} A${w / 2},${CAP} 0 0 0 ${w},${CAP}` }, 'hld-cap'));
     } else g.append(el('rect', { width: w, height: hh, rx }, 'hld-box'));
     // A log is drawn as a row of segments along its lower edge: messages in order.
-    if (c.kind === 'queue') g.append(el('path', { d: Array.from({ length: 9 }, (_, i) => `M${18 + i * ((w - 36) / 8)},${hh - 11} v6`).join(' ') }, 'hld-shelf'));
-    const top = c.lines ? 23 : hh / 2 - 4 + (c.kind === 'store' ? 5 : 0) - (c.kind === 'queue' ? 4 : 0);
+    if (c.kind === 'queue') g.append(el('path', { d: Array.from({ length: 9 }, (_, i) => `M${18 + i * ((w - 36) / 8)},${hh - 9} v5`).join(' ') }, 'hld-shelf'));
+    // Where the name sits: every text at least 6px inside its outline at the smallest scale (7.6 units), clear of a cylinder's
+    // cap and a log's ticks. The subtitle is 19 units under the name.
+    const top = c.lines || c.kind === 'queue' ? 23.5 : c.kind === 'store' ? 2 * CAP + 23.5 : hh / 2 - 4.5;
     const name = el('text', { x: w / 2, y: top, 'text-anchor': 'middle' }, 'hld-name');
     name.textContent = c.short ?? c.name;
-    const tech = el('text', { x: w / 2, y: top + 20, 'text-anchor': 'middle' }, 'hld-tech');
+    const tech = el('text', { x: w / 2, y: top + 19, 'text-anchor': 'middle' }, 'hld-tech');
     tech.textContent = c.tech;
     g.append(name, tech);
     (c.lines ?? []).forEach((line, i) => {
-      const t = el('text', { x: 12, y: top + 43 + i * 19 }, 'hld-line');
+      const t = el('text', { x: 14, y: top + 41 + i * 18.5 }, 'hld-line');
       t.textContent = line;
       g.append(t);
     });
@@ -315,11 +344,33 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const pill = el('g', {}, 'hld-pill');
     const tether = el('line', {}, 'hld-tether');
     const rect = el('rect', { y: -PILL_H / 2, height: PILL_H, rx: PILL_H / 2 });
-    const text = el('text', { y: 5.5, 'text-anchor': 'middle' });
+    const text = el('text', { y: 4.5, 'text-anchor': 'middle' });
     pill.append(rect, text);
     g.append(tether, dot, pill);
     g.style.display = 'none';
-    return { g, dot, pill, rect, text, tether, at: null as { x: number; y: number; label: string } | null, side: -1, pillW: 0, vertical: false, pillBox: null as Box | null };
+    return {
+      g, dot, pill, rect, text, tether,
+      at: null as { x: number; y: number; label: string } | null,
+      /** Which of the places round the dot the pill is going to, and for which leg it was chosen. */
+      spot: -1,
+      leg: null as object | null,
+      /** Where the pill is drawn now, and where it is going, relative to the dot. */
+      off: null as Pt | null,
+      target: null as Pt | null,
+      /** The places planned for this leg: from how far along each one holds. */
+      plan: [] as { d: number; spot: number; hide?: boolean }[],
+      /** The pill fades out on a stretch with nowhere clear to sit: how visible it is now, and where it is going. */
+      pillOp: 1,
+      pillHide: false,
+      planW: 0,
+      blockedSince: 0,
+      since: 0,
+      /** When the pill last moved, so it moves at most once a frame. */
+      stepped: 0,
+      pillW: 0,
+      vertical: false,
+      pillBox: null as Box | null,
+    };
   }
   const token = makeToken('main');
   const branchTok = makeToken('branch');
@@ -336,7 +387,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
 
   // ---- tour bar ----------------------------------------------------------------
   const restText = () => (coarse() ? design.restTouch : design.rest);
-  const stepTitle = h('h2.hld-step-title', null, 'Take the tour, or open any box');
+  const stepTitle = h('h2.hld-step-title', { tabIndex: -1 }, 'Take the tour, or open any box');
   const stepText = h('p.hld-step-text', null, restText());
   const stepVia = h('p.hld-step-via', null);
   const moreBtn = h('button.hld-more', { type: 'button', 'aria-expanded': 'false', onclick: () => setMore(!moreOpen) }, 'More') as HTMLButtonElement;
@@ -364,7 +415,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   }
   // On a phone the three speeds become one button that steps through them, so the transport fits one row.
   const speedCycle = h('button.hld-speed-cycle', { type: 'button', onclick: () => setSpeed(SPEEDS[(SPEEDS.indexOf(speed as (typeof SPEEDS)[number]) + 1) % SPEEDS.length]) }, '1×') as HTMLButtonElement;
-  const transport = h('div.hld-transport', null, h('div.hld-nav', null, restartBtn, backBtn, playBtn, nextBtn), counter, exploreBtn, speedGroup, speedCycle);
+  // The tour's keys, on show where there is room and a keyboard; they follow the site-wide shortcut switch.
+  const keyHints = h('p.hld-keys', { 'aria-hidden': 'true' }, h('kbd', null, 'Space'), ' play ', h('kbd', null, '←'), h('kbd', null, '→'), ' step ', h('kbd', null, 'R'), ' replay');
+  const transport = h('div.hld-transport', null, h('div.hld-nav', null, restartBtn, backBtn, playBtn, nextBtn), counter, exploreBtn, keyHints, speedGroup, speedCycle);
   const head = h('div.hld-head', null, readout, transport, measure);
   /** Shortcut hints follow the site-wide switch. */
   function syncKeys(): void {
@@ -375,6 +428,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     }
     for (const b of [backBtn, nextBtn]) b.title = on ? `${b.getAttribute('aria-label')} (${b.dataset.keys})` : b.getAttribute('aria-label')!;
     playBtn.title = on ? 'Play or pause (Space). R replays the step.' : '';
+    keyHints.hidden = !on;
   }
 
   // ---- detail ------------------------------------------------------------------
@@ -397,12 +451,12 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   // ---- the key -----------------------------------------------------------------
   let showCold = stored(COLD_KEY) === 'on';
   const coldBox = h('input', { type: 'checkbox', id: `${design.id}-cold`, checked: showCold, onchange: () => setCold(coldBox.checked) }) as HTMLInputElement;
-  const keyItem = (glyph: SVGSVGElement, label: string, note: string) => h('li', null, glyph, h('span', null, label), h('span.visually-hidden', null, `: ${note}`));
+  const keyItem = (glyph: SVGSVGElement, label: string, note: string, cold = false) => h(cold ? 'li.cold' : 'li', null, glyph, h('span', null, label), h('span.visually-hidden', null, `: ${note}`));
   const legend = h(
     'div.hld-legend', null,
     h(
       'ul.hld-key', { 'aria-label': 'Line styles' },
-      MODES.map((m) => keyItem(lineSample(m.id, false, m.id !== 'local'), m.id === 'local' ? 'In-process call: no chip' : m.label, m.note)),
+      MODES.map((m) => keyItem(lineSample(m.id, false, m.id !== 'local'), m.id === 'local' ? LOCAL_RULE : m.label, m.note)),
     ),
     h(
       'ul.hld-key', { 'aria-label': 'Box styles, and lines off the hot path' },
@@ -410,7 +464,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       keyItem(boxSample('outside'), 'Outside our control', 'Dashed border: someone else runs it.'),
       keyItem(boxSample('store'), 'Storage', 'A cylinder: durable data.'),
       keyItem(boxSample('queue'), 'Log', 'Ticks along the base: messages kept in order.'),
-      keyItem(lineSample('write', true), 'Off the hot path', 'Used to recover or reprocess, not on every fetch. Hidden unless shown.'),
+      keyItem(lineSample('write', true), 'Off the hot path', 'Used to recover or reprocess, not on every fetch. Hidden unless shown.', true),
     ),
     h(
       'div.hld-key-row', null,
@@ -445,7 +499,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   const flowRows: Cell[][] = design.flows.flatMap((x) => {
     const row = (a: string, b: string, delivery: string) => {
       const btn2: HTMLButtonElement = h('button.hld-where', { type: 'button', onclick: () => pickFlow(x.id, 'text', btn2) }, `${nameOf(a)} to ${nameOf(b)}`);
-      return [btn2, x.via, `${modeOf(x).label}${x.cold ? ', off the hot path' : ''}`, delivery];
+      // The method as the same chip the diagram draws, on one line.
+      return [btn2, h(`span.hld-tag.mode-${x.mode}${x.cold ? '.cold' : ''}`, null, x.via), `${modeOf(x).label}${x.cold ? ', off the hot path' : ''}`, delivery];
     };
     return x.reply ? [row(x.from, x.to, x.delivery), row(x.to, x.from, x.reply.delivery)] : [row(x.from, x.to, x.delivery)];
   });
@@ -545,6 +600,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   let holdTrip = false;
   /** The tallest step's readout, in pixels, at the current width. */
   let reserve = 0;
+  /** The same for the title and the "Travels by" line alone. */
+  let briefReserve = 0;
   /** The box or chip that holds the diagram's one tab stop. */
   let rove: SVGGElement = nodeEls.get(design.tour[0]?.focus[0] ?? design.components[0].id) ?? items[0];
   rove.setAttribute('tabindex', '0');
@@ -580,8 +637,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   for (const fe of flowEls.values()) {
     const { fl, path, chip, chipRect, ring, chipText } = fe;
     const p = path.getPointAtLength(path.getTotalLength() * (fl.chip ?? 0.5));
-    // Room for wider letter spacing: 15 per cent more than the text needs.
-    const w = Math.max(46, chipText.getComputedTextLength() * 1.15 + 18);
+    // Room for wider letter spacing (15 per cent more than the text needs), and the words 6px clear of the rounded ends.
+    const w = Math.max(52, chipText.getComputedTextLength() * 1.15 + 24);
     chipRect.setAttribute('x', String(-w / 2));
     chipRect.setAttribute('width', String(w));
     ring.setAttribute('x', String(-w / 2 - 5));
@@ -638,7 +695,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const hitC = labelCache.get(key);
     if (hitC) return hitC;
     const out = new Map<string, { x: number; y: number; box: Box; leader: [Pt, Pt] | null }>();
-    const obstacles: Box[] = [...nodeBoxes, ...frameTexts, ...[...chips].map((id) => chipBox.get(id)!)];
+    const obstacles: Box[] = [...nodeBoxes, ...frameTexts];
+    const chipObs: Box[] = [...chips].map((id) => chipBox.get(id)!);
     const pts: Pt[] = [...frameSamples];
     for (const id of lines) pts.push(...samples.get(id)!);
     // The shortest lines have the fewest places to put a label: place them first.
@@ -677,8 +735,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
             if (best && score >= best.score) continue;
             if (box.x < 2 || box.y < 2 || box.x + box.w > W - 2 || box.y + box.h > H - 2) continue;
             if (obstacles.some((o) => gapOf(o, box) < LABEL_CLEAR)) continue;
+            if (chipObs.some((o) => gapOf(o, box) < LABEL_CHIP_CLEAR)) continue;
             if ([...out.values()].some((o) => gapOf(o.box, box) < LABEL_CLEAR)) continue;
-            if (pts.some((p) => ptGap(p, box) < LABEL_CLEAR)) continue;
+            if (pts.some((p) => ptGap(p, box) < LABEL_LINE_CLEAR)) continue;
             const edge = { x: a.x + side * n.x * d + tx * slide, y: a.y + side * n.y * d + ty * slide };
             best = { x: cx, y: cy - lh / 2 + asc, box, leader: d > 5 ? [{ x: a.x, y: a.y }, edge] : null, score };
           }
@@ -1054,6 +1113,14 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     countLong.textContent = inTour ? `Step ${step + 1} of ${design.tour.length}` : `${design.tour.length} steps`;
     countShort.textContent = inTour ? `${step + 1}/${design.tour.length}` : `${design.tour.length} steps`;
     stepVia.replaceChildren(...(s ? viaLine(s) : []));
+    // On the tour the diagram's one tab stop is the part this step is about: where its trip ends, if that is lit.
+    if (s && !(document.activeElement && svg.contains(document.activeElement))) {
+      const legs = s.path.map(legOf);
+      const last = legs[legs.length - 1];
+      const endId = last ? (last.back ? last.fl.from : last.fl.to) : s.focus[0];
+      const part = nodeEls.get(s.focus.includes(endId) ? endId : s.focus[0]);
+      if (part && part !== rove) setRove(part, false);
+    }
     const focus = new Set(light ? (s?.focus ?? []) : []);
     for (const [id, g] of nodeEls) {
       g.classList.toggle('lit', focus.has(id));
@@ -1073,7 +1140,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     syncHead();
     paintFlows(light);
     // Chips may have come or gone: each pill checks it still covers nothing.
-    for (const tk of [token, branchTok]) if (tk.at && tk.g.style.display !== 'none') placePill(tk, tk.at.x, tk.at.y, pillWidth(tk.at.label), tk === token ? branchTok : token, tk.vertical ? { x: 0, y: 1 } : { x: 1, y: 0 });
+    for (const tk of [token, branchTok]) if (tk.at && tk.g.style.display !== 'none') placePill(tk, tk.at.x, tk.at.y, pillWidth(tk.at.label), null, false);
   }
 
   /**
@@ -1091,7 +1158,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     if (!brief && moreOpen) setMore(false, true);
     if (!brief && document.activeElement === moreBtn) playBtn.focus({ preventScroll: true });
     moreBtn.hidden = !brief;
-    readout.style.minHeight = inTour && reserve && !brief ? `${reserve}px` : '';
+    readout.style.minHeight = inTour && reserve ? `${brief ? (moreOpen ? 0 : briefReserve) : reserve}px` : '';
     const tall = inTour && (moreOpen || head.offsetHeight > limit + 1);
     stage.classList.toggle('unstick', tall);
     document.documentElement.style.scrollPaddingTop = inTour && !tall && !stage.classList.contains('reading') ? `${head.offsetHeight + 8}px` : '';
@@ -1110,40 +1177,192 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       const kind = modeOf(x).label.toLowerCase();
       return kind.startsWith(x.via.toLowerCase()) ? kind : `${x.via} (${kind})`;
     }))];
-    return ways.length ? [h('span.hld-k', null, 'Travels by: '), ways.join(', then ')] : [];
+    // A step with no trip says so, so the line is always there to read.
+    return [h('span.hld-k', null, 'Travels by: '), ways.length ? ways.join(', then ') : `nothing this step; it waits in the ${nameOf(s.focus[0])}`];
   }
 
   /** Find the tallest readout of all the steps at the current width. */
+  let measuredAt = '';
   function measureReserve(): void {
+    // Only a change of width (or of the type size) changes the tallest step: skip the work otherwise.
+    const key = `${readout.clientWidth}|${getComputedStyle(stepText).fontSize}|${innerHeight}`;
+    if (key === measuredAt) {
+      syncHead();
+      return;
+    }
+    measuredAt = key;
     const [t, p, v] = Array.from(measure.children) as HTMLElement[];
     measure.style.width = `${readout.clientWidth}px`;
     let most = 0;
+    let mostBrief = 0;
     for (const s of design.tour) {
       t.textContent = s.title;
       p.textContent = s.text;
       v.replaceChildren(...viaLine(s));
+      p.style.display = '';
       most = Math.max(most, measure.offsetHeight);
+      // The title and how it travels alone, as a short screen shows them.
+      p.style.display = 'none';
+      mostBrief = Math.max(mostBrief, measure.offsetHeight);
     }
+    p.style.display = '';
     reserve = Math.ceil(most);
+    briefReserve = Math.ceil(mostBrief);
     syncHead();
   }
 
   // ---- the token -----------------------------------------------------------------
-  const pillWidth = (label: string) => Math.max(40, label.length * 9.8 + 22);
+  /** The pill's width for a label: its words at least 6px clear of the rounded ends at the smallest scale. */
+  const pillMeasure = el('text', {}, '');
+  // Measured in a hidden drawing of its own beside the diagram, in the pill's own style.
+  const pillMeasureG = el('g', {}, 'hld-pill');
+  const measureSvg = el('svg', { width: 0, height: 0, 'aria-hidden': 'true', focusable: 'false' }, 'hld-measure-svg');
+  measureSvg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;visibility:hidden';
+  pillMeasureG.append(pillMeasure);
+  measureSvg.append(pillMeasureG);
+  pan.append(measureSvg);
+  const pillWidths = new Map<string, number>();
+  const pillWidth = (label: string) => {
+    let w = pillWidths.get(label);
+    if (w == null) {
+      pillMeasure.textContent = label;
+      w = Math.max(48, pillMeasure.getComputedTextLength() * 1.1 + 26);
+      pillWidths.set(label, w);
+    }
+    return w;
+  };
   type Tok = ReturnType<typeof makeToken>;
-  /** What the pill must not cover: boxes, chips on show, purpose labels, the frame's words, and the other token's pill. */
-  function pillObstacles(other: Tok): Box[] {
-    const out: Box[] = [...nodeBoxes, ...frameTexts];
-    for (const fe of flowEls.values()) if (fe.chip.classList.contains('show') && fe.chip.classList.contains('need')) out.push(chipBox.get(fe.fl.id)!);
-    for (const sp of labelSpot.values()) out.push(sp.box);
-    if (other.g.style.display !== 'none' && other.pillBox) out.push(other.pillBox);
+
+  /**
+   * Where a pill may not go, as a grid of 2-unit cells summed for quick box
+   * queries: boxes (their names included), chips on show, purpose labels, the
+   * frame's words, and every line on show and the frame's own outline, each
+   * with 4 units to spare. Rebuilt only when what is drawn changes.
+   */
+  const CELL = 2;
+  const LINE_CLEAR = 4;
+  const gw = Math.ceil(W / CELL) + 1;
+  const gh = Math.ceil(H / CELL) + 1;
+  let occKey = '';
+  let sat = new Int32Array((gw + 1) * (gh + 1));
+  /** Boxes alone, which a pill's tie must not cross (chips are drawn over it). */
+  let solid = new Int32Array((gw + 1) * (gh + 1));
+  const summed = (occ: Uint8Array) => {
+    const t = new Int32Array((gw + 1) * (gh + 1));
+    for (let yy = 0; yy < gh; yy++) {
+      let row = 0;
+      for (let xx = 0; xx < gw; xx++) {
+        row += occ[yy * gw + xx];
+        t[(yy + 1) * (gw + 1) + xx + 1] = t[yy * (gw + 1) + xx + 1] + row;
+      }
+    }
+    return t;
+  };
+  function occupancy(): Int32Array {
+    const chips = [...flowEls.values()].filter((fe) => fe.chip.classList.contains('show') && fe.chip.classList.contains('need')).map((fe) => fe.fl.id);
+    const lines = [...flowEls.values()].filter((fe) => fe.path.classList.contains('need')).map((fe) => fe.fl.id);
+    const key = `${chips.join(',')}|${lines.join(',')}|${[...labelSpot.keys()].join(',')}`;
+    if (key === occKey) return sat;
+    occKey = key;
+    let occ = new Uint8Array(gw * gh);
+    const mark = (b: Box) => {
+      const x0 = Math.max(0, Math.floor(b.x / CELL));
+      const x1 = Math.min(gw, Math.ceil((b.x + b.w) / CELL));
+      const y0 = Math.max(0, Math.floor(b.y / CELL));
+      const y1 = Math.min(gh, Math.ceil((b.y + b.h) / CELL));
+      for (let yy = y0; yy < y1; yy++) occ.fill(1, yy * gw + x0, yy * gw + Math.max(x0, x1));
+    };
+    const grow = (b: Box, d: number): Box => ({ x: b.x - d, y: b.y - d, w: b.w + 2 * d, h: b.h + 2 * d });
+    for (const b of nodeBoxes) mark(b);
+    solid = summed(occ);
+    occ = new Uint8Array(gw * gh);
+    for (const b of [...nodeBoxes, ...frameTexts]) mark(grow(b, 1));
+    for (const id of chips) mark(grow(chipBox.get(id)!, 1));
+    for (const sp of labelSpot.values()) mark(grow(sp.box, 1));
+    const dot = (p: Pt) => mark({ x: p.x - LINE_CLEAR, y: p.y - LINE_CLEAR, w: 2 * LINE_CLEAR, h: 2 * LINE_CLEAR });
+    for (const id of lines) samples.get(id)!.forEach(dot);
+    frameSamples.forEach(dot);
+    sat = summed(occ);
+    return sat;
+  }
+  /** How many blocked cells a box covers. */
+  const covered = (t: Int32Array, b: Box) => {
+    const x0 = Math.max(0, Math.min(gw, Math.floor(b.x / CELL)));
+    const x1 = Math.max(0, Math.min(gw, Math.ceil((b.x + b.w) / CELL)));
+    const y0 = Math.max(0, Math.min(gh, Math.floor(b.y / CELL)));
+    const y1 = Math.max(0, Math.min(gh, Math.ceil((b.y + b.h) / CELL)));
+    const r = gw + 1;
+    return t[y1 * r + x1] - t[y0 * r + x1] - t[y1 * r + x0] + t[y0 * r + x0];
+  };
+
+  /**
+   * What the pill is placed against, read once per decision: the grid of
+   * what it must not cover, what of the diagram the reader can see now (inside
+   * the canvas, below the stuck readout, on the screen, in diagram units), and
+   * how the view follows the token.
+   */
+  interface Ctx {
+    t: Int32Array;
+    view: Box;
+    follows: boolean;
+    panX: boolean;
+    panY: boolean;
+    mx: number;
+    my: number;
+    other: Tok;
+    /** Placing a pill where the token rests: it needs only to fit on screen with its dot, since the view settles on both. */
+    rest: boolean;
+  }
+  function context(tk: Tok, rest = false): Ctx {
+    const sr = svg.getBoundingClientRect();
+    const cr = canvas.getBoundingClientRect();
+    const v = viewport();
+    const k = sr.width / W || 1;
+    const l = Math.max(cr.left, 0);
+    const r = Math.min(cr.right, innerWidth);
+    const top = Math.max(cr.top, v.top);
+    const b = Math.min(cr.bottom, v.bottom);
+    return {
+      t: occupancy(),
+      view: { x: (l - sr.left) / k, y: (top - sr.top) / k, w: Math.max(0, r - l) / k, h: Math.max(0, b - top) / k },
+      // The view follows whichever token is moving: the main one, then the branch on its own trip.
+      follows: (tk === token || !!trip) && followsToken(),
+      panX: canvas.scrollWidth > canvas.clientWidth + 1,
+      panY: !(sr.top >= v.top - 1 && sr.bottom <= v.bottom + 1),
+      mx: Math.min(90, canvas.clientWidth * 0.25) / k,
+      my: Math.min(48, (v.bottom - v.top) * 0.25) / k,
+      other: tk === token ? branchTok : token,
+      rest,
+    };
+  }
+  /** What will be visible when the token is at p, once the view has followed it there (see keepInView). */
+  function visibleAt(p: Pt, c: Ctx): Box {
+    if (!c.follows) return c.view;
+    const out = { ...c.view };
+    if (c.panX) {
+      if (p.x < out.x + c.mx) out.x = Math.max(Math.min(out.x, 0), p.x - c.mx);
+      else if (p.x > out.x + out.w - c.mx) out.x = Math.min(Math.max(out.x, W - out.w), p.x + c.mx - out.w);
+    }
+    if (c.panY) {
+      if (p.y < out.y + c.my) out.y = p.y - c.my;
+      else if (p.y > out.y + out.h - c.my) out.y = p.y + c.my - out.h;
+    }
     return out;
   }
-  /** Places a pill can take around its dot, nearest first: beside or above a line that runs across, beside one that runs up and down. */
+
+  /**
+   * Places a pill can take around its dot, nearest first: above or below a line
+   * that runs across, beside one that runs up and down; then, further out, any
+   * place within reach of a short tie, nearest first.
+   */
+  const spotCache = new Map<string, Pt[]>();
   const pillSpots = (w: number, vertical: boolean): Pt[] => {
+    const key = `${w.toFixed(1)}|${vertical}`;
+    const hit = spotCache.get(key);
+    if (hit) return hit;
     const out: Pt[] = [];
     const ph = PILL_H;
-    for (const r of [0, 14, 30, 48, 68, 90]) {
+    for (const r of [0, 14, 30]) {
       const near: Pt[] = [
         { x: 0, y: -(PILL_GAP + r + ph / 2) },
         { x: 0, y: PILL_GAP + r + ph / 2 },
@@ -1162,46 +1381,231 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       ];
       out.push(...(vertical ? [...side, ...near] : [...near, ...side]));
     }
+    const far: { o: Pt; d: number }[] = [];
+    for (let dy = -150; dy <= 150; dy += 8) {
+      for (let dx = -190; dx <= 190; dx += 10) {
+        const b = { x: dx - w / 2, y: dy - ph / 2, w, h: ph };
+        const d = ptGap({ x: 0, y: 0 }, b);
+        if (d < PILL_GAP || d > 110) continue;
+        far.push({ o: { x: dx, y: dy }, d: d + (vertical ? Math.abs(dy) : Math.abs(dx)) * 0.15 });
+      }
+    }
+    far.sort((a, b) => a.d - b.d);
+    out.push(...far.map((f) => f.o));
+    spotCache.set(key, out);
     return out;
   };
-  /** Put the pill beside the dot, on the nearest place that covers nothing: the place it had last if that is still clear. */
-  function placePill(tk: Tok, x: number, y: number, w: number, other: Tok, along?: Pt): void {
-    const ph = PILL_H;
-    const vertical = !!along && Math.abs(along.y) > Math.abs(along.x);
-    const spots = pillSpots(w, vertical);
-    const obs = pillObstacles(other);
-    const boxAt = (o: Pt): Box => ({ x: x + o.x - w / 2, y: y + o.y - ph / 2, w, h: ph });
-    // A pill further out is tied to its dot by a short line, which must not cross a box or a chip either.
-    const tetherClear = (b: Box) => {
-      const ex = Math.max(b.x, Math.min(x, b.x + b.w));
-      const ey = Math.max(b.y, Math.min(y, b.y + b.h));
-      const n = Math.ceil(Math.hypot(ex - x, ey - y) / 4);
-      for (let i = 2; i < n; i++) {
-        const p = { x: x + ((ex - x) * i) / n, y: y + ((ey - y) * i) / n };
-        if (obs.some((o) => ptGap(p, o) === 0)) return false;
+
+  /**
+   * What the token is doing, for its pill: the points still ahead on this leg
+   * of its trip with how far along each is (or the one point it waits at), how
+   * far along it is now, and which way the leg mostly runs.
+   */
+  interface Leg {
+    key: object;
+    at: number;
+    ahead: () => { p: Pt; d: number }[];
+    vertical: boolean;
+    /** The pill may fade out here if nowhere is clear (on the move, at a turn, or fading in; never where the token rests). */
+    mayHide?: boolean;
+  }
+
+  /**
+   * How badly placed the pill would be with its dot at p and offset o: 0 when
+   * it is clear of every box, chip, label, line and the frame, inside what the
+   * reader can see, off the other pill, and tied by a line that crosses no box.
+   */
+  function spotCost(p: Pt, o: Pt, w: number, c: Ctx): number {
+    const b: Box = { x: p.x + o.x - w / 2, y: p.y + o.y - PILL_H / 2, w, h: PILL_H };
+    let cost = 0;
+    if (b.x < 0 || b.y < 0 || b.x + b.w > W || b.y + b.h > H) cost += 100;
+    if (c.rest) {
+      const both = union({ x: p.x - DOT_R, y: p.y - DOT_R, w: 2 * DOT_R, h: 2 * DOT_R }, b);
+      if (both.w > c.view.w - 24 || both.h > c.view.h - 24) cost += 40;
+    } else {
+      const v = visibleAt(p, c);
+      const iw = Math.max(0, Math.min(b.x + b.w, v.x + v.w) - Math.max(b.x, v.x));
+      const ih = Math.max(0, Math.min(b.y + b.h, v.y + v.h) - Math.max(b.y, v.y));
+      if (iw * ih < b.w * b.h - 0.5) cost += 40 + 200 * (1 - (iw * ih) / (b.w * b.h));
+    }
+    const n0 = covered(c.t, b);
+    if (n0 > 0) cost += 10 + Math.min(n0, 300) / 6;
+    const ob = c.other.g.style.display !== 'none' ? c.other.pillBox : null;
+    if (ob && gapOf(ob, b) < 2) cost += 60;
+    // A pill set further out is tied to its dot: the tie must not cross a box.
+    const ex = Math.max(b.x, Math.min(p.x, b.x + b.w));
+    const ey = Math.max(b.y, Math.min(p.y, b.y + b.h));
+    const len = Math.hypot(ex - p.x, ey - p.y);
+    const n = Math.ceil(len / 4);
+    for (let i = Math.ceil((8 / Math.max(len, 1)) * n); i < n; i++) {
+      const q = { x: p.x + ((ex - p.x) * i) / n, y: p.y + ((ey - p.y) * i) / n };
+      if (covered(solid, { x: q.x - 0.5, y: q.y - 0.5, w: 1, h: 1 }) > 0) {
+        cost += 20;
+        break;
       }
-      return true;
+    }
+    return cost;
+  }
+
+  /** A switch of place starts this far ahead of where it is needed, so the glide is over by then. */
+  const LEAD = 26;
+  /**
+   * Plan the pill's places for what is ahead on this leg: one place for the
+   * whole leg when one is clear all the way (the place it has already wins),
+   * otherwise the place clear for longest, then the next, and so on; where
+   * nothing is clear, the place least in the way.
+   */
+  function planLeg(tk: Tok, leg: Leg, w: number, keep: number, rest = false): { d: number; spot: number; hide?: boolean }[] {
+    const spots = pillSpots(w, leg.vertical);
+    const pts = leg.ahead();
+    const c = context(tk, rest);
+    const plan: { d: number; spot: number; hide?: boolean }[] = [];
+    let i = 0;
+    let hiding = false;
+    let cur = keep >= 0 && keep < spots.length ? keep : -1;
+    while (i < pts.length) {
+      const run = (sIdx: number, need: number) => {
+        // A move starts a little before the place is needed (see LEAD): the new place must be clear there too.
+        if (sIdx !== cur) for (let b = Math.max(0, i - 4); b < i; b++) if (spotCost(pts[b].p, spots[sIdx], w, c) > 0) return 0;
+        let n = 0;
+        while (i + n < pts.length && spotCost(pts[i + n].p, spots[sIdx], w, c) === 0) {
+          n++;
+          if (n > need && i + n >= pts.length) break;
+        }
+        return n;
+      };
+      let best = -1;
+      let bestRun = 0;
+      if (cur >= 0) {
+        bestRun = run(cur, 0);
+        best = cur;
+      }
+      if (i + bestRun < pts.length) {
+        for (let sIdx = 0; sIdx < spots.length; sIdx++) {
+          if (sIdx === cur) continue;
+          // A different place has to be clear for clearly longer to be worth a move.
+          const r = run(sIdx, bestRun);
+          if (r > bestRun + (best === cur && cur >= 0 ? 3 : 0)) {
+            bestRun = r;
+            best = sIdx;
+            if (i + r >= pts.length) break;
+          }
+        }
+      }
+      if (bestRun === 0) {
+        let least = Infinity;
+        spots.forEach((o, sIdx) => {
+          const q = spotCost(pts[i].p, o, w, c) + (sIdx === cur ? -0.5 : 0);
+          if (q < least) {
+            least = q;
+            best = sIdx;
+          }
+        });
+        bestRun = 1;
+      }
+      // On the move, a stretch with no clear place at all: the pill fades out there and the dot travels alone, rather than sit on something.
+      const hide = bestRun === 1 && (pts.length > 1 || !!leg.mayHide) && spotCost(pts[i].p, spots[best], w, c) > 0;
+      if (best !== cur || hide !== hiding) plan.push({ d: pts[i].d, spot: best, hide });
+      cur = best;
+      hiding = hide;
+      i += bestRun;
+    }
+    if (!plan.length) plan.push({ d: pts[0]?.d ?? 0, spot: Math.max(0, cur) });
+    return plan;
+  }
+
+  /** The most a pill moves against its dot in one frame, in pixels: a change of place is a short glide, never a jump. */
+  const PILL_STEP_PX = 9;
+  let pillRaf = 0;
+  /**
+   * Put the pill beside the dot. Its places for a leg are planned when the
+   * leg starts, from the whole leg, and kept; a place that something
+   * unforeseen blocks for 150ms is planned again from there. Any move glides
+   * there over about 120ms.
+   */
+  function placePill(tk: Tok, x: number, y: number, w: number, leg: Leg | null, snap: boolean): void {
+    const now = performance.now();
+    const vertical = leg ? leg.vertical : tk.vertical;
+    const here: Leg = leg ?? { key: tk, at: 0, ahead: () => [{ p: { x, y }, d: 0 }], vertical };
+    const replan = (keep: number) => {
+      tk.plan = planLeg(tk, here, w, keep, !leg);
+      tk.leg = here.key;
+      tk.vertical = vertical;
+      tk.planW = w;
+      tk.blockedSince = 0;
+      tk.since = now;
     };
-    const clear = (b: Box) => b.x >= 0 && b.y >= 0 && b.x + b.w <= W && b.y + b.h <= H && obs.every((o) => gapOf(o, b) >= 1) && ptGap({ x, y }, b) >= DOT_R && tetherClear(b);
-    const prev = tk.side >= 0 && tk.side < spots.length && tk.pillW === w && tk.vertical === vertical ? spots[tk.side] : null;
-    let pick = prev && clear(boxAt(prev)) ? tk.side : spots.findIndex((o) => clear(boxAt(o)));
-    if (pick < 0) {
-      // Nothing is clear: take the place that covers least.
-      let least = Infinity;
-      spots.forEach((o, i) => {
-        const b = boxAt(o);
-        const cover = obs.reduce((sum, q) => sum + Math.max(0, Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x)) * Math.max(0, Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y)), 0);
-        if (cover < least) {
-          least = cover;
-          pick = i;
+    if (tk.spot < 0 || (leg && (tk.leg !== leg.key || tk.vertical !== vertical || tk.planW !== w))) replan(tk.spot >= 0 && tk.vertical === vertical ? tk.spot : -1);
+    const planned = () => {
+      let sp = tk.plan[0].spot;
+      let hide = !!tk.plan[0].hide;
+      // A fade starts further ahead than a move, so the pill is gone before it would cover anything; it shows again only once it is clear.
+      tk.plan.forEach((e, n) => {
+        const afterHidden = n > 0 && !!tk.plan[n - 1].hide;
+        if (e.d <= here.at + (e.hide ? 2.4 * LEAD : afterHidden ? 0 : LEAD)) {
+          sp = e.spot;
+          hide = !!e.hide;
         }
       });
-    }
-    const o = spots[pick];
-    tk.side = pick;
+      tk.pillHide = !!leg && hide;
+      return sp;
+    };
+    // Re-checked where it rests (a chip came or went): it keeps its place unless that is now blocked.
+    if (!leg) tk.pillHide = false;
+    let spot = leg || tk.spot < 0 ? planned() : tk.spot;
+    const c = context(tk, !leg);
+    if (spotCost({ x, y }, pillSpots(w, vertical)[spot], w, c) > 0) {
+      if (!tk.blockedSince) tk.blockedSince = now;
+      const moving = !!leg && !!trip;
+      if (!moving || (now - tk.blockedSince >= 150 && now - tk.since >= 200)) {
+        replan(spot);
+        spot = planned();
+      }
+    } else tk.blockedSince = 0;
+    if (spot !== tk.spot) tk.since = now;
+    tk.spot = spot;
     tk.pillW = w;
-    tk.vertical = vertical;
-    tk.pillBox = boxAt(o);
+    tk.target = pillSpots(w, vertical)[spot];
+    if (snap || !tk.off) {
+      // Unseen, it takes its place and its visibility at once.
+      tk.off = { ...tk.target };
+      if (tk.pillHide) tk.pillOp = 0;
+    }
+    stepPill(tk, x, y, w);
+  }
+  /** Move the pill part of the way to where it should be, and draw it and its tie. */
+  function stepPill(tk: Tok, x: number, y: number, w: number): void {
+    if (!tk.off || !tk.target) return;
+    const dx = tk.target.x - tk.off.x;
+    const dy = tk.target.y - tk.off.y;
+    const d = Math.hypot(dx, dy);
+    const now = performance.now();
+    const wantOp = tk.pillHide ? 0 : 1;
+    // Faded right out, the pill takes its next place at once and fades in there: nothing is seen to move.
+    if (tk.pillOp < 0.05 && d > 0.3) {
+      tk.off = { ...tk.target };
+      return stepPill(tk, x, y, w);
+    }
+    if (Math.abs(tk.pillOp - wantOp) > 0.01) {
+      if (now - tk.stepped > 8 || d <= 0.3) tk.pillOp += Math.sign(wantOp - tk.pillOp) * Math.min(0.25, Math.abs(wantOp - tk.pillOp));
+      if (!pillRaf) pillRaf = requestAnimationFrame(pillFrame);
+    }
+    const op = tk.pillOp >= 0.99 ? '' : tk.pillOp.toFixed(2);
+    if (tk.pill.style.opacity !== op) {
+      tk.pill.style.opacity = op;
+      tk.tether.style.opacity = op;
+    }
+    if (d > 0.3) {
+      if (now - tk.stepped > 8) {
+        const k = svg.getBoundingClientRect().width / W || 1;
+        const go = Math.min(d * 0.3 + 0.5, PILL_STEP_PX / k, d);
+        tk.off = { x: tk.off.x + (dx / d) * go, y: tk.off.y + (dy / d) * go };
+        tk.stepped = now;
+      }
+      if (!pillRaf) pillRaf = requestAnimationFrame(pillFrame);
+    } else tk.off = { ...tk.target };
+    const o = tk.off;
+    tk.pillBox = { x: x + o.x - w / 2, y: y + o.y - PILL_H / 2, w, h: PILL_H };
     tk.pill.setAttribute('transform', `translate(${o.x.toFixed(1)},${o.y.toFixed(1)})`);
     // A pill set further out is tied to its dot by a short line.
     const b = tk.pillBox;
@@ -1214,26 +1618,42 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     tk.tether.setAttribute('y2', (ey - y).toFixed(1));
     tk.tether.style.display = far ? '' : 'none';
   }
+  /** Between trips nothing else draws a frame: a pill still gliding to its place finishes on its own frames. */
+  function pillFrame(): void {
+    pillRaf = 0;
+    if (!alive || raf) return;
+    for (const tk of [token, branchTok]) if (tk.at && tk.g.style.display !== 'none') stepPill(tk, tk.at.x, tk.at.y, tk.pillW);
+  }
 
-  function place(tk: Tok, x: number, y: number, label: string, opacity = 1, along?: Pt): void {
+  function place(tk: Tok, x: number, y: number, label: string, opacity = 1, leg: Leg | null = null): void {
     const w = pillWidth(label);
+    const wasHidden = tk.g.style.display === 'none' || !tk.at;
     tk.rect.setAttribute('x', String(-w / 2));
     tk.rect.setAttribute('width', String(w));
     tk.text.textContent = label;
     tk.g.setAttribute('transform', `translate(${x.toFixed(1)},${y.toFixed(1)})`);
     tk.g.style.opacity = opacity >= 1 ? '' : Math.max(0, opacity).toFixed(2);
     tk.g.style.display = '';
-    placePill(tk, x, y, w, tk === token ? branchTok : token, along);
     tk.at = { x, y, label };
-    if (tk === token) keepInView(x, y);
+    // An unseen pill takes its place at once: there is nothing to glide from.
+    placePill(tk, x, y, w, leg, wasHidden || opacity < 0.3);
+    if (tk === token || trip) keepInView(x, y, tk);
   }
   function hideToken(tk: Tok = token): void {
     tk.g.style.display = 'none';
     tk.at = null;
-    tk.side = -1;
+    tk.spot = -1;
+    tk.leg = null;
+    tk.plan = [];
+    tk.pillHide = false;
+    tk.pillOp = 1;
+    tk.pill.style.opacity = '';
+    tk.tether.style.opacity = '';
+    tk.off = null;
+    tk.target = null;
     tk.pillBox = null;
   }
-  const tokenShown = () => token.g.style.display !== 'none' && (token.g.style.opacity === '' || +token.g.style.opacity > 0.05);
+  const tokenShown = () => token.g.style.display !== 'none' && !token.g.classList.contains('away') && (token.g.style.opacity === '' || +token.g.style.opacity > 0.05);
 
   /**
    * The connections of one step in order, each with the label the token
@@ -1295,21 +1715,57 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     return FADE;
   }
 
+  /** Which way a leg mostly runs, worked out once per leg. */
+  const legVertical = new WeakMap<PathSeg, boolean>();
+  function pathLeg(sg: PathSeg, d: number): Leg {
+    let vertical = legVertical.get(sg);
+    if (vertical == null) {
+      let up = 0;
+      let across = 0;
+      for (let a = 0; a + 4 <= sg.len; a += 4) {
+        const p = sg.el.getPointAtLength(sg.back ? sg.full - a : a);
+        const q = sg.el.getPointAtLength(sg.back ? sg.full - a - 4 : a + 4);
+        up += Math.abs(q.y - p.y);
+        across += Math.abs(q.x - p.x);
+      }
+      vertical = up > across;
+      legVertical.set(sg, vertical);
+    }
+    return {
+      key: sg,
+      vertical,
+      at: d,
+      ahead: () => {
+        const pts: { p: Pt; d: number }[] = [];
+        for (let a = d; a < sg.len + 8; a += 8) {
+          const at = Math.min(a, sg.len);
+          const q = sg.el.getPointAtLength(sg.back ? sg.full - at : at);
+          pts.push({ p: { x: q.x, y: q.y }, d: at });
+          if (at >= sg.len) break;
+        }
+        return pts;
+      },
+    };
+  }
+  const pointLeg = (key: object, p: Pt, vertical: boolean, mayHide = false): Leg => ({ key, vertical, at: 0, mayHide, ahead: () => [{ p, d: 0 }] });
+
   function drawSeg(sg: Seg, u: number): void {
     if (sg.kind === 'path') {
       const d = ease(u) * sg.len;
       const at = sg.back ? sg.full - d : d;
       const pt = sg.el.getPointAtLength(at);
-      const p2 = sg.el.getPointAtLength(Math.min(sg.full, at + 2));
-      const p1 = sg.el.getPointAtLength(Math.max(0, at - 2));
-      place(sg.who === 'main' ? token : branchTok, pt.x, pt.y, sg.label, 1, { x: p2.x - p1.x, y: p2.y - p1.y });
-    } else if (sg.kind === 'hold') place(token, sg.at.x, sg.at.y, u < 0.5 ? sg.label : sg.next);
+      place(sg.who === 'main' ? token : branchTok, pt.x, pt.y, sg.label, 1, pathLeg(sg, d));
+    } else if (sg.kind === 'hold') place(token, sg.at.x, sg.at.y, u < 0.5 ? sg.label : sg.next, 1, pointLeg(sg, sg.at, token.vertical, true));
     else if (sg.kind === 'hop') {
       // Fade out, glide unseen, fade in: no jump, and no line drawn where none exists.
       const o = u < 0.38 ? 1 - u / 0.38 : u > 0.62 ? (u - 0.62) / 0.38 : 0;
       const k = Math.min(1, Math.max(0, (u - 0.38) / 0.24));
-      place(token, sg.a.x + (sg.b.x - sg.a.x) * k, sg.a.y + (sg.b.y - sg.a.y) * k, u < 0.5 ? sg.label : sg.next, o);
-    } else place(sg.who === 'main' ? token : branchTok, sg.at.x, sg.at.y, sg.label, sg.dir === 'out' ? 1 - u : u);
+      const p = { x: sg.a.x + (sg.b.x - sg.a.x) * k, y: sg.a.y + (sg.b.y - sg.a.y) * k };
+      place(token, p.x, p.y, u < 0.5 ? sg.label : sg.next, o, pointLeg(u < 0.5 ? sg.a : sg.b, u < 0.5 ? sg.a : sg.b, token.vertical, true));
+    } else {
+      const tk = sg.who === 'main' ? token : branchTok;
+      place(tk, sg.at.x, sg.at.y, sg.label, sg.dir === 'out' ? 1 - u : u, sg.dir === 'out' ? null : pointLeg(sg, sg.at, tk.vertical, true));
+    }
   }
 
   function tick(now: number): void {
@@ -1334,8 +1790,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     if (trip.i >= trip.segs.length) {
       trip = null;
       sync();
-      settle(step);
-      dwell(step);
+      arrived(step);
       return;
     }
     drawSeg(trip.segs[trip.i], trip.u);
@@ -1381,7 +1836,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   /** The diagram's scale, in pixels per unit. It never changes on the tour: wider than the screen, the diagram pans. */
   function zoomFor(): number {
     const cw = canvas.clientWidth;
-    const k = fitted ? Math.max(cw / W, Math.min(FIT_FLOOR, BASE_SCALE)) : Math.max(cw / W, BASE_SCALE);
+    // The overview shows the whole diagram, however small that makes it.
+    const k = fitted ? Math.min(cw / W, MAX_SCALE) : Math.min(MAX_SCALE, Math.max(cw / W, BASE_SCALE));
     const want = k * W > cw + 0.5 || fitted ? `${(W * k).toFixed(1)}px` : '';
     if (svg.style.minWidth !== want) {
       svg.style.minWidth = want;
@@ -1401,19 +1857,30 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
    * of the diagram, the diagram pans (and the page scrolls) a little each frame
    * to follow it. Never a jump, never a zoom.
    */
-  function keepInView(x: number, y: number): void {
-    if (!alive || step < 0 || stage.classList.contains('reading') || reducedMotion()) return;
+  function followsToken(): boolean {
+    if (!alive || step < 0 || stage.classList.contains('reading') || reducedMotion()) return false;
     // A reader who has scrolled away from the diagram is left where they are.
     const cv = canvas.getBoundingClientRect();
-    if (cv.bottom < 60 || cv.top > innerHeight - 60) return;
+    return !(cv.bottom < 60 || cv.top > innerHeight - 60);
+  }
+  function keepInView(x: number, y: number, tk: Tok = token): void {
+    if (!followsToken()) return;
     const k = svg.getBoundingClientRect().width / W;
     const cw = canvas.clientWidth;
     const margin = Math.min(90, cw * 0.25);
+    const pb = tk.pillBox;
     if (canvas.scrollWidth > cw + 1) {
       const px = x * k - canvas.scrollLeft;
       let target = canvas.scrollLeft;
       if (px < margin) target = x * k - margin;
       else if (px > cw - margin) target = x * k - cw + margin;
+      // The pill comes too, 8px inside the edge.
+      if (pb) {
+        if (pb.x * k - target < 8) target = pb.x * k - 8;
+        else if ((pb.x + pb.w) * k - target > cw - 8) target = (pb.x + pb.w) * k - cw + 8;
+        // The dot itself always stays on screen, 16px inside the edge.
+        target = Math.min(Math.max(target, x * k - cw + 16), x * k - 16);
+      }
       target = Math.max(0, Math.min(target, canvas.scrollWidth - cw));
       if (Math.abs(target - canvas.scrollLeft) > 0.5) canvas.scrollLeft += (target - canvas.scrollLeft) * 0.35;
     }
@@ -1426,6 +1893,13 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     let dy = 0;
     if (sy < v.top + m2) dy = sy - v.top - m2;
     else if (sy > v.bottom - m2) dy = sy - v.bottom + m2;
+    if (pb) {
+      const pt = sr.top + pb.y * k - dy;
+      const pbm = sr.top + (pb.y + pb.h) * k - dy;
+      if (pt < v.top + 8) dy += pt - v.top - 8;
+      else if (pbm > v.bottom - 8) dy += pbm - v.bottom + 8;
+      dy = Math.min(Math.max(dy, sy - v.bottom + 16), sy - v.top - 16);
+    }
     if (Math.abs(dy) > 0.5) window.scrollBy(0, dy * 0.35);
   }
 
@@ -1433,13 +1907,20 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
    * When a trip ends, bring the step's lit boxes fully into view if they fit:
    * following the token may have left one partly under the readout or past an edge.
    */
-  function settle(i: number): void {
-    if (!alive || stage.classList.contains('reading')) return;
+  /** The box a step's trip ends at (or its first lit box, for a step with no trip). */
+  function endBox(i: number): Box {
+    const s0 = design.tour[i];
+    if (!s0.path.length) return boxOf(s0.focus[0]);
+    const last = legOf(s0.path[s0.path.length - 1]);
+    return boxOf(last.back ? last.fl.from : last.fl.to);
+  }
+  function settle(i: number): { sl: number; y: number; ms: number } | null {
+    if (!alive || stage.classList.contains('reading')) return null;
     const cv = canvas.getBoundingClientRect();
-    if (cv.bottom < 60 || cv.top > innerHeight - 60) return;
+    if (cv.bottom < 60 || cv.top > innerHeight - 60) return null;
     let u: Box | null = null;
     for (const id of design.tour[i].focus) u = union(u, boxOf(id));
-    if (!u) return;
+    if (!u) return null;
     const k = svg.getBoundingClientRect().width / W;
     const sr = svg.getBoundingClientRect();
     const cr = canvas.getBoundingClientRect();
@@ -1447,9 +1928,21 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const top = Math.max(v.top, cr.top);
     // Too big to show whole: at least the box the trip ended at.
     const legs = pathLegs(i);
-    if (legs.length && (u.w * k > cr.width || u.h * k > v.bottom - top)) {
-      const last = legOf(design.tour[i].path[design.tour[i].path.length - 1]);
-      u = boxOf(last.back ? last.fl.from : last.fl.to);
+    if (legs.length && (u.w * k > cr.width || u.h * k > v.bottom - top)) u = endBox(i);
+    // The token's pill comes too, when it fits with them: the reader sees what arrived as well as where.
+    let pb = token.g.style.display !== 'none' ? token.pillBox : null;
+    if (pb && branchTok.g.style.display !== 'none' && branchTok.pillBox) pb = union(pb, branchTok.pillBox);
+    if (pb) {
+      const both = union(u, pb);
+      if (both.w * k <= cr.width - 12 && both.h * k <= v.bottom - top - 12) u = both;
+      else {
+        const end = union(endBox(i), pb);
+        const at = token.at;
+        const dot = at ? union({ x: at.x - DOT_R, y: at.y - DOT_R, w: 2 * DOT_R, h: 2 * DOT_R }, pb) : null;
+        if (end.w * k <= cr.width - 12 && end.h * k <= v.bottom - top - 12) u = end;
+        // Not even with the box: the token and its pill, at least.
+        else if (dot && dot.w * k <= cr.width - 12 && dot.h * k <= v.bottom - top - 12) u = dot;
+      }
     }
     // A margin of up to 6px, less when the boxes only just fit.
     const pad = Math.max(0, Math.min(6, (v.bottom - top - u.h * k) / 2, (cr.width - u.w * k) / 2));
@@ -1467,9 +1960,16 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       if (t0 < top + pad) dy = t0 - top - pad;
       else if (b0 > v.bottom - pad) dy = b0 - v.bottom + pad;
     }
-    const behavior = smooth();
-    if (Math.abs(dx) > 1) canvas.scrollBy({ left: dx, behavior });
-    if (Math.abs(dy) > 1) window.scrollBy({ top: dy, behavior });
+    const to = { sl: Math.max(0, Math.min(canvas.scrollLeft + (Math.abs(dx) > 1 ? dx : 0), canvas.scrollWidth - canvas.clientWidth)), y: Math.max(0, Math.min(window.scrollY + (Math.abs(dy) > 1 ? dy : 0), document.documentElement.scrollHeight - innerHeight)) };
+    return { ...to, ms: glide(to.sl, to.y) };
+  }
+
+  /** The token has arrived: bring the end into view, then show any lit part still out of sight, and wait to read. */
+  function arrived(i: number): void {
+    stage.dataset.phase = 'rest';
+    const end = settle(i);
+    const extra = end ? glance(i, end, end.ms + 700) : 0;
+    dwell(i, undefined, extra ? extra + 1200 : 0);
   }
 
   /**
@@ -1509,8 +2009,17 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       const hi = top + (u.y - pad) * k - headH - 6;
       y = Math.max(lo, Math.min(y, hi));
       if (lo > hi) y = Math.min(hi, Math.max(lo, top + st.y * k - headH - (vh - headH) * 0.4));
+      // A short screen (a phone on its side): the readout sticks at the very top, so the diagram has all the height left below it.
+      if (vh < 500 && stuck) y = Math.max(y, stageTop);
     }
-    y = Math.max(0, Math.min(y, document.documentElement.scrollHeight - vh));
+    return glide(sl, y);
+  }
+
+  /** Glide the page and the canvas together to a place: returns how long that takes (0 when already there, or with reduced motion). */
+  function glide(sl0: number, y0: number): number {
+    cancelAnimationFrame(followRaf);
+    const sl = Math.max(0, Math.min(sl0, canvas.scrollWidth - canvas.clientWidth));
+    const y = Math.max(0, Math.min(y0, document.documentElement.scrollHeight - innerHeight));
     const fromY = window.scrollY;
     const fromL = canvas.scrollLeft;
     if (Math.abs(y - fromY) < 1 && Math.abs(sl - fromL) < 1) return 0;
@@ -1533,18 +2042,145 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     return ms;
   }
 
-  function dwell(i: number, ms?: number): void {
+  /**
+   * What of the diagram the reader would see with the page scrolled to y and
+   * the canvas to sl, in diagram units: inside the canvas, below the stuck
+   * readout, on the screen.
+   */
+  function viewAt(sl: number, y: number): Box {
+    const sr = svg.getBoundingClientRect();
+    const cr = canvas.getBoundingClientRect();
+    const k = sr.width / W;
+    const svgLeft = sr.left - cr.left + canvas.scrollLeft;
+    const svgTop = sr.top + window.scrollY - y;
+    const stuck = step >= 0 && !stage.classList.contains('reading') && !stage.classList.contains('unstick');
+    const headBottom = stuck ? Math.max(head.offsetHeight, stage.getBoundingClientRect().top + window.scrollY - y + head.offsetHeight) : 0;
+    const top = Math.max(cr.top + window.scrollY - y, headBottom, 0);
+    const bottom = Math.min(cr.top + window.scrollY - y + cr.height, innerHeight);
+    const left = Math.max(0, cr.left);
+    const right = Math.min(innerWidth, cr.right);
+    return { x: (left - cr.left + sl - svgLeft) / k, y: (top - svgTop) / k, w: (right - left) / k, h: Math.max(0, bottom - top) / k };
+  }
+  /** The scroll that puts a region of the diagram in the middle of what can be seen. */
+  function centreOn(u: Box): { sl: number; y: number } {
+    const sr = svg.getBoundingClientRect();
+    const cr = canvas.getBoundingClientRect();
+    const k = sr.width / W;
+    const svgLeft = sr.left - cr.left + canvas.scrollLeft;
+    const left = Math.max(0, cr.left);
+    const visW = Math.min(innerWidth, cr.right) - left;
+    const sl = svgLeft + (u.x + u.w / 2) * k - (left - cr.left) - visW / 2;
+    const stuck = step >= 0 && !stage.classList.contains('reading') && !stage.classList.contains('unstick');
+    const headH = stuck ? head.offsetHeight : 0;
+    const svgDocTop = sr.top + window.scrollY;
+    let y = svgDocTop + (u.y + u.h / 2) * k - (headH + (innerHeight - headH) / 2);
+    // When the whole diagram is in view anyway, the page stays where it is.
+    const v = viewAt(canvas.scrollLeft, window.scrollY);
+    if (u.y >= v.y && u.y + u.h <= v.y + v.h) y = window.scrollY;
+    return { sl: Math.max(0, Math.min(sl, canvas.scrollWidth - canvas.clientWidth)), y: Math.max(0, Math.min(y, document.documentElement.scrollHeight - innerHeight)) };
+  }
+  const within = (b: Box, v: Box, pad = 0) => b.x >= v.x - pad && b.y >= v.y - pad && b.x + b.w <= v.x + v.w + pad && b.y + b.h <= v.y + v.h + pad;
+
+  /**
+   * At the end of a step, every part it lights must have been seen. When they
+   * do not all fit the screen at reading size (a phone, or a short window), the
+   * view glides to the ones out of sight, a group at a time, waits there, and
+   * glides back to where the trip ended. Returns how long all that takes.
+   */
+  let glanceTimer = 0;
+  function cancelGlance(): void {
+    clearTimeout(glanceTimer);
+    glanceTimer = 0;
+    if (stage.dataset.phase === 'glance') stage.dataset.phase = 'rest';
+  }
+  function glance(i: number, end: { sl: number; y: number }, after: number): number {
+    cancelGlance();
+    if (!alive || stage.classList.contains('reading') || !followsTokenOrStill()) return 0;
+    const endView = viewAt(end.sl, end.y);
+    const lit = design.tour[i].focus.map(boxOf);
+    let unseen = lit.filter((b) => !within(b, endView, 1));
+    if (!unseen.length) return 0;
+    const stops: { sl: number; y: number }[] = [];
+    let from = endView;
+    while (unseen.length && stops.length < 3) {
+      const c = { x: from.x + from.w / 2, y: from.y + from.h / 2 };
+      unseen.sort((a, b) => Math.hypot(a.x + a.w / 2 - c.x, a.y + a.h / 2 - c.y) - Math.hypot(b.x + b.w / 2 - c.x, b.y + b.h / 2 - c.y));
+      let u = unseen[0];
+      for (const o of unseen.slice(1)) {
+        const t = union(u, o);
+        if (t.w + 8 <= endView.w && t.h + 8 <= endView.h) u = t;
+      }
+      const at = centreOn(u);
+      const v = viewAt(at.sl, at.y);
+      stops.push(at);
+      unseen = unseen.filter((b) => !within(b, v, 1));
+      if (unseen.length && stops.length && within(u, v, 1) === false) break;
+      from = v;
+    }
+    const HOLD_MS = 1500;
+    const GLIDE_MS = 480;
+    let t = after;
+    const plan: [number, () => void][] = [];
+    for (const st of stops) {
+      plan.push([t, () => {
+        stage.dataset.phase = 'glance';
+        glide(st.sl, st.y);
+      }]);
+      t += GLIDE_MS + HOLD_MS;
+    }
+    plan.push([t, () => {
+      glide(end.sl, end.y);
+    }]);
+    t += GLIDE_MS;
+    plan.push([t, () => {
+      if (stage.dataset.phase === 'glance') stage.dataset.phase = 'rest';
+    }]);
+    let n = 0;
+    const next = () => {
+      glanceTimer = 0;
+      if (!alive || step !== i) return;
+      const [, fn] = plan[n++];
+      fn();
+      if (n < plan.length) glanceTimer = window.setTimeout(next, plan[n][0] - plan[n - 1][0]);
+    };
+    glanceTimer = window.setTimeout(next, plan[0][0]);
+    return t;
+  }
+  /** The view follows the tour unless the reader is reading a detail or has scrolled the diagram away. */
+  function followsTokenOrStill(): boolean {
+    if (!alive || step < 0 || stage.classList.contains('reading')) return false;
+    const cv = canvas.getBoundingClientRect();
+    return !(cv.bottom < 60 || cv.top > innerHeight - 60);
+  }
+
+  /** Whether the reader has had the diagram in view at any time during this step: if not, the tour pauses rather than run on unseen. */
+  let seenStep = true;
+  const stageVisible = () => {
+    const r = canvas.getBoundingClientRect();
+    return r.bottom > 40 && r.top < innerHeight - 40;
+  };
+  const io = typeof IntersectionObserver !== 'undefined' ? new IntersectionObserver((es) => {
+    if (es.some((e) => e.isIntersecting)) seenStep = true;
+  }) : null;
+  io?.observe(canvas);
+  function dwell(i: number, ms?: number, least = 0): void {
     clearTimeout(timer);
     timer = 0;
     dwellLeft = 0;
     if (!playing) return;
     const s = design.tour[i];
-    // Long enough to read at any speed: double speed shortens the wait, but never below 3.5 seconds.
-    dwellMs = ms ?? Math.max(3500, Math.min(11000, Math.max(4200, s.text.length * 42)) / speed);
+    // Long enough to read at any speed: double speed shortens the wait, but never below 3.5 seconds. Half speed slows only
+    // the motion: the wait to read stays as at normal speed. Never shorter than the glance at the parts out of sight.
+    dwellMs = ms ?? Math.max(least, Math.max(3500, Math.min(11000, Math.max(4200, s.text.length * 42)) / Math.max(1, speed)));
     dwellAt = performance.now();
     timer = window.setTimeout(() => {
       timer = 0;
       if (!alive || !playing) return;
+      if (!seenStep && !stageVisible()) {
+        pause(false);
+        status.textContent = `Paused at step ${i + 1}: the diagram is out of view.`;
+        return;
+      }
       if (i < design.tour.length - 1) go(i + 1, false);
       else pause();
     }, dwellMs);
@@ -1557,7 +2193,12 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     clearTimeout(timer);
     timer = 0;
     trip = null;
+    cancelGlance();
     hideToken(branchTok);
+    // Faded out during the glide: it starts afresh where this trip starts, with no fade-out where it was.
+    if (token.g.classList.contains('away')) hideToken();
+    token.g.classList.remove('away');
+    token.g.classList.toggle('waiting', !design.tour[i].path.length);
     if (!animate || reducedMotion()) {
       const e = endOf(i);
       place(token, e.x, e.y, endLabel(i));
@@ -1566,7 +2207,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
         const be = legEnd(br[br.length - 1]);
         place(branchTok, be.x, be.y, br[br.length - 1].label);
       }
-      dwell(i);
+      arrived(i);
       return;
     }
     const segs = tripFor(i);
@@ -1574,9 +2215,10 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       // A step with no connection, and the token already where it waits.
       const e = endOf(i);
       place(token, e.x, e.y, endLabel(i));
-      dwell(i);
+      arrived(i);
       return;
     }
+    stage.dataset.phase = 'trip';
     trip = { segs, i: 0, u: 0, last: null };
     if (frozen) {
       // Waiting at the start: the token shows where it will set off, not faded out.
@@ -1605,6 +2247,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     if (manual && playing) pause(false);
     step = i;
     leftAt = -1;
+    seenStep = stageVisible();
     stage.classList.remove('reading');
     // The readout takes its touring height first, so the view is worked out with the readout as it will be.
     stage.classList.add('touring');
@@ -1617,8 +2260,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       clearTimeout(timer);
       timer = 0;
       trip = null;
-      hideToken();
+      cancelGlance();
+      // The token fades where it was while the view glides, rather than blinking out; the new trip fades it in where it starts.
       hideToken(branchTok);
+      token.g.classList.add('away');
+      stage.dataset.phase = 'glide';
       starting = window.setTimeout(() => {
         starting = 0;
         if (!alive || step !== i) return;
@@ -1638,6 +2284,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   function pause(say = true): void {
     if (!playing) return;
     playing = false;
+    cancelGlance();
     if (timer) {
       dwellLeft = Math.max(0, dwellMs - (performance.now() - dwellAt));
       clearTimeout(timer);
@@ -1702,10 +2349,13 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     clearTimeout(timer);
     timer = 0;
     trip = null;
+    cancelGlance();
+    delete stage.dataset.phase;
     if (wasIn) leftAt = step < design.tour.length - 1 ? step : -1;
     step = -1;
     hideToken();
     hideToken(branchTok);
+    token.g.classList.remove('away', 'waiting');
     if (moreOpen) setMore(false, true);
     if (fromButton) playBtn.focus({ preventScroll: true });
     sync();
@@ -1726,8 +2376,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     // A running trip reads the speed on every frame, and the glide has no timer of its own: only a running wait needs re-arming.
     if (playing && timer) {
       const left = Math.max(0, dwellMs - (performance.now() - dwellAt));
-      dwell(step, Math.max(0, (left * old) / s));
-    } else if (!playing && dwellLeft) dwellLeft = (dwellLeft * old) / s;
+      dwell(step, Math.max(0, (left * Math.max(1, old)) / Math.max(1, s)));
+    } else if (!playing && dwellLeft) dwellLeft = (dwellLeft * Math.max(1, old)) / Math.max(1, s);
   }
   speedCycle.setAttribute('aria-label', 'Normal speed. Change speed');
 
@@ -1742,7 +2392,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
 
   /** The cues for a diagram wider than its box: a fade at each edge with more to see, and a line saying so. */
   function syncPan(): void {
-    zoomFor();
+    const k0 = zoomFor();
+    const k = fitted ? svg.getBoundingClientRect().width / W || k0 : k0;
+    for (const sm of legend.querySelectorAll<SVGSVGElement>('svg.hld-sample')) sizeSample(sm, k);
     const over = canvas.scrollWidth > canvas.clientWidth + 1;
     panBar.hidden = !over && !fitted;
     pan.classList.toggle('more-left', over && canvas.scrollLeft > 2);
@@ -1762,6 +2414,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
         ? 'The diagram is wider than the screen: drag it sideways to see the rest.'
         : 'The diagram is wider than its box: scroll it sideways, or focus it and use the arrow keys.';
   }
+  // A reader who takes hold of the diagram stops the glance at the parts out of sight.
+  for (const ev of ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const) canvas.addEventListener(ev, () => glanceTimer && cancelGlance(), { passive: true });
   canvas.addEventListener('scroll', () => {
     pan.classList.toggle('more-left', canvas.scrollLeft > 2);
     pan.classList.toggle('more-right', canvas.scrollLeft < canvas.scrollWidth - canvas.clientWidth - 2);
@@ -1854,6 +2508,19 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   sync();
   syncPan();
 
+  /** Focus moved by a link, not a key: no mark is drawn for it until the reader presses a key there. */
+  function quietFocus(e: HTMLElement): void {
+    e.classList.add('by-link');
+    e.focus({ preventScroll: true });
+    const off = () => {
+      e.classList.remove('by-link');
+      e.removeEventListener('blur', off);
+      e.removeEventListener('keydown', off);
+    };
+    e.addEventListener('blur', off);
+    e.addEventListener('keydown', off);
+  }
+
   // A link can open a box, a connection, a glossary term or a tour step. Focus goes to what opened.
   if (open) {
     requestAnimationFrame(() => {
@@ -1864,16 +2531,24 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
         (detailBody.querySelector('.hld-missing') as HTMLElement).focus({ preventScroll: true });
         status.textContent = `No ${what} called ${open.id}.`;
       };
+      const h3 = () => detailBody.querySelector('h3') as HTMLElement | null;
       if (open.kind === 'c') {
-        if (byId.has(open.id)) select(open.id, 'text');
-        else missing('component');
+        if (byId.has(open.id)) {
+          select(open.id, 'text');
+          if (h3()) quietFocus(h3()!);
+        } else missing('component');
       } else if (open.kind === 'f') {
-        if (lineOf(open.id)) pickFlow(open.id, 'text');
-        else missing('connection');
+        if (lineOf(open.id)) {
+          pickFlow(open.id, 'text');
+          if (h3()) quietFocus(h3()!);
+        } else missing('connection');
       } else if (open.kind === 't') {
         const n = Number(open.id);
-        // The step shows and is announced; focus stays where the page put it, so no ring appears that no key asked for.
-        if (Number.isInteger(n) && n >= 1 && n <= design.tour.length) go(n - 1, true, true);
+        // The step shows and is announced, and focus goes to its title (no ring for a pointer user: see :focus-visible).
+        if (Number.isInteger(n) && n >= 1 && n <= design.tour.length) {
+          go(n - 1, true, true);
+          quietFocus(stepTitle);
+        }
         else missing('tour step');
       } else if (open.kind === 'g') {
         const term = document.getElementById(`term-${open.id}`);
@@ -1893,8 +2568,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     clearTimeout(timer);
     clearTimeout(starting);
     clearTimeout(resizeTimer);
+    clearTimeout(glanceTimer);
+    cancelAnimationFrame(pillRaf);
     ro?.disconnect();
     panRo?.disconnect();
+    io?.disconnect();
     styleWatch?.disconnect();
     document.removeEventListener('keydown', onKey);
     document.removeEventListener('focusin', onFocusIn);

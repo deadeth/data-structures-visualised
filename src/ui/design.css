@@ -109,10 +109,13 @@ main:has(> .design) {
   outline-color: #fff;
 }
 
-/* On a short screen only the step's title shows until More is pressed. */
-.hld.brief:not(.more) .hld-readout:not(.hld-measure) .hld-step-text,
-.hld.brief:not(.more) .hld-readout:not(.hld-measure) .hld-step-via {
+/* On a short screen only the step's title and how it travels show until More is pressed. */
+.hld.brief:not(.more) .hld-readout:not(.hld-measure) .hld-step-text {
   display: none;
+}
+
+.hld.brief:not(.more) .hld-readout:not(.hld-measure) .hld-step-via {
+  margin-top: 2px;
 }
 
 .hld-transport {
@@ -360,14 +363,19 @@ main:has(> .design) {
 }
 
 /*
- * The diagram scales with the stage, down to the size where its smallest text
- * (16 units) is 12.2px on screen, and box subtitles (17.5 units) are 13.3px. Narrower than that, it pans sideways, unless
- * the reader asks for the overview.
+ * One type scale for the diagram. Its smallest text (chips, labels, subtitles:
+ * 16.5 units) is drawn between 13px and 15.8px: the diagram grows with the
+ * stage up to 0.96px a unit, and past that the extra width is margin. Below
+ * 0.788px a unit it pans sideways instead of shrinking, unless the reader asks
+ * for the overview. Box names (18 units) stay at least 1px larger than their
+ * subtitles.
  */
 .hld-svg {
   display: block;
   width: 100%;
-  min-width: calc(var(--hld-w, 1280) * 0.76px);
+  max-width: calc(var(--hld-w, 1280) * 0.96px);
+  margin-inline: auto;
+  min-width: calc(var(--hld-w, 1280) * 0.788px);
   height: auto;
   font-family: var(--sans);
 }
@@ -384,7 +392,7 @@ main:has(> .design) {
 }
 
 .hld-frame-label {
-  font-size: 16px;
+  font-size: 16.5px;
   font-weight: 600;
   fill: var(--ink-2);
 }
@@ -441,11 +449,11 @@ main:has(> .design) {
   marker-start: url(#hld-arrow-quiet);
 }
 
-/* Off the hot path: recovery and reprocessing. A thin grey dash of its own, whatever the mode, and hidden until asked for. */
+/* Off the hot path: recovery and reprocessing. A thin grey long dash of its own, whatever the mode, and hidden until asked for. */
 .hld-flow.cold {
   stroke: #75849a;
   stroke-width: 1.3;
-  stroke-dasharray: 5 4;
+  stroke-dasharray: 10 6;
   stroke-linecap: butt;
   marker-end: url(#hld-arrow-quiet);
 }
@@ -489,7 +497,7 @@ main:has(> .design) {
 }
 
 .hld-chip text {
-  font-size: 16px;
+  font-size: 16.5px;
   font-weight: 650;
   fill: var(--ink);
 }
@@ -528,6 +536,7 @@ main:has(> .design) {
 
 .hld-chip.cold text {
   fill: var(--ink-2);
+  font-style: italic;
 }
 
 .hld-chip:hover .hld-chip-box {
@@ -542,7 +551,7 @@ main:has(> .design) {
 
 .hld-chip.picked .hld-chip-box {
   stroke: var(--ink);
-  stroke-width: 3.6;
+  stroke-width: 2.6;
   stroke-dasharray: none;
 }
 
@@ -566,8 +575,12 @@ main:has(> .design) {
 
 /* ---- the key ---------------------------------------------------------------- */
 
+/* The key is one run of items that wraps, so it takes as few rows as the width allows. */
 .hld-legend {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 20px;
   padding: 5px 20px 6px;
   border-top: 1px solid var(--rule);
   font-size: 0.88rem;
@@ -576,10 +589,7 @@ main:has(> .design) {
 
 .hld-key,
 .hld-key-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0 22px;
+  display: contents;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -594,6 +604,11 @@ main:has(> .design) {
 
 .hld-key svg {
   flex: none;
+}
+
+/* Off the hot path: its words in the cold paths' own grey italic, as on their chips. */
+.hld-key li.cold > span {
+  font-style: italic;
 }
 
 .hld-cold-toggle {
@@ -736,7 +751,7 @@ main:has(> .design) {
 }
 
 .hld-flow-label {
-  font-size: 16px;
+  font-size: 16.5px;
   font-weight: 650;
   fill: var(--ink);
   paint-order: stroke;
@@ -780,14 +795,14 @@ main:has(> .design) {
 }
 
 .hld-name {
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 700;
   fill: var(--ink);
 }
 
 .hld-tech,
 .hld-line {
-  font-size: 17.5px;
+  font-size: 16.5px;
   fill: var(--ink-2);
 }
 
@@ -818,7 +833,7 @@ main:has(> .design) {
 
 .hld-node.selected .hld-box {
   stroke: var(--ink);
-  stroke-width: 4;
+  stroke-width: 3.4;
 }
 
 .hld-node.sample {
@@ -843,7 +858,7 @@ main:has(> .design) {
 }
 
 .hld-pill text {
-  font: 700 16px var(--mono);
+  font: 700 16.5px var(--sans);
   fill: #fff;
 }
 
@@ -1231,7 +1246,20 @@ main:has(> .design) {
 }
 
 .hld-gloss-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
   margin-top: 4px;
+}
+
+/* Each link is at least 24px tall, so wrapped links never crowd each other's target. */
+.hld-gloss-links > a,
+.hld-gloss-links > button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  line-height: 1.3;
 }
 
 .hld-sep {
@@ -1291,12 +1319,29 @@ main:has(> .design) {
   white-space: nowrap;
 }
 
-/* Headings and rows that the page moves focus to show a quiet outline; a keyboard user gets the site's ring. */
+/*
+ * Headings and rows that the page moves focus to draw nothing for a pointer
+ * or a link; after a key press they show a bar at their left edge, not a box
+ * that looks like a text field.
+ */
 .hld-detail-head h3:focus,
 .hld-gloss-row:focus,
-.hld-missing:focus {
-  outline: 2px solid var(--rule-strong);
-  outline-offset: 3px;
+.hld-missing:focus,
+.hld-step-title:focus {
+  outline: none;
+}
+
+.hld-detail-head h3:focus-visible:not(.by-link),
+.hld-missing:focus-visible {
+  box-shadow: -10px 0 0 -6px var(--path);
+}
+
+.hld-gloss-row:focus-visible {
+  box-shadow: inset 4px 0 0 var(--path);
+}
+
+.hld-step-title:focus-visible:not(.by-link) {
+  box-shadow: -12px 0 0 -8px #fff;
 }
 
 
@@ -1309,6 +1354,15 @@ main:has(> .design) {
 @media (min-width: 900px) {
   .hld {
     margin-inline: -24px;
+  }
+}
+
+/* Up to 1099px the stage runs edge to edge, so a 1024px screen keeps the diagram at its reading size without panning. */
+@media (min-width: 600px) and (max-width: 1099px) {
+  .hld {
+    margin-inline: calc(-1 * clamp(18px, 4vw, 56px));
+    border-radius: 0;
+    border-inline: 0;
   }
 }
 
@@ -1488,11 +1542,29 @@ main:has(> .design) {
   }
 
   html:has(.design) .search {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
     margin: 0;
   }
 
-  html:has(.design) .search > label,
+  html:has(.design) .search-input {
+    flex: 1 1 120px;
+    min-width: 0;
+  }
+
+  /* The shortcut switch stays on show, as a compact toggle beside the box, so a zoomed-in keyboard user can still reach and see it. */
   html:has(.design) .search-keys {
+    flex: none;
+    margin: 0;
+  }
+
+  html:has(.design) .search-keys-hint {
+    display: none;
+  }
+
+  html:has(.design) .search > label {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -1547,6 +1619,32 @@ main:has(> .design) {
   }
 }
 
+/* Short and narrow (a page zoomed to 400 per cent): the search box and its switch take a row of their own under the brand and the menu. */
+@media (max-height: 500px) and (max-width: 599px) {
+  html:has(.design) .sidebar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  html:has(.design) .brand {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  html:has(.design) .menu {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  html:has(.design) .search {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  html:has(.design) .menu[open] {
+    grid-row: 3;
+  }
+}
+
 @media (max-width: 599px) {
   .hld-where {
     white-space: normal;
@@ -1555,12 +1653,8 @@ main:has(> .design) {
 
   .hld-legend {
     padding-inline: 14px;
+    column-gap: 16px;
     font-size: 0.86rem;
-  }
-
-  .hld-key,
-  .hld-key-row {
-    gap: 0 16px;
   }
 
   .hld-detail-head .hld-back {
@@ -1581,4 +1675,116 @@ main:has(> .design) {
 .hld-tether {
   stroke: var(--key);
   stroke-width: 1.6;
+}
+
+/* While the view glides to the next step the token fades out where it was. */
+.hld-token.away {
+  opacity: 0 !important;
+  transition: opacity 0.18s;
+}
+
+/* A step with no trip (the frontier deciding): a slow pulse round the dot shows the step is live. */
+.hld-token.waiting .hld-dot {
+  animation: hld-wait 1.6s ease-in-out infinite;
+}
+
+@keyframes hld-wait {
+  50% {
+    stroke-width: 7;
+    stroke: rgb(209 26 111 / 0.35);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hld-token.waiting .hld-dot {
+    animation: none;
+  }
+
+  .hld-token.away {
+    transition: none;
+  }
+}
+
+/* The tour's keys, beside the transport where there is room and a keyboard. */
+.hld-keys {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.84rem;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.hld-keys kbd {
+  padding: 0 5px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  font: 600 0.78rem var(--mono);
+  color: var(--ink);
+}
+
+.hld-keys kbd + kbd {
+  margin-left: 2px;
+}
+
+.hld-keys[hidden] {
+  display: none;
+}
+
+@media (max-width: 1099px), (pointer: coarse) {
+  .hld-keys {
+    display: none;
+  }
+}
+
+/* Windows high contrast: the ring, the token and the lit lines and boxes in system colours. */
+@media (forced-colors: active) {
+  .hld-ring {
+    stroke: Highlight;
+  }
+
+  .hld-dot,
+  .hld-pill rect {
+    fill: Highlight;
+    stroke: Canvas;
+  }
+
+  .hld-pill text {
+    fill: HighlightText;
+  }
+
+  .hld-tether {
+    stroke: Highlight;
+  }
+
+  .hld-flow,
+  .hld-box,
+  .hld-cap,
+  .hld-shelf,
+  .hld-chip-box {
+    stroke: CanvasText;
+  }
+
+  .hld-box,
+  .hld-chip-box {
+    fill: Canvas;
+  }
+
+  .hld-svg text {
+    fill: CanvasText;
+  }
+
+  .hld-tip {
+    fill: CanvasText;
+  }
+
+  .hld-flow.live,
+  .hld-node.lit .hld-box,
+  .hld-chip.live .hld-chip-box {
+    stroke: Highlight;
+  }
+
+  .hld-tip.live {
+    fill: Highlight;
+  }
 }

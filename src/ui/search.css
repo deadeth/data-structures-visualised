@@ -36,6 +36,11 @@
   color: var(--ink-2);
 }
 
+.search-summary:focus {
+  outline: 2px solid var(--path);
+  outline-offset: 3px;
+}
+
 .search-groups {
   display: grid;
   gap: 30px;
@@ -124,9 +129,10 @@
 }
 
 /* A neutral tint with an underline: amber means "being compared" on this site and nothing else. */
+/* No side padding: a match inside a word ("lease" in "leases") must not open a gap in the word. */
 .search-results mark {
-  padding: 0 2px;
-  border-radius: 3px;
+  padding: 0;
+  border-radius: 2px;
   background: #e4eaf4;
   color: inherit;
   text-decoration: underline;
@@ -193,27 +199,51 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* One slim row: the brand, the search box with its switch beside it, the menu and the source link. */
   .fold-side .sidebar {
     position: static;
     height: auto;
     border-right: 0;
     border-bottom: 1px solid var(--rule);
-    padding: 14px 26px;
+    padding: 8px 26px;
     display: grid;
-    grid-template-columns: auto minmax(220px, 340px) auto;
-    align-items: start;
-    gap: 10px 28px;
-  }
-
-  .fold-side .brand {
-    margin-top: 8px;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 6px 24px;
   }
 
   .fold-side .search {
+    display: flex;
+    align-items: center;
+    gap: 6px 14px;
+    margin: 0;
+  }
+
+  .fold-side .search > label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .fold-side .search-input {
+    flex: 1 1 200px;
+    max-width: 340px;
+  }
+
+  .fold-side .search-keys {
+    flex: none;
     margin: 0;
   }
 
   .fold-side .menu {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .fold-side .menu[open] {
     grid-column: 1 / -1;
     grid-row: 2;
   }
@@ -227,8 +257,8 @@
   }
 
   .fold-side .side-foot {
-    grid-column: 3;
+    grid-column: 4;
     grid-row: 1;
-    margin-top: 10px;
+    margin: 0;
   }
 }

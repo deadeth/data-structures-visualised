@@ -54,17 +54,39 @@ const shortcutsOn = () => {
 // One search box for the whole site. Typing shows results in the main column; "/" jumps to it.
 const searchInput = h('input.search-input', { type: 'search', id: 'site-search', placeholder: 'SimHash, lease, Kafka…', autocomplete: 'off', spellcheck: false }) as HTMLInputElement;
 let searchTimer = 0;
+function showResults(): void {
+  searchTimer = 0;
+  const q = searchInput.value.trim();
+  const to = q ? `#/search/${encodeURIComponent(q)}` : '#/search/';
+  // The first keystroke from another page adds one history entry, so Back returns to that page.
+  // After that each keystroke replaces it, so typing a word does not leave a trail.
+  if (/^#\/search\//.test(location.hash)) history.replaceState(null, '', to);
+  else history.pushState(null, '', to);
+  void route(true);
+}
 searchInput.addEventListener('input', () => {
   clearTimeout(searchTimer);
-  searchTimer = window.setTimeout(() => {
-    const q = searchInput.value.trim();
-    const to = q ? `#/search/${encodeURIComponent(q)}` : '#/search/';
-    // The first keystroke from another page adds one history entry, so Back returns to that page.
-    // After that each keystroke replaces it, so typing a word does not leave a trail.
-    if (/^#\/search\//.test(location.hash)) history.replaceState(null, '', to);
-    else history.pushState(null, '', to);
-    void route(true);
-  }, 140);
+  searchTimer = window.setTimeout(showResults, 140);
+});
+/** Set by Enter or Down in the search box: once the results are on the page, focus goes to the first one. */
+let toResults = false;
+let routing = false;
+function focusResults(): boolean {
+  const first = main.querySelector<HTMLElement>('.search-results h3 a') ?? main.querySelector<HTMLElement>('.search-summary');
+  if (!first) return false;
+  toResults = false;
+  first.focus();
+  return true;
+}
+searchInput.addEventListener('keydown', (e) => {
+  if ((e.key !== 'Enter' && e.key !== 'ArrowDown') || e.altKey || e.ctrlKey || e.metaKey || !searchInput.value.trim()) return;
+  e.preventDefault();
+  toResults = true;
+  // Results still to come (typing has just paused, or they are loading): focus moves when they arrive.
+  if (searchTimer) {
+    clearTimeout(searchTimer);
+    showResults();
+  } else if (!routing && /^#\/search\//.test(location.hash)) focusResults();
 });
 document.addEventListener('keydown', (e) => {
   const t = e.target as HTMLElement;
@@ -131,6 +153,7 @@ let shown = '';
 
 async function route(typing = false): Promise<void> {
   const token = ++navToken;
+  routing = true;
   if (/^#\/search\//.test(shown) && !typing) searchScroll.set(shown, window.scrollY);
   shown = location.hash;
   const path = location.hash.replace(/^#/, '') || '/';
@@ -182,10 +205,13 @@ async function route(typing = false): Promise<void> {
     const off = await mount;
     if (token === navToken) {
       teardown = off;
+      routing = false;
       const back = found && !typing ? searchScroll.get(location.hash) : undefined;
       if (back) window.scrollTo(0, back);
+      if (found && toResults) focusResults();
     } else off();
   } catch (err) {
+    routing = false;
     console.error(err);
     if (token === navToken) main.replaceChildren(h('article', null, h('h1', null, 'This page failed to load'), h('p', null, 'Reload the page to try again.')));
   }
