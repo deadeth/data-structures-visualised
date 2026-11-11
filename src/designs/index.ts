@@ -37,6 +37,13 @@ export const DESIGNS: DesignEntry[] = [
     load: () => import('./fraud-alerts').then((m) => m.fraudAlerts),
     extras: () => import('./extras/fraud-alerts').then((m) => m.extras),
   },
+  {
+    id: 'card-processing',
+    name: 'Credit card processing system',
+    hint: 'Follow one card purchase from tap to settlement',
+    question: 'Design a credit card processing system.',
+    load: () => import('./card-processing').then((m) => m.cardProcessing),
+  },
 ];
 
 export const design = (id: string) => DESIGNS.find((d) => d.id === id);

@@ -10,7 +10,7 @@ export interface CatalogEntry {
   cheat: { lookup: string; insert: string; remove: string; ordered: string; pick: string };
 }
 
-export const GROUPS = ['Storage and indexes', 'Hashing and distribution', 'Caches and queues', 'Transactions', 'Replication and consensus', 'Data processing', 'Networking', 'Foundations'] as const;
+export const GROUPS = ['Storage and indexes', 'Hashing and distribution', 'Caches and queues', 'Transactions', 'Replication and consensus', 'Data processing', 'Networking', 'Reliability patterns', 'Foundations'] as const;
 
 /**
  * Every structure the site covers, in display order. A structure's page goes
@@ -255,6 +255,20 @@ export const CATALOG: CatalogEntry[] = [
     group: 'Networking',
     blurb: 'Protobuf, Avro and JSON byte by byte, and how a schema changes without breaking old or new readers.',
     cheat: { lookup: 'O(n) decode, skip unknown fields', insert: 'O(n) encode, about 1 byte per key', remove: 'Readability without the schema', ordered: 'Protobuf by number; Avro by schema order', pick: 'Data shared across services and versions.' },
+  },
+  {
+    id: 'outbox',
+    name: 'Transactional outbox',
+    group: 'Reliability patterns',
+    blurb: 'Write the change and its event in one transaction; a relay publishes later. Nothing lost, duplicates possible.',
+    cheat: { lookup: '1 indexed id check per event', insert: '1 local transaction', remove: 'Gives up exactly-once and adds delay', ordered: 'Per aggregate, by partition key', pick: 'A service must publish an event for every change.' },
+  },
+  {
+    id: 'saga',
+    name: 'Sagas',
+    group: 'Reliability patterns',
+    blurb: 'A business transaction across services as local steps, each undone by a compensation if a later step fails.',
+    cheat: { lookup: 'Read the saga log row', insert: '1 local txn per step', remove: 'Isolation', ordered: 'Steps in order, undone in reverse', pick: 'Multi-service workflows: payments, orders, bookings.' },
   },
   {
     id: 'stack',

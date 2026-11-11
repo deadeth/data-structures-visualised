@@ -563,14 +563,14 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     h('section.note.wide.hld-card', null, h('h2', { id: `${design.id}-numbers` }, 'Numbers to have ready'), table(['Quantity', 'Assumption', 'Result'], design.numbers.map((n) => [n.what, n.assumption, n.result]), 'hld-table', `${design.id}-numbers`)),
     h(
       'section.note.wide.hld-card', null,
-      h('h2', null, 'Three versions of the question'),
+      h('h2', null, 'Other versions of the question'),
       h('div.hld-framings', null, design.framings.map((x) => h('div', null, h('h3', null, x.name), h('p.hld-scale', null, x.scale), h('p', null, x.shape)))),
     ),
     h('section.note.wide.hld-card', null, h('h2', { id: `${design.id}-decisions` }, 'Decisions worth defending'), table(['Choice', 'One way', 'The other way', 'The call here'], design.decisions.map((d) => [d.choice, d.a, d.b, d.call]), 'hld-table', `${design.id}-decisions`)),
     h(
       'section.note.wide.hld-card', null,
       h('h2', { id: `${design.id}-talk` }, 'How the parts talk'),
-      h('p.hld-lead', null, 'Inside a node everything is a function call, so the decisions that must be fast and exact never cross the network. Between nodes it is a log. To the outside world it is HTTPS with deadlines. A line that carries a request and its reply is listed once each way. Select a connection to open it under the diagram.'),
+      h('p.hld-lead', null, 'Every connection, with how it travels and what it promises. A line that carries a request and its reply is listed once each way. Select a connection to open it under the diagram.'),
       table(['Connection', 'Method', 'Kind', 'Delivery'], flowRows, 'hld-table', `${design.id}-talk`),
     ),
     h('section.note.wide.hld-card', null, h('h2', null, 'Failure drills'), h('dl.hld-drills', null, design.drills.flatMap((d) => [h('dt', null, d.name), h('dd', null, d.what)]))),
