@@ -1,7 +1,7 @@
 /* System design pages: a diagram you can tour and open up. Uses the site's tokens. */
 
 .hld {
-  margin-top: 22px;
+  margin-top: 16px;
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   background: var(--surface);
@@ -14,7 +14,7 @@
   background: var(--surface);
 }
 
-.hld.touring .hld-head {
+.hld.touring:not(.reading) .hld-head {
   position: sticky;
   top: 0;
   z-index: 3;
@@ -22,7 +22,7 @@
 }
 
 .hld-readout {
-  padding: 13px 20px 13px;
+  padding: 11px 20px 11px;
   background: var(--ink);
   color: #fff;
 }
@@ -65,7 +65,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 10px 18px;
-  padding: 8px 16px;
+  padding: 6px 16px;
   border-bottom: 1px solid var(--rule);
   background: var(--surface);
 }
@@ -187,6 +187,101 @@
 
 /* ---- the diagram --------------------------------------------------------- */
 
+.hld-pan {
+  position: relative;
+}
+
+/* A fade at each edge with more diagram beyond it. */
+.hld-pan::before,
+.hld-pan::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 34px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 1;
+}
+
+.hld-pan::before {
+  left: 0;
+  background: linear-gradient(to right, rgb(15 27 45 / 0.22), rgb(15 27 45 / 0));
+}
+
+.hld-pan::after {
+  right: 0;
+  background: linear-gradient(to left, rgb(15 27 45 / 0.22), rgb(15 27 45 / 0));
+}
+
+.hld-pan.more-left::before,
+.hld-pan.more-right::after {
+  opacity: 1;
+}
+
+.hld-panbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--rule);
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+
+.hld-panbar[hidden] {
+  display: none;
+}
+
+.hld-fit {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.hld-fit[aria-pressed='true'] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+/* Skip past the diagram's tab stop: hidden until it has focus. */
+.hld-skip {
+  position: absolute;
+  left: 16px;
+  z-index: 4;
+  margin-top: 8px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: var(--ink);
+  color: #fff;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.hld-skip:focus {
+  clip-path: none;
+  width: auto;
+  height: auto;
+  outline: 3px solid var(--path);
+  outline-offset: 2px;
+}
+
 .hld-canvas {
   overflow-x: auto;
   background-image: radial-gradient(circle, #dfe4ec 1px, transparent 1.2px);
@@ -200,25 +295,30 @@
 
 /*
  * The diagram scales with the stage, down to the size where its smallest text
- * (14.5 units) is 12px on screen. Narrower than that, it pans sideways.
+ * (15 units) is 12.5px on screen. Narrower than that, it pans sideways, unless
+ * the reader asks for it shrunk to fit.
  */
 .hld-svg {
   display: block;
   width: 100%;
-  min-width: calc(var(--hld-w, 1180) * 0.828px);
+  min-width: calc(var(--hld-w, 1280) * 0.8px);
   height: auto;
   font-family: var(--sans);
 }
 
+.hld-svg.fit {
+  min-width: 0;
+}
+
 .hld-frame {
   fill: #f6f8fb;
-  stroke: var(--rule-strong);
+  stroke: #75849a;
   stroke-width: 1.5;
   stroke-dasharray: 7 6;
 }
 
 .hld-frame-label {
-  font-size: 14.5px;
+  font-size: 15.5px;
   font-weight: 600;
   fill: var(--ink-2);
   paint-order: stroke;
@@ -229,14 +329,14 @@
 
 .hld-flow {
   fill: none;
-  stroke: #7d8ba0;
+  stroke: #75849a;
   stroke-width: 1.6;
   marker-end: url(#hld-arrow);
 }
 
 /* One line style per way of talking. The legend under the diagram names them. */
 .hld-flow.mode-local {
-  stroke: #8493a8;
+  stroke: #75849a;
   stroke-width: 1.5;
 }
 
@@ -264,19 +364,21 @@
   stroke-linecap: round;
 }
 
-/* Off the hot path: recovery and reprocessing. Same line style, drawn light. */
+/* Off the hot path: recovery and reprocessing. A thin grey dash of its own, whatever the mode. */
 .hld-flow.cold {
-  stroke: #a3afc0;
-  stroke-width: 1.5;
-  marker-end: url(#hld-arrow-cold);
+  stroke: #75849a;
+  stroke-width: 1.3;
+  stroke-dasharray: 5 4;
+  stroke-linecap: butt;
+  marker-end: url(#hld-arrow-quiet);
+}
+
+.hld-flow.mode-local {
+  marker-end: url(#hld-arrow-quiet);
 }
 
 .hld-flow.sample {
-  marker-end: url(#hld-arrow);
-}
-
-.hld-flow.sample.cold {
-  marker-end: url(#hld-arrow-cold);
+  marker-end: none;
 }
 
 .hld-hit {
@@ -298,15 +400,19 @@
   stroke-width: 1.4;
 }
 
+.hld-chip.sample {
+  cursor: default;
+}
+
 .hld-chip text {
-  font-size: 14.5px;
+  font-size: 15.5px;
   font-weight: 650;
   fill: var(--ink);
 }
 
 .hld-chip.mode-local .hld-chip-box {
   fill: #eef1f6;
-  stroke: #8493a8;
+  stroke: #75849a;
 }
 
 .hld-chip.mode-local text {
@@ -331,8 +437,9 @@
 
 .hld-chip.cold .hld-chip-box {
   fill: #f6f8fb;
-  stroke: #a3afc0;
+  stroke: #75849a;
   stroke-width: 1.4;
+  stroke-dasharray: 4 3;
 }
 
 .hld-chip.cold text {
@@ -373,12 +480,13 @@
   filter: drop-shadow(0 0 1.5px #fff) drop-shadow(0 0 1.5px #fff);
 }
 
+/* The key: three across and two down, so no item is left alone on a row. */
 .hld-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 26px;
+  display: grid;
+  grid-template-columns: repeat(3, max-content);
+  gap: 0 34px;
   margin: 0;
-  padding: 12px 20px 14px;
+  padding: 5px 20px 6px;
   list-style: none;
   border-top: 1px solid var(--rule);
   font-size: 0.9rem;
@@ -388,7 +496,11 @@
 .hld-legend li {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
+}
+
+.hld-legend svg {
+  flex: none;
 }
 
 .hld-lead {
@@ -403,19 +515,38 @@
   gap: 12px 24px;
 }
 
-.hld-glossary dt {
-  font-weight: 700;
+/* Each term and its text are one row, so a link to a term marks the whole row. */
+.hld-gloss-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  padding: 4px 0;
+  border-radius: var(--radius-s);
   scroll-margin-top: 90px;
 }
 
-.hld-glossary dt.found {
+.hld-glossary dt {
+  font-weight: 700;
+}
+
+.hld-gloss-row.found {
   box-shadow: inset 4px 0 0 var(--ink);
-  padding-left: 10px;
+  background: #f6f8fb;
+  padding: 8px 12px 8px 14px;
+  margin-inline: -14px -12px;
 }
 
 .hld-glossary dd {
   max-width: 80ch;
   line-height: 1.5;
+}
+
+.hld-gloss-links {
+  margin-top: 4px;
+}
+
+.hld-sep {
+  color: var(--ink-2);
 }
 
 .hld-where {
@@ -432,7 +563,11 @@
 }
 
 .hld-tip {
-  fill: #7d8ba0;
+  fill: #75849a;
+}
+
+.hld-tip.quiet {
+  fill: #75849a;
 }
 
 .hld-tip.live {
@@ -441,10 +576,6 @@
 
 .hld-tip.linked {
   fill: var(--ink);
-}
-
-.hld-tip.cold {
-  fill: #a3afc0;
 }
 
 .hld-flow.linked,
@@ -483,8 +614,23 @@
 }
 
 /* Purpose labels show when a line is live, open, linked to an open box, or pointed at. The chip, the legend and the table carry the rest. */
+/* A short line from a label set beside its chip, so it never floats. */
+.hld-leader {
+  stroke: var(--ink-2);
+  stroke-width: 1.2;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+
+.hld-leader.on,
+.hld-leader.peek,
+.hld-svg.labels-all .hld-leader {
+  opacity: 1;
+}
+
 .hld-flow-label {
-  font-size: 14.5px;
+  font-size: 15.5px;
   fill: var(--ink-2);
   paint-order: stroke;
   stroke: #fff;
@@ -541,7 +687,7 @@
 
 .hld-tech,
 .hld-line {
-  font-size: 14.5px;
+  font-size: 15.5px;
   fill: var(--ink-2);
 }
 
@@ -558,7 +704,7 @@
 
 .hld-node.quiet .hld-box,
 .hld-node.quiet .hld-shelf {
-  stroke: #8493a8;
+  stroke: #75849a;
 }
 
 .hld-node.quiet .hld-name {
@@ -581,20 +727,21 @@
 }
 
 .hld-token text {
-  font: 700 15px var(--mono);
+  font: 700 15.5px var(--mono);
   fill: #fff;
 }
 
 /* ---- details -------------------------------------------------------------- */
 
 .hld-detail {
-  margin-top: 28px;
+  margin-top: 16px;
   outline: none;
   scroll-margin-bottom: 24px;
 }
 
-.hld-detail > h2 {
-  font-size: 1.25rem;
+.hld-index-head {
+  margin-top: 22px;
+  font-size: 1.1rem;
   font-weight: 750;
 }
 
@@ -602,7 +749,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 10px;
 }
 
 .hld-index button {
@@ -628,8 +775,7 @@
 }
 
 .hld-detail-body {
-  margin-top: 16px;
-  padding: 22px 24px 24px;
+  padding: 18px 24px 24px;
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   background: var(--surface);
@@ -645,6 +791,33 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px 14px;
+}
+
+.hld-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  margin-left: auto;
+  padding: 0 14px 0 10px;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  font: inherit;
+  font-weight: 650;
+  color: var(--ink);
+  cursor: pointer;
+  align-self: center;
+}
+
+.hld-back:hover {
+  border-color: var(--ink);
+}
+
+.hld-missing {
+  margin-bottom: 10px;
+  font-weight: 650;
+  outline: none;
 }
 
 .hld-detail-head h3 {
@@ -665,7 +838,7 @@
 }
 
 .hld-detail-grid h4 {
-  margin: 18px 0 5px;
+  margin: 14px 0 4px;
   font-size: 0.93rem;
   font-weight: 700;
 }
@@ -676,8 +849,10 @@
   line-height: 1.5;
 }
 
+/* Bullets hang in the margin, so the list's text lines up with the paragraphs around it. */
 .hld-detail-grid ul:not(.hld-alts) {
-  padding-left: 1.1em;
+  padding-left: 0;
+  list-style-position: outside;
   display: grid;
   gap: 4px;
 }
@@ -726,7 +901,6 @@
   border-radius: var(--radius-s);
   background: var(--ink);
   color: #fff;
-  max-width: 88ch;
   line-height: 1.5;
 }
 
@@ -808,6 +982,11 @@
   outline: none;
 }
 
+/* The lede is one line here, so that the heading, the readout and the whole diagram with its key fit one screen. */
+.design .lede {
+  max-width: none;
+}
+
 /* Wide screens: the stage takes the page's side padding too, so the diagram stays at a readable size without panning. */
 @media (min-width: 900px) {
   .hld {
@@ -876,7 +1055,6 @@
     padding: 6px 10px;
   }
 
-  .hld-restart,
   .hld-speed {
     display: none;
   }
@@ -931,70 +1109,51 @@
   }
 }
 
-/*
- * Short, wide screens (a phone held sideways): the readout and transport sit in
- * a column beside the diagram, and the stage fills the screen, so the step and
- * the diagram are both in view. The diagram scrolls inside its own box.
- */
-@media (max-height: 500px) and (min-width: 600px) {
-  .hld {
-    display: grid;
-    grid-template-columns: minmax(250px, 40%) minmax(0, 1fr);
-    grid-template-rows: calc(100dvh - 2px) auto;
-  }
-
-  .hld-head,
-  .hld.touring .hld-head {
-    position: relative;
-    grid-column: 1;
-    grid-row: 1;
-    display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-    border-right: 1px solid var(--rule);
-    box-shadow: none;
-  }
-
+/* A phone held sideways: the readout stacks above the diagram as upright, but tighter, so the diagram keeps the height. */
+@media (max-height: 500px) {
   .hld-readout {
-    flex: 1 0 auto;
-    padding: 10px 14px;
+    padding: 8px 16px;
   }
 
   .hld-step-title {
-    font-size: 1rem;
+    font-size: 0.98rem;
   }
 
   .hld-step-text {
     font-size: 0.9rem;
-    line-height: 1.36;
+    line-height: 1.35;
+    margin-top: 2px;
   }
 
   .hld-step-via {
+    margin-top: 3px;
     font-size: 0.84rem;
   }
 
-  /* The count gets a row of its own under the buttons. */
   .hld-transport {
-    flex-wrap: wrap;
-    gap: 4px 6px;
-    border-bottom: 0;
+    padding: 4px 10px;
   }
+}
 
-  .hld-count {
-    order: 5;
-    flex-basis: 100%;
-    padding-left: 4px;
-  }
-
-  .hld-canvas {
-    grid-column: 2;
-    grid-row: 1;
-    overflow: auto;
+@media (max-width: 599px) {
+  .hld-where {
+    white-space: normal;
+    text-align: left;
   }
 
   .hld-legend {
-    grid-column: 1 / -1;
-    grid-row: 2;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px 12px;
+    padding-inline: 14px;
+    font-size: 0.86rem;
+  }
+
+  .hld-legend svg {
+    width: 54px;
+  }
+
+  .hld-detail-head .hld-back {
+    margin-left: 0;
   }
 }
 

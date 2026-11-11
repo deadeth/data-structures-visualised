@@ -46,7 +46,7 @@ function build(): Promise<Doc[]> {
         where: `${d.name}: connection by ${f.via}`,
       });
     }
-    d.tour.forEach((t, i) => docs.push({ kind: 'Tour step', title: t.title, also: [], text: t.text, href: base, where: `${d.name}: tour step ${i + 1}` }));
+    d.tour.forEach((t, i) => docs.push({ kind: 'Tour step', title: t.title, also: [], text: t.text, href: `${base}/t/${i + 1}`, where: `${d.name}: tour step ${i + 1}` }));
     for (const dec of d.decisions) docs.push({ kind: 'Term', title: dec.choice, also: [], text: `${dec.a} ${dec.b} ${dec.call}`, href: base, where: `${d.name}: decisions worth defending` });
 
     await Promise.all(
@@ -153,7 +153,10 @@ const has = (s: string, words: string[]) => {
 const SUGGEST = ['SimHash', 'Bloom filter', 'lease', 'Kafka', 'robots.txt', 'SSRF', 'WARC', 'idempotent', 'B+ tree', 'eviction'];
 
 /** The results page. The search box itself lives in the sidebar and drives this through the address. */
-export async function mountSearch(host: HTMLElement, query: string): Promise<() => void> {
+/** The result last followed from each results page, so Back can put focus on it again. */
+const followed = new Map<string, string>();
+
+export async function mountSearch(host: HTMLElement, query: string, returning = false): Promise<() => void> {
   const q = query.trim();
   const words = fold(q).split(/\s+/).filter(Boolean);
   const list = h('ol.search-results', null);
@@ -182,12 +185,18 @@ export async function mountSearch(host: HTMLElement, query: string): Promise<() 
         h(
           'li', null,
           h('p.search-kind', null, d.kind),
-          h('h2', null, h('a', { href: d.href }, excerpt(d.title, words, true))),
+          // The kind is read out with the title, so two results with one name (a term and a structure) can be told apart.
+          h('h2', null, h('a', { href: d.href, onclick: () => followed.set(q, d.href) }, excerpt(d.title, words, true), h('span.visually-hidden', null, `, ${d.kind.toLowerCase()}`))),
           other ? h('p.search-also', null, 'Also: ', excerpt(other, words, true)) : null,
           h('p.search-text', null, excerpt(d.text, words, d.kind === 'Term')),
           h('p.search-where', null, d.where),
         ),
       );
+    }
+    const back = returning ? followed.get(q) : undefined;
+    if (back) {
+      const a = [...list.querySelectorAll('h2 a')].find((x) => x.getAttribute('href') === back) as HTMLElement | undefined;
+      a?.focus({ preventScroll: true });
     }
   } else announce(summary.textContent ?? '');
   return () => page.remove();

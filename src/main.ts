@@ -152,7 +152,7 @@ async function route(typing = false): Promise<void> {
 
   let mount: Promise<() => void>;
   const m = /^\/s\/([a-z0-9-]+)$/.exec(path);
-  const design = /^\/d\/web-crawler(?:\/([cfg])\/([a-z0-9-]+))?$/.exec(path);
+  const design = /^\/d\/web-crawler(?:\/([cfgt])\/([a-z0-9-]+))?$/.exec(path);
   if (path === '/') {
     document.title = 'Data structures, visualised';
     mount = mountHome(main);
@@ -162,7 +162,8 @@ async function route(typing = false): Promise<void> {
   } else if (found) {
     document.title = 'Search | Data structures, visualised';
     const q = decodeURIComponent(found[1]);
-    mount = import('./ui/search').then((s) => s.mountSearch(main, q));
+    // Coming back to a results page (not typing into the box), focus returns to the result that was followed.
+    mount = import('./ui/search').then((s) => s.mountSearch(main, q, !typing));
   } else if (design) {
     document.title = 'Distributed web crawler | Data structures, visualised';
     const open = design[1] ? { kind: design[1], id: design[2] } : undefined;

@@ -84,6 +84,8 @@ export interface TourStep {
   path: string[];
   /** What the token is carrying at this point. */
   token?: string;
+  /** What it carries on the way back: on any leg that returns to the component the trip started from ("IP?" goes out, "IP" comes back). */
+  back?: string;
 }
 
 export interface Design {
@@ -92,10 +94,12 @@ export interface Design {
   blurb: string;
   /** What the readout says before the tour starts: how to use the diagram, not a repeat of the blurb. */
   rest: string;
+  /** The same, for a touch screen, where there are no keys to mention. */
+  restTouch: string;
   /** The diagram's coordinate space. */
   size: { w: number; h: number };
-  /** Dashed outline around the components that make up one node: SVG path data, and where its label sits on the outline. */
-  frame: { d: string; label: string; lx: number; ly: number };
+  /** Dashed rectangle around the components that make up one node. Its label sits inside the top-left corner. */
+  frame: { x: number; y: number; w: number; h: number; label: string };
   components: Component[];
   flows: Flow[];
   tour: TourStep[];
