@@ -10,7 +10,7 @@ export interface CatalogEntry {
   cheat: { lookup: string; insert: string; remove: string; ordered: string; pick: string };
 }
 
-export const GROUPS = ['Storage and indexes', 'Hashing and distribution', 'Caches and queues', 'Transactions', 'Replication and consensus', 'Data processing', 'Foundations'] as const;
+export const GROUPS = ['Storage and indexes', 'Hashing and distribution', 'Caches and queues', 'Transactions', 'Replication and consensus', 'Data processing', 'Networking', 'Foundations'] as const;
 
 /**
  * Every structure the site covers, in display order. A structure's page goes
@@ -227,6 +227,34 @@ export const CATALOG: CatalogEntry[] = [
     group: 'Data processing',
     blurb: 'Barriers flow with the records; each task saves its state as one passes. Restore, rewind, replay.',
     cheat: { lookup: 'O(1) per record', insert: 'O(state) per checkpoint', remove: 'Replay since last checkpoint', ordered: 'Per partition', pick: 'Stateful streams that must survive crashes.' },
+  },
+  {
+    id: 'tcp',
+    name: 'TCP and UDP',
+    group: 'Networking',
+    blurb: 'How TCP turns a lossy network into an ordered, reliable stream, and what UDP gives up to be fast.',
+    cheat: { lookup: '1 round trip to connect', insert: 'Window per round trip', remove: 'UDP: delivery and order', ordered: 'TCP yes, UDP no', pick: 'TCP by default; UDP when latency beats completeness.' },
+  },
+  {
+    id: 'realtime-push',
+    name: 'Long polling, SSE and WebSockets',
+    group: 'Networking',
+    blurb: 'Four ways a server gets news to a client: poll, hold the request, stream events, or open a two-way socket.',
+    cheat: { lookup: 'Delay: poll interval, or none', insert: '1 request per poll or message; 1 frame', remove: 'Open connections held per client', ordered: 'In order; SSE resumes by event id', pick: 'SSE for feeds, WebSocket for chat and games.' },
+  },
+  {
+    id: 'load-balancing',
+    name: 'Load balancing',
+    group: 'Networking',
+    blurb: 'One address in front of many servers. A policy picks who gets each request; health checks pick who may.',
+    cheat: { lookup: 'O(1) to O(n) per pick', insert: 'Add a server: hash mod n moves most users', remove: 'Lost in-flight requests on a failure', ordered: 'No', pick: 'Spreading requests over a pool of servers.' },
+  },
+  {
+    id: 'serialization',
+    name: 'Serialisation and schema evolution',
+    group: 'Networking',
+    blurb: 'Protobuf, Avro and JSON byte by byte, and how a schema changes without breaking old or new readers.',
+    cheat: { lookup: 'O(n) decode, skip unknown fields', insert: 'O(n) encode, about 1 byte per key', remove: 'Readability without the schema', ordered: 'Protobuf by number; Avro by schema order', pick: 'Data shared across services and versions.' },
   },
   {
     id: 'stack',
