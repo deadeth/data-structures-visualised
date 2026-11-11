@@ -75,14 +75,118 @@
   color: var(--ink-2);
 }
 
+.search-also {
+  margin-top: 6px;
+  font-size: 0.93rem;
+  color: var(--ink-2);
+}
+
+/* A neutral tint with an underline: amber means "being compared" on this site and nothing else. */
 .search-results mark {
   padding: 0 2px;
   border-radius: 3px;
-  background: #ffe9a8;
+  background: #e4eaf4;
   color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
 }
 
 .search-tries {
   margin-top: 26px;
   color: var(--ink-2);
+}
+
+/* The switch for single-key shortcuts, under the search box. */
+.search-keys {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 4px;
+  font-size: 0.86rem;
+  color: var(--ink-2);
+}
+
+.search .search-keys label {
+  font-size: inherit;
+  font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.search-keys input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--ink);
+  cursor: pointer;
+}
+
+.search-keys-hint {
+  color: var(--ink-3);
+}
+
+.search-keys-hint kbd {
+  padding: 0 5px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  font: 600 0.8rem var(--mono);
+}
+
+/* Touch screens have no keyboard to speak of: the switch is noise there. */
+@media (pointer: coarse) {
+  .search-keys {
+    display: none;
+  }
+}
+
+/*
+ * The system design page needs the width for its diagram. Between 900 and
+ * 1299px the sidebar folds into a bar across the top there, as it does on a
+ * phone. main.ts sets the class and closes the menu.
+ */
+@media (min-width: 900px) and (max-width: 1299px) {
+  .fold-side .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fold-side .sidebar {
+    position: static;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+    padding: 14px 26px;
+    display: grid;
+    grid-template-columns: auto minmax(220px, 340px) auto;
+    align-items: start;
+    gap: 10px 28px;
+  }
+
+  .fold-side .brand {
+    margin-top: 8px;
+  }
+
+  .fold-side .search {
+    margin: 0;
+  }
+
+  .fold-side .menu {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .fold-side .menu > summary {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+
+  .fold-side .side-foot {
+    grid-column: 3;
+    grid-row: 1;
+    margin-top: 10px;
+  }
 }

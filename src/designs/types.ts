@@ -15,7 +15,9 @@ export interface Component {
   name: string;
   /** Short technology line drawn under the name. */
   tech: string;
-  /** Where it sits on the diagram: centre x and y in a 1120 by 590 space. */
+  /** A shorter name for the box on the diagram, when the full name does not fit. */
+  short?: string;
+  /** Where it sits on the diagram: centre x and y in the design's `size` space. */
   x: number;
   y: number;
   w?: number;
@@ -53,14 +55,18 @@ export interface Flow {
   label?: string;
   /** SVG path data in diagram space. Drawn as given; the token travels along it. */
   d: string;
-  /** Where the purpose label sits. */
-  lx?: number;
-  ly?: number;
+  /**
+   * Where the purpose label sits, pinned to the chip: above or below it on a
+   * line that runs across, left or right of it on a line that runs up and down.
+   */
+  at?: 'above' | 'below' | 'left' | 'right';
   mode: Mode;
   /** The method, in a few words: "in-process", "Kafka", "HTTPS". Drawn on the line as a chip. */
   via: string;
-  /** Where along the path the chip sits, 0 to 1. Leave out to hide the chip on a very short hop. */
+  /** Where along the path the chip sits, 0 to 1. Every connection has a chip, so every one can be opened from the keyboard. */
   chip?: number;
+  /** Off the hot path: used for recovery or reprocessing, not on every fetch. Drawn lighter. */
+  cold?: boolean;
   /** One or two sentences: the call or message, and what it carries. */
   how: string;
   /** What is promised about delivery, and what makes that safe. */
@@ -84,8 +90,12 @@ export interface Design {
   id: string;
   name: string;
   blurb: string;
-  /** Dashed outline around the components that make up one node. */
-  frame: { x: number; y: number; w: number; h: number; label: string };
+  /** What the readout says before the tour starts: how to use the diagram, not a repeat of the blurb. */
+  rest: string;
+  /** The diagram's coordinate space. */
+  size: { w: number; h: number };
+  /** Dashed outline around the components that make up one node: SVG path data, and where its label sits on the outline. */
+  frame: { d: string; label: string; lx: number; ly: number };
   components: Component[];
   flows: Flow[];
   tour: TourStep[];
@@ -97,5 +107,5 @@ export interface Design {
   interview: string[];
   sources: { label: string; href?: string; note: string }[];
   /** Terms worth being able to look up. `where` is the component the term belongs to. */
-  glossary: { term: string; also?: string[]; text: string; where?: string }[];
+  glossary: { term: string; also?: string[]; text: string; where?: string; see?: { id: string; label: string } }[];
 }
