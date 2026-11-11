@@ -94,17 +94,17 @@ This repo was mostly built by one coordinating session and many sub-agents. What
 
 Design review used blind rounds: three fresh reviewers per round (visual, accessibility and responsive, interaction and motion), given no earlier scores and no sight of each other, reviewing a frozen build. Brief: `docs/briefs/blind-reviewer.md`. Process and lessons: ADR 0007.
 
-## State when this file was written (11 November 2026)
+## State when this file was last updated (11 November 2026, evening)
 
 Live and verified:
-- About 40 structure pages across eight groups, including twenty built from the "Systems Design 2.0" playlist (transactions, replication and consensus, data processing, networking).
-- The web crawler design page, after four blind review rounds. Round 4 scores were 9 in half the categories and 8 in most of the rest; accessibility was held at 7 by one forced-colours bug.
-- Site search.
+- About 48 structure pages across nine groups. "Reliability patterns" holds transactional outbox, sagas, idempotency keys, and retries, backoff and circuit breakers.
+- Four design pages over a registry (`src/designs/index.ts`): web crawler, ledger, suspicious-transaction alerts, card processing. The last three have been fact-checked against sources; the checkers' "could not verify" lists are in the session reports, not the repo.
+- Interview extras for ledger, alerts and cards (`src/designs/extras/<id>.ts`, rendered by `src/ui/design-extras.ts`): opening script, likely pushes, "lead it", rehearsal mode (`#/d/<id>/rehearse`) and a two-page crib (`#/d/<id>/crib`). The crawler has none yet.
+- Site search, covering structures, designs and interview pushes.
+- A structure page opens with `info.summary` under its title. The catalogue `blurb` is only for the home page, sidebar and search.
 
-In progress, not yet committed:
-- Round 4 fixes to the crawler page (`src/designs/*`, `src/ui/design-page.ts`, `design.css`, `search.ts`): fixed token-label side per leg, fit-to-step zoom on phones, forced-colours fix, even chip row. After they land: blind round 5.
-- Three new design pages as data files: `src/designs/ledger.ts`, `fraud-alerts.ts`, `card-processing.ts`. Brief: `docs/briefs/design-page.md`.
-- The router, sidebar, home page and search still assume one design (`web-crawler`). Generalise them to `#/d/<id>` over a small registry before the new designs can go live. Places: `src/main.ts` (nav link, route regex, import), `src/ui/search.ts` (index).
+In progress:
+- Crawler design page blind review. Round 4 scores were 9 in half the categories and 8 in most of the rest. Round 4 fixes are live; round 5 has not run. Known shortfall: tour steps 6, 7 and 12 cannot fit at 320px.
 
 Not started:
 - Written "concept" pages for the playlist's comparison videos (SQL vs NoSQL, MySQL vs PostgreSQL, Spanner, VoltDB, MongoDB vs Cassandra, HBase, Kafka vs RabbitMQ, Elasticsearch, time-series and graph databases, Redis vs Memcached, CDNs, object stores, ZooKeeper, monolith vs microservices). They need a small notes page type.
@@ -116,3 +116,5 @@ Known rough edges:
 - On phones some labels inside structure scenes are cut at the canvas edge (worst: graph, LSM tree, token bucket).
 - `cache-strategies` has an 8-step tour; the guide says 4 to 7.
 - Some pages change a page setting from inside the tour through an operation, so the dropdown can disagree with the status line (version vectors, MVCC, TCP, serialisation, 2PL).
+- Design-page boxes still link to older pages where a pattern page now fits better (only the glossary entries for idempotency key and outbox were re-pointed).
+- Unverified product trivia in the newest pages: Resilience4j, Polly, gRPC deadlines, Kafka idempotent producer, Postgres sequence behaviour; vendor list and fee figures in the cards extras.
