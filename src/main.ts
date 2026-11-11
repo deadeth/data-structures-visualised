@@ -131,8 +131,17 @@ wide.addEventListener('change', syncMenu);
 roomy.addEventListener('change', syncMenu);
 syncMenu();
 
+// The skip link must not change the hash: the router would read "#main" as a route and replace the page.
+const skip = h('a.skip', { href: '#main' }, 'Skip to content');
+skip.addEventListener('click', (e) => {
+  e.preventDefault();
+  const target = document.getElementById('main');
+  target?.focus();
+  target?.scrollIntoView();
+});
+
 app.append(
-  h('a.skip', { href: '#main' }, 'Skip to content'),
+  skip,
   h(
     'div.shell', null,
     h(
