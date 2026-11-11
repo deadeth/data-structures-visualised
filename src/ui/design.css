@@ -353,8 +353,9 @@ main:has(> .design) {
 
 .hld-skip:focus {
   clip-path: none;
-  width: auto;
+  width: max-content;
   height: auto;
+  min-height: 36px;
   outline: 3px solid var(--path);
   outline-offset: 2px;
 }
@@ -390,29 +391,93 @@ main:has(> .design) {
   max-width: none;
 }
 
-/* The overview button floats in the canvas's bottom corner, so the diagram has the whole height under the readout. */
+/* The overview button sits in a slim strip under the tour's canvas, never over the diagram. */
 .hld.cam .hld-panbar {
-  position: relative;
-  z-index: 2;
-  height: 0;
-  padding: 0;
-  border: 0;
+  justify-content: flex-end;
+  padding: 4px 10px;
 }
 
 .hld.cam .hld-pan-hint {
   display: none;
 }
 
+/* A phone on its side: the strip is as slim as a 24px target allows. */
+@media (max-height: 500px) {
+  .hld.cam .hld-panbar {
+    padding-block: 2px;
+  }
+
+  .hld.cam .hld-panbar .hld-fit {
+    min-height: 28px;
+  }
+}
+
 .hld.cam .hld-fit {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  min-height: 36px;
+  min-height: 34px;
   padding: 0 12px;
   border: 1.5px solid var(--rule-strong);
   border-radius: var(--radius-s);
   background: var(--surface);
-  box-shadow: 0 1px 3px rgb(15 27 45 / 0.18);
+  text-decoration: none;
+}
+
+/*
+ * Edge signs on a phone at rest: one for each lit box out of view, at the edge
+ * of the canvas it lies beyond, naming it with an arrow towards it. In the
+ * visited blue of a lit box, never the followed magenta.
+ */
+.hld-marks {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.hld-mark {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  max-width: 46%;
+  padding: 0 9px;
+  border: 1.5px solid var(--path);
+  border-radius: 14px;
+  background: var(--path-soft);
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 1px 3px rgb(15 27 45 / 0.2);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.hld-mark.left {
+  left: 4px;
+  top: var(--at);
+  transform: translateY(-50%);
+}
+
+.hld-mark.right {
+  right: 4px;
+  top: var(--at);
+  transform: translateY(-50%);
+}
+
+.hld-mark.top {
+  top: 4px;
+  left: var(--at);
+  transform: translateX(-50%);
+}
+
+.hld-mark.bottom {
+  bottom: 4px;
+  left: var(--at);
+  transform: translateX(-50%);
 }
 
 /*
@@ -702,6 +767,28 @@ main:has(> .design) {
   cursor: pointer;
 }
 
+/* On a step about recovery the box shows ticked and cannot be changed: the words say why. */
+.hld-cold-toggle input:disabled,
+.hld-cold-toggle input:disabled + label {
+  cursor: default;
+}
+
+.hld-cold-why {
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+.hld-cold-why[hidden] {
+  display: none;
+}
+
+/* Where the key runs across the stage, the switch and its notes sit at the right of their row, never mid-row. */
+@media (min-width: 900px) and (max-width: 1799px) {
+  .hld-cold-toggle {
+    margin-left: auto;
+  }
+}
+
 .hld-key-notes summary {
   min-height: 30px;
   display: flex;
@@ -968,8 +1055,10 @@ main:has(> .design) {
 }
 
 /*
- * While touring, everything not on the step steps back to 45 per cent, so the
- * step stands out; the frame and its words do not. Not in forced colours,
+ * While touring, everything not on the step steps back, so the step stands
+ * out: lines, outlines and marks to 45 per cent, words to a solid slate that
+ * still reads at 4.5 to 1 on its fill (never opacity on text, which would
+ * fail). The frame and its words do not step back. Not in forced colours,
  * which has no half tones.
  */
 @media (forced-colors: none) {
@@ -981,7 +1070,7 @@ main:has(> .design) {
   .hld-svg .hld-shelf,
   .hld-svg .hld-cap,
   .hld-chip-glyph {
-    transition: opacity 0.15s, stroke-opacity 0.15s, fill-opacity 0.15s;
+    transition: opacity 0.15s, stroke-opacity 0.15s, fill-opacity 0.15s, fill 0.15s;
   }
 
   .hld.touring:not(.reading) .hld-svg .hld-flow:not(.live):not(.peek) {
@@ -997,7 +1086,7 @@ main:has(> .design) {
   .hld.touring:not(.reading) .hld-node.quiet:not(:focus-visible) text,
   .hld.touring:not(.reading) .hld-chip.show:not(.live):not(.peek):not(:focus-visible) text,
   .hld.touring:not(.reading) .hld-chip.show:not(.live):not(.peek):not(:focus-visible) .hld-chip-glyph {
-    fill-opacity: 0.45;
+    fill: var(--ink-3);
   }
 
   .hld.touring:not(.reading) .hld-node.quiet:not(:focus-visible) .hld-bar,
@@ -1022,7 +1111,7 @@ main:has(> .design) {
   }
 
   .hld.touring.reading .hld-chip.live:not(.picked) text {
-    fill-opacity: 0.45;
+    fill: var(--ink-3);
   }
 }
 
@@ -1040,7 +1129,7 @@ main:has(> .design) {
   cursor: default;
 }
 
-/* The token: a small dot on the line in the colour this site keeps for the followed key, with its label on a pill beside it. Chips are drawn above it. */
+/* The token: a small dot on the line in the colour this site keeps for the followed key, with its label on a pill beside it. It is drawn above the chips, moving and at rest. */
 .hld-token {
   pointer-events: none;
 }
@@ -1694,8 +1783,8 @@ main:has(> .design) {
   }
 }
 
-/* Very narrow: the count becomes "5/13", read out in full. */
-@media (max-width: 379px) {
+/* Narrow: the count becomes "5/13", read out in full. */
+@media (max-width: 429px) {
   .hld-count-long {
     position: absolute;
     width: 1px;
@@ -1943,8 +2032,22 @@ main:has(> .design) {
   margin-left: 2px;
 }
 
-.hld-keys[hidden] {
+.hld-keys[hidden],
+.hld-keys.squeezed {
   display: none;
+}
+
+/* Below the widest screens the speeds are one button that steps through them, so the transport keeps to one row. */
+@media (max-width: 1099px) {
+  .hld-speed {
+    display: none;
+  }
+
+  .hld-speed-cycle {
+    display: block;
+    flex: none;
+    margin-left: auto;
+  }
 }
 
 @media (max-width: 1099px), (pointer: coarse) {
