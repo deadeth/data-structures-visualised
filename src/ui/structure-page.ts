@@ -72,7 +72,9 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
   const facts = h('dl.facts');
   const page = h(
     'article.structure', null,
-    h('header.page-head', null, h('h1', null, meta.name), h('p.lede', null, meta.blurb)),
+    // The plain explanation leads the page. The catalogue blurb is a one-line label for the home page and search;
+    // under a title it read as a riddle to anyone who did not already know the subject.
+    h('header.page-head', null, h('h1', null, meta.name), h('p.lede.what', null, def.info.summary)),
     // Row one: the operations, with the line for input errors reserved under them. Row two: setup.
     h('div.controls', null, opsBar, error, tools),
     stageHost,
@@ -305,7 +307,6 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
   page.append(
     h(
       'div.notes', null,
-      h('section.note', null, h('h2', null, 'What it is'), h('p', null, info.summary)),
       h('section.note', null, h('h2', null, 'What to watch'), list(info.watch)),
       h(
         'section.note.wide', null,

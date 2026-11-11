@@ -220,6 +220,13 @@ h1 {
   color: var(--ink-2);
 }
 
+/* A structure page opens with its full explanation, so it is set at reading size and width. */
+.lede.what {
+  max-width: 78ch;
+  font-size: 1.02rem;
+  line-height: 1.55;
+}
+
 .hero {
   margin: 12px 0 28px;
 }

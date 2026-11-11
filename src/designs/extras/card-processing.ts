@@ -6,7 +6,7 @@ import type { Extras } from './types';
  * The question: "Design a credit card processing system."
  *
  * Numbers agree with src/designs/card-processing.ts: about 1.2 million cards, 1.2 million
- * authorisations a day, about 135 a second at the yearly peak, built for 1,000; a budget of
+ * authorisations a day, about 135 messages a second at the yearly peak, built for 1,000; a budget of
  * about 100 ms typical and 300 ms at the 99th percentile; fraud 50 ms, hold 20 ms; clearing in
  * four to six files a day; processor time limits of 2 to 3 seconds (6 at Lithic).
  *
@@ -21,7 +21,7 @@ export const extras: Extras = {
     "Before I draw anything: which side of the card do you mean? There are two quite different systems behind that question. The issuer gets a request from the network and has a couple of seconds to say yes or no against the cardholder's money. The acquirer, or a payment provider like Stripe, takes a charge from a merchant and has to send it out and find out what happened. They share the same four parties and the same three phases (authorise, clear, settle), but the hard problems are different.",
     "Unless you would rather I didn't, I'll take the issuer side. That is the side a business bank is on: Tide's members carry Mastercard cards, and a decline at a till is the failure they feel. I'll treat the acquirer side as a variant at the end. I'll also design for debit on the account balance first and treat credit as a variant: the authoriser checks a credit limit in place of a balance, and statements and interest are a ledger concern. I believe Tide's own credit card comes through a partner anyway.",
     "Questions that change the design. Are we connected to Mastercard ourselves, or through an issuer processor that sends us a webhook? Most e-money firms and newer banks start on a processor such as Marqeta, Paymentology, Thredd, Lithic or Enfuce, and I'll assume that is where we are today. How many cards and purchases? I'll assume about 1.2 million cards and one purchase per card a day: 1.2 million authorisations, about 135 a second at the yearly peak. Out of scope: card production, 3-D Secure screens, people working disputes, credit decisions.",
-    "That makes it clear what this is not: a throughput problem. 135 a second fits on one database. The hard problem is answering correctly inside a fixed time, every time, while never approving money that is not there. A retry, a reversal, a late answer and a stand-in decision must all leave the balance exactly right. And then clearing, a day later, at a different amount, has to find the right hold.",
+    "That makes it clear what this is not: a throughput problem. 135 messages a second fits on one database. The hard problem is answering correctly inside a fixed time, every time, while never approving money that is not there. A retry, a reversal, a late answer and a stand-in decision must all leave the balance exactly right. And then clearing, a day later, at a different amount, has to find the right hold.",
     "The shape of the answer. A gateway that owns the clock and keeps card numbers in a small PCI zone. An authoriser that runs cheap checks first, fraud inside 50 ms, and the hold last, as one ledger transaction keyed by the network's identifiers. An outbox for events so notifications never slow a purchase. Clearing files matched to holds, net settlement, and a daily three-way reconciliation. Stand-in parameters set in advance as a product decision.",
     "I'll do the sums, draw the authorisation path with its time budget, go deep on the hold and idempotency, then clearing and money, then failure and security. I'll finish with the decision I think matters most for a firm like Tide: whether to keep the processor or connect to the scheme ourselves, and how to move without anyone noticing.",
   ],
@@ -224,7 +224,7 @@ export const extras: Extras = {
     ],
 
     cost: [
-      "Volume: about 1.2 million authorisations a day is about 440 million a year, plus as many clearing records. Infrastructure for 135 a second at peak, built for 1,000, is small: a few services in two regions and one ledger primary with a synchronous standby.",
+      "Volume: about 1.2 million authorisations a day is about 440 million a year, plus as many clearing records. Infrastructure for 135 messages a second at peak, built for 1,000, is small: a few services in two regions and one ledger primary with a synchronous standby.",
       "Processor fees are the line that drives the build-or-buy case. Assumption: if all-in processing costs a penny an authorisation, that is about £4.4 million a year; at half a penny, about £2.2 million. The real number is in the contract and is the first thing I would ask for.",
       "Own connection, assumption: a standing team of 12 to 20 engineers across gateway, HSM and keys, clearing and on-call, at a loaded £100,000 to £130,000 each is roughly £1.5 to £2.5 million a year. Add two data centre presences with network circuits, payment HSMs in each, an annual PCI assessment, and scheme certification. It pays only if fees are near the top of that range or the processor costs us in outages and product.",
       "Monzo's case was outages, not fees. Ours may be different; I would show both columns.",
@@ -261,7 +261,7 @@ export const extras: Extras = {
       minutes: 3,
       prompt: "Do the sums that decide the architecture, and say what they tell you about where the difficulty is.",
       cover: [
-        "About 1.2 million authorisations a day, 14 a second on average, about 135 at the yearly peak; build for 1,000.",
+        "About 1.2 million authorisations a day, 14 a second on average, about 135 messages a second at the yearly peak; build for 1,000.",
         "Under 100 ledger writes a second at peak; clearing in four to six files a day.",
         "Conclusion: not a throughput problem; latency, correctness and availability.",
       ],
