@@ -5,6 +5,11 @@ main:has(> .design) {
   max-width: 1600px;
 }
 
+/* A zero with a slash, so 0 and O never mix in the numbers. */
+.design {
+  font-variant-numeric: slashed-zero;
+}
+
 .hld {
   overflow-anchor: none;
   margin-top: 16px;
@@ -109,8 +114,9 @@ main:has(> .design) {
   outline-color: #fff;
 }
 
-/* On a short screen only the step's title and how it travels show until More is pressed. */
-.hld.brief:not(.more) .hld-readout:not(.hld-measure) .hld-step-text {
+/* On a short screen only the step's title, its first sentence and how it travels show until More is pressed. */
+.hld.brief:not(.more) .hld-readout:not(.hld-measure) .hld-step-rest,
+.hld-measure.first-only .hld-step-rest {
   display: none;
 }
 
@@ -161,6 +167,11 @@ main:has(> .design) {
   cursor: default;
 }
 
+/* Back to the start means nothing at the start: hidden there, keeping its place so the row does not shift. */
+.hld-restart:disabled {
+  visibility: hidden;
+}
+
 .hld-play {
   min-width: 136px;
   padding: 0 16px 0 12px;
@@ -174,7 +185,7 @@ main:has(> .design) {
   color: var(--ink-2);
   min-width: 9ch;
   white-space: nowrap;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums slashed-zero;
 }
 
 .hld-count-short {
@@ -229,7 +240,7 @@ main:has(> .design) {
   border-radius: 7px;
   background: none;
   font: 650 0.9rem var(--sans);
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums slashed-zero;
   color: var(--ink-2);
   cursor: pointer;
 }
@@ -782,6 +793,12 @@ main:has(> .design) {
   fill: #eef1f6;
 }
 
+/* An input or a shared service also carries a bar down its left side: the kind does not rest on a pale fill alone. */
+.hld-bar {
+  fill: var(--ink-2);
+  pointer-events: none;
+}
+
 .kind-outside .hld-box {
   fill: var(--surface);
   stroke-dasharray: 6 5;
@@ -851,10 +868,12 @@ main:has(> .design) {
   stroke-width: 2.5;
 }
 
+/* A paper-coloured halo about 2.5px wide at any scale (see --halo), so the label stays legible where it passes over a thin line. */
 .hld-pill rect {
   fill: var(--key);
-  stroke: #fff;
-  stroke-width: 2;
+  stroke: var(--surface);
+  stroke-width: var(--halo, 6);
+  paint-order: stroke;
 }
 
 .hld-pill text {
@@ -872,6 +891,7 @@ main:has(> .design) {
 .hld-token.branch .hld-pill rect {
   fill: #fff;
   stroke: var(--key);
+  stroke-width: 2;
 }
 
 .hld-token.branch .hld-pill text {
@@ -1292,7 +1312,8 @@ main:has(> .design) {
   white-space: nowrap;
 }
 
-/* In the glossary the links are a quiet second line, in regular weight. */
+/* In the glossary and the tables the links are regular weight: a column of bold names reads as shouting. */
+.hld-table .hld-where,
 .hld-gloss-links .hld-where,
 .hld-gloss-links .hld-struct {
   font-weight: 400;
@@ -1326,6 +1347,7 @@ main:has(> .design) {
  */
 .hld-detail-head h3:focus,
 .hld-gloss-row:focus,
+.hld-glossary dt:focus,
 .hld-missing:focus,
 .hld-step-title:focus {
   outline: none;
@@ -1336,7 +1358,8 @@ main:has(> .design) {
   box-shadow: -10px 0 0 -6px var(--path);
 }
 
-.hld-gloss-row:focus-visible {
+.hld-gloss-row:focus-visible,
+.hld-gloss-row:has(dt:focus-visible) {
   box-shadow: inset 4px 0 0 var(--path);
 }
 
@@ -1737,54 +1760,180 @@ main:has(> .design) {
   }
 }
 
-/* Windows high contrast: the ring, the token and the lit lines and boxes in system colours. */
+/*
+ * Windows high contrast: every fill becomes the canvas and every outline and word
+ * the text colour, so nothing is left as near-white on white. The lit boxes,
+ * lines and chips of a tour step, the ring and the token are in the highlight
+ * colour; a lit box is marked by a heavier outline, not a fill. The rules carry
+ * !important so they beat the kind, lit and sample rules whatever their weight.
+ */
 @media (forced-colors: active) {
   .hld-ring {
-    stroke: Highlight;
+    stroke: Highlight !important;
   }
 
   .hld-dot,
   .hld-pill rect {
-    fill: Highlight;
-    stroke: Canvas;
+    fill: Highlight !important;
+    stroke: Canvas !important;
   }
 
   .hld-pill text {
-    fill: HighlightText;
+    fill: HighlightText !important;
+  }
+
+  .hld-token.branch .hld-dot,
+  .hld-token.branch .hld-pill rect {
+    fill: Canvas !important;
+    stroke: Highlight !important;
+  }
+
+  .hld-token.branch .hld-pill text {
+    fill: CanvasText !important;
   }
 
   .hld-tether {
-    stroke: Highlight;
+    stroke: Highlight !important;
+  }
+
+  .hld-node .hld-box,
+  .hld-node.lit .hld-box,
+  .hld-node.selected .hld-box,
+  .hld-node.sample .hld-box,
+  .hld-frame,
+  .hld-shelf,
+  .hld-cap,
+  .hld-chip-box,
+  .hld-chip.mode-async .hld-chip-box,
+  .hld-chip.mode-local .hld-chip-box,
+  .hld-chip.cold .hld-chip-box {
+    fill: Canvas !important;
   }
 
   .hld-flow,
   .hld-box,
   .hld-cap,
   .hld-shelf,
-  .hld-chip-box {
-    stroke: CanvasText;
+  .hld-frame,
+  .hld-leader,
+  .hld-chip-box,
+  .hld-node.quiet .hld-box,
+  .hld-node.quiet .hld-cap,
+  .hld-node.quiet .hld-shelf {
+    stroke: CanvasText !important;
   }
 
-  .hld-box,
-  .hld-chip-box {
-    fill: Canvas;
+  .hld-bar {
+    fill: CanvasText !important;
   }
 
-  .hld-svg text {
-    fill: CanvasText;
+  .hld-svg text,
+  .hld-chip text,
+  .hld-chip.mode-async text {
+    fill: CanvasText !important;
   }
 
-  .hld-tip {
-    fill: CanvasText;
+  .hld-flow-label {
+    stroke: Canvas !important;
+  }
+
+  .hld-tip,
+  .hld-tip.quiet,
+  .hld-tip.linked {
+    fill: CanvasText !important;
   }
 
   .hld-flow.live,
-  .hld-node.lit .hld-box,
-  .hld-chip.live .hld-chip-box {
-    stroke: Highlight;
+  .hld-chip.live .hld-chip-box,
+  .hld-node.lit .hld-cap {
+    stroke: Highlight !important;
+  }
+
+  .hld-node.lit .hld-box {
+    stroke: Highlight !important;
+    stroke-width: 4.5 !important;
   }
 
   .hld-tip.live {
-    fill: Highlight;
+    fill: Highlight !important;
+  }
+
+  .hld-svg {
+    forced-color-adjust: none;
+  }
+}
+
+/*
+ * A very wide screen: the diagram stops at its largest scale, so the key moves
+ * into the margin beside it, in one column, and the stage gets shorter.
+ */
+@media (min-width: 1800px) {
+  .hld {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 272px;
+    align-items: start;
+  }
+
+  .hld-head,
+  .hld-panbar {
+    grid-column: 1 / -1;
+  }
+
+  .hld-pan {
+    grid-column: 1;
+  }
+
+  .hld-legend {
+    grid-column: 2;
+    grid-row: 2 / span 2;
+    align-self: stretch;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    row-gap: 2px;
+    padding: 14px 16px;
+    border-top: 0;
+    border-left: 1px solid var(--rule);
+  }
+
+  .hld-key-notes dl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .hld-key-notes dd {
+    margin-bottom: 6px;
+  }
+}
+
+/*
+ * A phone on its side: the readout (title, first sentence, how it travels) and
+ * the transport sit side by side, so together they stay under 40 per cent of
+ * the height and the readout can stick above the diagram for the whole tour.
+ */
+@media (max-height: 500px) and (min-width: 600px) and (max-width: 1099px) {
+  .hld-head {
+    display: flex;
+    align-items: stretch;
+  }
+
+  .hld-readout {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .hld-transport {
+    flex: none;
+    width: 236px;
+    flex-wrap: wrap;
+    align-content: center;
+    justify-content: flex-start;
+    gap: 4px 6px;
+    border-bottom: 0;
+    border-left: 1px solid var(--rule);
+  }
+
+  .hld-speed-cycle {
+    margin-left: 0;
   }
 }

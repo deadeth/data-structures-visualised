@@ -93,6 +93,9 @@ export interface Flow {
   alts: string[];
 }
 
+/** Which side of its line the token's label sits on, for a leg where the place worked out from the diagram reads poorly. */
+export type PillSide = 'above' | 'below' | 'left' | 'right';
+
 export interface TourStep {
   title: string;
   text: string;
@@ -102,8 +105,10 @@ export interface TourStep {
   path: string[];
   /** What the token is carrying on each leg of `path`, in order. A missing entry repeats the one before. */
   labels: string[];
+  /** Where the token's label sits on each leg of `path`, when set by hand; otherwise it is worked out once from the leg's whole path. */
+  pill?: (PillSide | undefined)[];
   /** A side trip that leaves from where the main path ends: a second token travels it, so the reader sees the split. */
-  branch?: { path: string[]; label: string };
+  branch?: { path: string[]; label: string; pill?: PillSide };
 }
 
 export interface Design {

@@ -3,6 +3,7 @@ import '@fontsource-variable/atkinson-hyperlegible-mono';
 import './styles.css';
 import './ui/search.css';
 import { CATALOG, GROUPS, entry, isReady } from './catalog';
+import { DESIGNS, design as designEntry } from './designs';
 import { h } from './core/dom';
 import { mountCompare } from './ui/compare';
 import { mountHome } from './ui/home';
@@ -33,7 +34,7 @@ for (const group of GROUPS) {
   nav.append(navGroup(group, items));
 }
 nav.append(navGroup('Compare', [h('li', null, link('/compare', 'Head to head', 'Run one workload through every structure'))]));
-nav.append(navGroup('System designs', [h('li', null, link('/d/web-crawler', 'Distributed web crawler', 'An interactive high-level design with a guided tour'))]));
+nav.append(navGroup('System designs', DESIGNS.map((d) => h('li', null, link(`/d/${d.id}`, d.name, `${d.hint}: an interactive design with a guided tour`)))));
 
 const menu = h('details.menu', null, h('summary', null, 'All structures'), nav);
 
@@ -177,7 +178,8 @@ async function route(typing = false): Promise<void> {
 
   let mount: Promise<() => void>;
   const m = /^\/s\/([a-z0-9-]+)$/.exec(path);
-  const design = /^\/d\/web-crawler(?:\/([cfgt])\/([a-z0-9-]+))?$/.exec(path);
+  const dm = /^\/d\/([a-z0-9-]+)(?:\/([cfgt])\/([a-z0-9-]+))?$/.exec(path);
+  const chosen = dm ? designEntry(dm[1]) : undefined;
   if (path === '/') {
     document.title = 'Data structures, visualised';
     mount = mountHome(main);
@@ -189,10 +191,10 @@ async function route(typing = false): Promise<void> {
     const q = decodeURIComponent(found[1]);
     // Coming back to a results page (not typing into the box), focus returns to the result that was followed.
     mount = import('./ui/search').then((s) => s.mountSearch(main, q, !typing));
-  } else if (design) {
-    document.title = 'Distributed web crawler | Data structures, visualised';
-    const open = design[1] ? { kind: design[1], id: design[2] } : undefined;
-    mount = Promise.all([import('./ui/design-page'), import('./designs/web-crawler')]).then(([page, d]) => page.mountDesign(main, d.webCrawler, open));
+  } else if (dm && chosen) {
+    document.title = `${chosen.name} | Data structures, visualised`;
+    const open = dm[2] ? { kind: dm[2], id: dm[3] } : undefined;
+    mount = Promise.all([import('./ui/design-page'), chosen.load()]).then(([page, d]) => page.mountDesign(main, d, open));
   } else if (m && entry(m[1]) && isReady(m[1])) {
     document.title = `${entry(m[1])!.name} | Data structures, visualised`;
     mount = mountStructure(main, m[1]);
