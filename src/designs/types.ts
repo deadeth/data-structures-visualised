@@ -39,13 +39,23 @@ export interface Component {
 /** How two components talk. Each mode has its own line style and chip, explained in the legend. */
 export type Mode = 'local' | 'call' | 'async' | 'write' | 'external';
 
-export const MODES: { id: Mode; label: string; note: string }[] = [
-  { id: 'local', label: 'In-process call', note: 'Same machine, no network. Cannot be lost, cannot be slow.' },
-  { id: 'call', label: 'Network call', note: 'Request and reply. The caller waits, so it needs a timeout.' },
-  { id: 'async', label: 'Message log', note: 'Asynchronous. The sender does not wait and the reader sets its own pace.' },
-  { id: 'write', label: 'Storage write', note: 'Durable once acknowledged. Written so that doing it twice is harmless.' },
-  { id: 'external', label: 'Public internet', note: "Someone else's server. No guarantees at all." },
+export const MODES: { id: Mode; label: string; about: string; note: string }[] = [
+  { id: 'local', label: 'In-process call', about: 'About in-process calls', note: 'Same machine, no network. Cannot be lost, cannot be slow. Drawn as a thin arrow with no chip.' },
+  { id: 'call', label: 'Network call', about: 'About network calls', note: 'Request and reply. The caller waits, so it needs a timeout.' },
+  { id: 'async', label: 'Message log', about: 'About message logs', note: 'Asynchronous. The sender does not wait and the reader sets its own pace.' },
+  { id: 'write', label: 'Storage write', about: 'About storage writes', note: 'Durable once acknowledged. Written so that doing it twice is harmless.' },
+  { id: 'external', label: 'Public internet', about: 'About the public internet', note: "Someone else's server. No guarantees at all." },
 ];
+
+/** The answer that comes back on the same line, when one line carries a request and its reply. */
+export interface Reply {
+  /** Its own id, so a link or a tour step can name this direction. */
+  id: string;
+  /** What travels back. */
+  label: string;
+  how: string;
+  delivery: string;
+}
 
 export interface Flow {
   id: string;
@@ -63,10 +73,15 @@ export interface Flow {
   mode: Mode;
   /** The method, in a few words: "in-process", "Kafka", "HTTPS". Drawn on the line as a chip. */
   via: string;
-  /** Where along the path the chip sits, 0 to 1. Every connection has a chip, so every one can be opened from the keyboard. */
+  /**
+   * Where along the path the chip sits, 0 to 1. Every connection has a chip, so every one can be opened from the
+   * keyboard; an in-process chip is only drawn while the line is live, pointed at, focused or open.
+   */
   chip?: number;
-  /** Off the hot path: used for recovery or reprocessing, not on every fetch. Drawn lighter. */
+  /** Off the hot path: used for recovery or reprocessing, not on every fetch. Hidden until asked for. */
   cold?: boolean;
+  /** The reply on the same line: one two-way line, with an arrowhead at each end. */
+  reply?: Reply;
   /** One or two sentences: the call or message, and what it carries. */
   how: string;
   /** What is promised about delivery, and what makes that safe. */
@@ -80,12 +95,12 @@ export interface TourStep {
   text: string;
   /** Components lit for this step. */
   focus: string[];
-  /** Flows the URL travels along, in order. Prefix an id with "<" to travel it backwards. */
+  /** Flows the URL travels along, in order. Prefix an id with "<" to travel it backwards; a reply's id travels its line backwards. */
   path: string[];
-  /** What the token is carrying at this point. */
-  token?: string;
-  /** What it carries on the way back: on any leg that returns to the component the trip started from ("IP?" goes out, "IP" comes back). */
-  back?: string;
+  /** What the token is carrying on each leg of `path`, in order. A missing entry repeats the one before. */
+  labels: string[];
+  /** A side trip that leaves from where the main path ends: a second token travels it, so the reader sees the split. */
+  branch?: { path: string[]; label: string };
 }
 
 export interface Design {
@@ -98,8 +113,8 @@ export interface Design {
   restTouch: string;
   /** The diagram's coordinate space. */
   size: { w: number; h: number };
-  /** Dashed rectangle around the components that make up one node. Its label sits inside the top-left corner. */
-  frame: { x: number; y: number; w: number; h: number; label: string };
+  /** Dashed rectangle around the components that make up one node. Its label sits inside the top-left corner, its note inside the top-right. */
+  frame: { x: number; y: number; w: number; h: number; label: string; note?: string };
   components: Component[];
   flows: Flow[];
   tour: TourStep[];

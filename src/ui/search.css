@@ -36,13 +36,34 @@
   color: var(--ink-2);
 }
 
+.search-groups {
+  display: grid;
+  gap: 30px;
+  margin-top: 22px;
+  max-width: 82ch;
+}
+
+/* One subhead per place a result can live: the glossary, the system design, the data structures. */
+.search-group-head {
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--ink);
+  font-size: 1.3rem;
+  font-weight: 750;
+}
+
+.search-group-count {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
 .search-results {
   list-style: none;
-  margin: 22px 0 0;
+  margin: 0;
   padding: 0;
   display: grid;
   gap: 14px;
-  max-width: 82ch;
 }
 
 .search-results li {
@@ -53,12 +74,33 @@
 }
 
 .search-kind {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--ink-2);
+  line-height: 1;
 }
 
-.search-results h2 {
+/* What kind of entry it is, as a small pill. */
+.search-pill {
+  display: inline-block;
+  padding: 3px 10px 4px;
+  border: 1.5px solid var(--ink-2);
+  border-radius: 12px;
+  font-size: 0.86rem;
+  font-weight: 650;
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.search-pill.kind-structure {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+
+.search-pill.kind-term {
+  border-color: var(--path);
+  background: var(--path-soft);
+}
+
+.search-results h3 {
   margin-top: 2px;
   font-size: 1.18rem;
   font-weight: 750;
