@@ -140,6 +140,7 @@ function lineSample(mode: string, cold = false, chip = true): SVGSVGElement {
   if (chip) {
     const g = el('g', {}, `hld-chip mode-${mode}${cold ? ' cold' : ''} sample`);
     g.append(el('rect', {}, 'hld-chip-box'));
+    if (mode === 'async') g.append(el('path', {}, 'hld-chip-glyph'));
     s2.append(g);
   } else s2.append(el('path', {}, 'hld-tip'));
   sizeSample(s2, 0.85);
@@ -157,6 +158,9 @@ function sizeSample(s2: SVGSVGElement, k: number): void {
     extra.setAttribute('transform', `translate(${(14 / k).toFixed(2)},${m.toFixed(2)})`);
     const r = extra.firstElementChild as SVGRectElement;
     for (const [a, v] of [['x', -12], ['y', -8], ['width', 24], ['height', 16], ['rx', 8]] as const) r.setAttribute(a, (v / k).toFixed(2));
+    const gl = r.nextElementSibling;
+    // The log glyph, three bars, at the size the diagram draws it.
+    if (gl) gl.setAttribute('d', [-5, -1.1, 2.8].map((dx) => `M${(dx / k).toFixed(2)},${(-3.5 / k).toFixed(2)} h${(2.2 / k).toFixed(2)} v${(7 / k).toFixed(2)} h${(-2.2 / k).toFixed(2)} z`).join(' '));
   } else extra.setAttribute('d', `M${(L - 10 / k).toFixed(2)},${(m - 5 / k).toFixed(2)} L${(L - 2 / k).toFixed(2)},${m.toFixed(2)} L${(L - 10 / k).toFixed(2)},${(m + 5 / k).toFixed(2)} z`);
 }
 function boxSample(kind: string): SVGSVGElement {
@@ -232,7 +236,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   svg.style.setProperty('--hld-h', String(H));
   const defs = el('defs');
   // Markers scale with the stroke: a live or selected line (about 3 units against 1.6) gets a smaller marker, so its head is about 1.4 times the usual one.
-  for (const [id, cls, size] of [['hld-arrow', 'hld-tip', 7], ['hld-arrow-live', 'hld-tip live', 5.2], ['hld-arrow-linked', 'hld-tip linked', 5.2], ['hld-arrow-quiet', 'hld-tip quiet', 7]] as const) {
+  for (const [id, cls, size] of [['hld-arrow', 'hld-tip', 7], ['hld-arrow-live', 'hld-tip live', 5.2], ['hld-arrow-linked', 'hld-tip linked', 5.2], ['hld-arrow-picked', 'hld-tip linked', 4.4], ['hld-arrow-failed', 'hld-tip failed', 5.6], ['hld-arrow-quiet', 'hld-tip quiet', 7]] as const) {
     const m = el('marker', { id, viewBox: '0 0 10 10', refX: 8.5, refY: 5, markerWidth: size, markerHeight: size, orient: 'auto-start-reverse' });
     m.append(el('path', { d: 'M0,0 L10,5 L0,10 z' }, cls));
     defs.append(m);
@@ -254,10 +258,17 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     chipRect: SVGRectElement;
     ring: SVGRectElement;
     chipText: SVGTextElement;
+    /** A message log's chip carries a small log glyph before its words. */
+    glyph: SVGPathElement | null;
+    /** The open connection's chip: a band in the focus colour round it. */
+    halo: SVGRectElement;
     label: SVGTextElement;
+    /** A paper-coloured plate behind a purpose label, so it reads where it crosses a line or a frame. */
+    labelBg: SVGRectElement;
     leader: SVGLineElement;
   }
   const flowEls = new Map<string, FlowEl>();
+  const lineIdOf = new Map<SVGPathElement, string>();
   const flowLayer = el('g');
   const hitLayer = el('g');
   // Purpose labels repeat what the chip, the detail and the table say: hidden from screen readers.
@@ -282,18 +293,21 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     );
     chip.dataset.flow = fl.id;
     const ring = el('rect', { y: -CHIP_H / 2 - 5, height: CHIP_H + 10, rx: CHIP_H / 2 + 5 }, 'hld-ring');
+    const halo = el('rect', { y: -CHIP_H / 2 - 4, height: CHIP_H + 8, rx: CHIP_H / 2 + 4 }, 'hld-halo');
     const chipRect = el('rect', { y: -CHIP_H / 2, height: CHIP_H, rx: CHIP_H / 2 }, 'hld-chip-box');
     const chipText = el('text', { y: 4.65, 'text-anchor': 'middle' });
     chipText.textContent = fl.via;
-    chip.append(ring, chipRect, chipText);
+    const glyph = fl.mode === 'async' ? el('path', {}, 'hld-chip-glyph') : null;
+    chip.append(halo, ring, chipRect, ...(glyph ? [glyph] : []), chipText);
     chip.addEventListener('click', (e) => pickFlow(fl.id, e.detail === 0 ? 'key' : 'pointer', chip));
     chipLayer.append(chip);
     items.push(chip);
     const leader = el('line', {}, 'hld-leader');
+    const labelBg = el('rect', { rx: 5 }, 'hld-label-bg');
     const label = el('text', {}, 'hld-flow-label');
     label.textContent = fl.reply ? `${fl.label} / ${fl.reply.label}` : fl.label ?? fl.via;
     label.dataset.flow = fl.id;
-    labelLayer.append(leader, label);
+    labelLayer.append(leader, labelBg, label);
     // Pointing at a line or its chip, or focusing the chip, shows its chip and what travels on it.
     // Only a pointer that moves counts: a line scrolled under a resting pointer does not light up.
     const peek = (on: boolean) => {
@@ -309,7 +323,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     }
     chip.addEventListener('focus', () => peek(true));
     chip.addEventListener('blur', () => peek(false));
-    flowEls.set(fl.id, { fl, path, hit, chip, chipRect, ring, chipText, label, leader });
+    flowEls.set(fl.id, { fl, path, hit, chip, chipRect, ring, chipText, glyph, halo, label, labelBg, leader });
+    lineIdOf.set(path, fl.id);
   }
   svg.append(flowLayer, hitLayer, frameLabel, frameNote);
 
@@ -410,8 +425,6 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   const stepVia = h('p.hld-step-via', null);
   const moreBtn = h('button.hld-more', { type: 'button', 'aria-expanded': 'false', onclick: () => setMore(!moreOpen) }, 'More') as HTMLButtonElement;
   const readout = h('div.hld-readout', null, h('div.hld-title-row', null, stepTitle, moreBtn), stepText, stepVia);
-  // A hidden copy, laid out at the same width, finds the tallest step so the readout never changes height mid-tour.
-  const measure = h('div.hld-readout.hld-measure', { 'aria-hidden': 'true' }, h('h2.hld-step-title'), h('p.hld-step-text'), h('p.hld-step-via'));
 
   const playLabel = h('span.hld-play-text', null, 'Play the tour');
   const btn = (name: keyof typeof ICON, label: string, keys: string, fn: () => void, cls = '') =>
@@ -439,7 +452,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   // The tour's keys, on show where there is room and a keyboard; they follow the site-wide shortcut switch.
   const keyHints = h('p.hld-keys', { 'aria-hidden': 'true' }, h('kbd', null, 'Space'), ' play ', h('kbd', null, '←'), h('kbd', null, '→'), ' step ', h('kbd', null, 'R'), ' replay');
   const transport = h('div.hld-transport', null, h('div.hld-nav', null, restartBtn, backBtn, playBtn, nextBtn), counter, exploreBtn, keyHints, speedGroup, speedCycle);
-  const head = h('div.hld-head', null, readout, transport, measure);
+  const head = h('div.hld-head', null, readout, transport);
   /** Shortcut hints follow the site-wide switch. */
   function syncKeys(): void {
     const on = shortcutsOn();
@@ -583,7 +596,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       h(
         'dl.hld-glossary', null,
         terms.map((g) => {
-          const see: HTMLButtonElement | null = g.where ? h('button.hld-where', { type: 'button', onclick: () => select(g.where!, 'text', see!) }, `See ${nameOf(g.where)}`, h('span.visually-hidden', null, `, for ${g.term}`)) : null;
+          // The name starts with the words on the button, and says which term it is for, with no stray space before the comma.
+          const see: HTMLButtonElement | null = g.where ? h('button.hld-where', { type: 'button', 'aria-label': `See ${nameOf(g.where)}, for ${g.term}`, onclick: () => select(g.where!, 'text', see!) }, `See ${nameOf(g.where)}`) : null;
           const links = [see, g.see ? h('a.hld-struct', { href: `#/s/${g.see.id}` }, `${g.see.label}, step by step`) : null].filter(Boolean) as HTMLElement[];
           return h(
             'div.hld-gloss-row', { id: `term-${slug(g.term)}`, 'data-letter': letterOf(g.term) },
@@ -636,6 +650,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   let reserve = 0;
   /** The same for the title and the "Travels by" line alone. */
   let briefReserve = 0;
+  /** The same for the title alone. */
+  let titleReserve = 0;
   /** The box or chip that holds the diagram's one tab stop. */
   let rove: SVGGElement = nodeEls.get(design.tour[0]?.focus[0] ?? design.components[0].id) ?? items[0];
   rove.setAttribute('tabindex', '0');
@@ -669,14 +685,24 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   styleWatch?.observe(document.head, { childList: true });
   const chipBox = new Map<string, Box>();
   for (const fe of flowEls.values()) {
-    const { fl, path, chip, chipRect, ring, chipText } = fe;
+    const { fl, path, chip, chipRect, ring, chipText, glyph, halo } = fe;
     const p = path.getPointAtLength(path.getTotalLength() * (fl.chip ?? 0.5));
     // Room for wider letter spacing (15 per cent more than the text needs), and the words 6px clear of the rounded ends.
-    const w = Math.max(52, chipText.getComputedTextLength() * 1.15 + 24);
+    // A log's glyph takes 18 units before the words.
+    const G = glyph ? 18 : 0;
+    const w = Math.max(52, chipText.getComputedTextLength() * 1.15 + 24 + G);
     chipRect.setAttribute('x', String(-w / 2));
     chipRect.setAttribute('width', String(w));
     ring.setAttribute('x', String(-w / 2 - 5));
     ring.setAttribute('width', String(w + 10));
+    halo.setAttribute('x', String(-w / 2 - 4));
+    halo.setAttribute('width', String(w + 8));
+    if (glyph) {
+      chipText.setAttribute('x', String(G / 2));
+      const gx = -w / 2 + 13;
+      // Three short bars: messages in a row, as the log box draws them along its base.
+      glyph.setAttribute('d', [0, 4.8, 9.6].map((dx) => `M${(gx + dx).toFixed(1)},-5.5 h3 v11 h-3 z`).join(' '));
+    }
     chip.setAttribute('transform', `translate(${p.x.toFixed(1)},${p.y.toFixed(1)})`);
     chipBox.set(fl.id, { x: p.x - w / 2, y: p.y - CHIP_H / 2, w, h: CHIP_H });
   }
@@ -714,7 +740,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     if (selected) for (const f of design.flows) if (f.from === selected || f.to === selected) need.add(f.id);
     return need;
   }
-  const lineShown = (fl: Flow, need: Set<string>) => !fl.cold || showCold || need.has(fl.id);
+  /** Recovery lines show when the reader asks for them, or on a step that is about recovery. */
+  const coldOn = (i: number) => showCold || (i >= 0 && !!design.tour[i]?.recovery);
+  const lineShown = (fl: Flow, need: Set<string>) => !fl.cold || coldOn(lastLight ? step : -1) || need.has(fl.id);
   function chipShown(fl: Flow, need: Set<string>, live: Set<string>): boolean {
     if (!lineShown(fl, need)) return false;
     if (!quietChip(fl)) return true;
@@ -747,6 +775,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       const asc = -tb.y;
       const L = fe.path.getTotalLength();
       let best: { x: number; y: number; box: Box; leader: [Pt, Pt] | null; score: number } | null = null;
+      // A label on its own (the open line, or the one pointed at) must show: if nowhere is clear of every line, it may
+      // cross a line or the frame, on its paper plate, and sit a little nearer the chips.
+      const own = new Set(samples.get(id)!);
+      for (const strict of ids.length === 1 ? [true, false] : [true]) {
+      if (best) break;
       for (const t of ANCHORS) {
         const a = fe.path.getPointAtLength(L * t);
         const a1 = fe.path.getPointAtLength(Math.max(0, L * t - 4));
@@ -769,15 +802,16 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
             if (best && score >= best.score) continue;
             if (box.x < 2 || box.y < 2 || box.x + box.w > W - 2 || box.y + box.h > H - 2) continue;
             if (obstacles.some((o) => gapOf(o, box) < LABEL_CLEAR)) continue;
-            if (chipObs.some((o) => gapOf(o, box) < LABEL_CHIP_CLEAR)) continue;
+            if (chipObs.some((o) => gapOf(o, box) < (strict ? LABEL_CHIP_CLEAR : 5))) continue;
             if ([...out.values()].some((o) => gapOf(o.box, box) < LABEL_CLEAR)) continue;
-            if (pts.some((p) => ptGap(p, box) < LABEL_LINE_CLEAR)) continue;
+            if (strict ? pts.some((p) => ptGap(p, box) < LABEL_LINE_CLEAR) : [...own].some((p) => ptGap(p, box) < 4)) continue;
             const edge = { x: a.x + side * n.x * d + tx * slide, y: a.y + side * n.y * d + ty * slide };
             // Close to its line a label needs no leader (a short stub would read as a dash in front of the words); further out, a leader with a gap at each end.
             const lead: [Pt, Pt] | null = d >= 20 ? [{ x: a.x + side * n.x * 4, y: a.y + side * n.y * 4 }, { x: edge.x - side * n.x * 3, y: edge.y - side * n.y * 3 }] : null;
             best = { x: cx, y: cy - lh / 2 + asc, box, leader: lead, score };
           }
         }
+      }
       }
       // Nowhere clear: the label stays off the picture. The detail's "Talks to" list has it.
       if (best) out.set(id, best);
@@ -934,7 +968,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
               ]
             : [
                 fl.label ? h('h4', null, 'What travels') : null,
-                fl.label ? h('p.hld-first', null, cap(fl.label)) : null,
+                fl.label ? h('p.hld-first', null, cap(fl.travels ?? fl.label)) : null,
                 h('h4', null, 'How they talk'), h(`p${fl.label ? '' : '.hld-first'}`, null, fl.how),
                 h('h4', null, 'What is promised'), h('p', null, fl.delivery),
               ]),
@@ -1080,6 +1114,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const live = new Set(legs.map((l) => l.fl.id));
     const need = needed(light);
     const chipsOn = new Set<string>();
+    // A connection that fails on this step: red and dashed, for the whole step.
+    const failed = new Set(light && step >= 0 ? design.tour[step].failed ?? [] : []);
+    const pickedFl = picked ? flowById.get(picked) ?? null : null;
+    // The open connection's two boxes are outlined.
+    for (const [nid, g] of nodeEls) g.classList.toggle('end', !!pickedFl && (pickedFl.from === nid || pickedFl.to === nid));
     for (const { fl, path, hit, chip } of flowEls.values()) {
       const linked = selected != null && (fl.from === selected || fl.to === selected);
       const on = fl.id === picked;
@@ -1087,12 +1126,17 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       const shown = lineShown(fl, need);
       for (const e of [path, hit, chip]) e.classList.toggle('need', shown);
       path.classList.toggle('live', isLive);
-      path.classList.toggle('linked', (linked || on) && !isLive);
+      // An open box's lines, or the open line, are drawn in ink even on the tour: the selection wins over the step.
+      path.classList.toggle('linked', linked || on);
+      path.classList.toggle('picked', on);
+      path.classList.toggle('failed', failed.has(fl.id));
       path.classList.toggle('peek', peeking === fl.id && !isLive);
       const cs = chipShown(fl, need, live);
       if (cs) chipsOn.add(fl.id);
       chip.classList.toggle('show', cs);
       chip.classList.toggle('live', isLive);
+      chip.classList.toggle('failed', failed.has(fl.id));
+      chip.classList.toggle('peek', peeking === fl.id);
       chip.classList.toggle('picked', on);
       chip.setAttribute('aria-expanded', String(on));
       // A recovery line that hides while its chip has focus hands focus to the box it starts from.
@@ -1109,12 +1153,14 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const lines = new Set(design.flows.filter((f) => lineShown(f, need)).map((f) => f.id));
     const spots = want.length ? placeLabels(want, lines, chipsOn) : new Map();
     labelSpot.clear();
-    for (const { fl, label, leader } of flowEls.values()) {
+    for (const { fl, label, labelBg, leader } of flowEls.values()) {
       const sp = spots.get(fl.id);
       label.classList.toggle('on', !!sp);
+      labelBg.classList.toggle('on', !!sp);
       leader.classList.toggle('on', !!sp?.leader);
       if (!sp) continue;
       labelSpot.set(fl.id, sp);
+      for (const [a, v] of [['x', sp.box.x - 3], ['y', sp.box.y - 1], ['width', sp.box.w + 6], ['height', sp.box.h + 2]] as const) labelBg.setAttribute(a, v.toFixed(1));
       label.setAttribute('x', sp.x.toFixed(1));
       label.setAttribute('y', sp.y.toFixed(1));
       label.setAttribute('text-anchor', 'middle');
@@ -1192,12 +1238,15 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const inTour = step >= 0;
     const limit = innerHeight * HEAD_SHARE;
     const tH = transport.offsetHeight;
-    const brief = inTour && reserve + tH > limit;
+    // Very narrow (a 320px phone): the readout shows only the step's title until More is pressed, so the diagram keeps most of the screen.
+    const tiny = inTour && small() && innerWidth < 360;
+    const brief = inTour && (tiny || reserve + tH > limit);
     stage.classList.toggle('brief', brief);
+    stage.classList.toggle('tiny', tiny);
     if (!brief && moreOpen) setMore(false, true);
     if (!brief && document.activeElement === moreBtn) playBtn.focus({ preventScroll: true });
     moreBtn.hidden = !brief;
-    readout.style.minHeight = inTour && reserve ? `${brief ? (moreOpen ? 0 : briefReserve) : reserve}px` : '';
+    readout.style.minHeight = inTour && reserve ? `${brief ? (moreOpen ? 0 : tiny ? titleReserve : briefReserve) : reserve}px` : '';
     const tall = inTour && (moreOpen || head.offsetHeight > limit + 1);
     stage.classList.toggle('unstick', tall);
     document.documentElement.style.scrollPaddingTop = inTour && !tall && !stage.classList.contains('reading') ? `${head.offsetHeight + 8}px` : '';
@@ -1232,29 +1281,61 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   let measuredAt = '';
   function measureReserve(): void {
     // Only a change of width (or of the type size) changes the tallest step: skip the work otherwise.
-    const key = `${readout.clientWidth}|${getComputedStyle(stepText).fontSize}|${innerHeight}`;
+    const key = `${head.clientWidth}|${getComputedStyle(stepText).fontSize}|${innerHeight}|${innerWidth}`;
     if (key === measuredAt) {
       syncHead();
       return;
     }
     measuredAt = key;
-    const [t, p, v] = Array.from(measure.children) as HTMLElement[];
-    measure.style.width = `${readout.clientWidth}px`;
-    let most = 0;
-    let mostBrief = 0;
-    for (const s of design.tour) {
-      t.textContent = s.title;
-      p.replaceChildren(...stepWords(s.text));
-      v.replaceChildren(...viaLine(s));
-      measure.classList.remove('first-only');
-      most = Math.max(most, measure.offsetHeight);
-      // The title, the first sentence and how it travels, as a short screen shows them.
-      measure.classList.add('first-only');
-      mostBrief = Math.max(mostBrief, measure.offsetHeight);
+    // Play keeps one width whatever it says, so the buttons beside it never move.
+    if (getComputedStyle(playLabel).position !== 'absolute') {
+      const was = playLabel.textContent;
+      playBtn.style.removeProperty('--play-w');
+      let most = 0;
+      // "Resume at step 12", shown only off the tour, may make it wider still.
+      for (const t of ['Play the tour', 'Pause', 'Play', 'Replay']) {
+        playLabel.textContent = t;
+        most = Math.max(most, playBtn.offsetWidth);
+      }
+      playLabel.textContent = was;
+      playBtn.style.setProperty('--play-w', `${Math.ceil(most)}px`);
     }
-    measure.classList.remove('first-only');
-    reserve = Math.ceil(most);
-    briefReserve = Math.ceil(mostBrief);
+    // The readout itself is filled with every step in turn, in each of its three states, and measured; then put back.
+    // All of it happens between two frames, so none of it is ever drawn.
+    const n = design.tour.length;
+    const was = { title: stepTitle.textContent, text: Array.from(stepText.childNodes), via: Array.from(stepVia.childNodes), cls: stage.className, more: moreBtn.hidden, min: readout.style.minHeight, count: countLong.textContent, short: countShort.textContent, more2: moreBtn.textContent };
+    readout.style.minHeight = '';
+    stage.classList.add('touring');
+    stage.classList.remove('more', 'reading', 'unstick');
+    // On a phone on its side the transport sits on the title's line: the title keeps clear of it, at its widest.
+    countLong.textContent = `Step ${n} of ${n}`;
+    countShort.textContent = `${n}/${n}`;
+    head.style.setProperty('--hld-tw', `${Math.ceil(transport.offsetWidth)}px`);
+    const most = { full: 0, brief: 0, tiny: 0 };
+    for (const mode of ['full', 'brief', 'tiny'] as const) {
+      stage.classList.toggle('brief', mode !== 'full');
+      stage.classList.toggle('tiny', mode === 'tiny');
+      moreBtn.hidden = mode === 'full';
+      moreBtn.textContent = 'More';
+      for (const st of design.tour) {
+        stepTitle.textContent = st.title;
+        stepText.replaceChildren(...stepWords(st.text));
+        stepVia.replaceChildren(...viaLine(st));
+        most[mode] = Math.max(most[mode], readout.getBoundingClientRect().height);
+      }
+    }
+    stepTitle.textContent = was.title;
+    stepText.replaceChildren(...was.text);
+    stepVia.replaceChildren(...was.via);
+    stage.className = was.cls;
+    moreBtn.hidden = was.more;
+    moreBtn.textContent = was.more2;
+    readout.style.minHeight = was.min;
+    countLong.textContent = was.count;
+    countShort.textContent = was.short;
+    reserve = Math.ceil(most.full);
+    briefReserve = Math.ceil(most.brief);
+    titleReserve = Math.ceil(most.tiny);
     syncHead();
   }
 
@@ -1309,13 +1390,19 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   };
   const grow = (b: Box, d: number): Box => ({ x: b.x - d, y: b.y - d, w: b.w + 2 * d, h: b.h + 2 * d });
   const gridCache = new Map<string, Int32Array>();
-  function grid(kind: 'boxes' | 'chips' | 'lines', ids: string[] = []): Int32Array {
+  /**
+   * A pill at rest keeps this far from every chip (in units, before the grid's rounding of up to 2): at least 6px at
+   * the smallest scale the tour draws.
+   */
+  const CHIP_REST = 12;
+  function grid(kind: 'boxes' | 'chips' | 'rest' | 'lines', ids: string[] = []): Int32Array {
     const key = `${kind}|${ids.join(',')}`;
     const hit = gridCache.get(key);
     if (hit) return hit;
     const occ = new Uint8Array(gw * gh);
     if (kind === 'boxes') for (const b of [...nodeBoxes, ...frameTexts]) markInto(occ, grow(b, 1));
     else if (kind === 'chips') for (const id of ids) markInto(occ, grow(chipBox.get(id)!, 2));
+    else if (kind === 'rest') for (const id of ids) markInto(occ, grow(chipBox.get(id)!, CHIP_REST));
     else {
       const dot = (p: Pt) => markInto(occ, { x: p.x - LINE_CLEAR, y: p.y - LINE_CLEAR, w: 2 * LINE_CLEAR, h: 2 * LINE_CLEAR });
       for (const id of ids) samples.get(id)!.forEach(dot);
@@ -1340,7 +1427,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   function drawnFor(i: number): { chips: string[]; lines: string[] } {
     const s = design.tour[i];
     const live = new Set([...s.path, ...(s.branch?.path ?? [])].map((p) => legOf(p).fl.id));
-    const shown = design.flows.filter((f) => !f.cold || showCold || live.has(f.id));
+    const shown = design.flows.filter((f) => !f.cold || coldOn(i) || live.has(f.id));
     return { lines: shown.map((f) => f.id), chips: shown.filter((f) => !quietChip(f) || live.has(f.id)).map((f) => f.id) };
   }
 
@@ -1390,7 +1477,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
    */
   const sideCache = new Map<string, Pt>();
   function legPlace(i: number, which: Who, n: number, l: Omit<PathSeg, 'off'>, avoid: Box | null): Pt {
-    const key = `${i}|${which}|${n}|${showCold ? 1 : 0}`;
+    const key = `${i}|${which}|${n}|${coldOn(i) ? 1 : 0}`;
     const hit = sideCache.get(key);
     if (hit) return hit;
     const s = design.tour[i];
@@ -1398,7 +1485,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     // The leg's own chip sits on its way: the pill may slip under it on the move, but not rest under it.
     const own = legOf((which === 'main' ? s.path : s.branch!.path)[n]).fl.id;
     const gBoxes = grid('boxes');
-    const gChips = grid('chips', chips);
+    const gChips = grid('rest', chips);
     const gOthers = grid('chips', chips.filter((c) => c !== own));
     const gLines = grid('lines', lines);
     const w = pillWidth(l.label);
@@ -1443,26 +1530,67 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   let lastRestKey = '';
   /** Whether the place restPlace last returned is clear: where nothing is, the pill does not show until the token moves off. */
   const restClear = () => !restBlocked.has(lastRestKey);
-  function restPlace(i: number, p: Pt, w: number, own: Pt, vertical: boolean, avoid: Box | null): Pt {
-    const key = `${i}|${p.x.toFixed(1)},${p.y.toFixed(1)}|${w}|${own.x},${own.y}|${avoid ? `${avoid.x},${avoid.y}` : ''}|${showCold ? 1 : 0}`;
+  function restPlace(i: number, p: Pt, w: number, own: Pt, vertical: boolean, avoid: Box | null, line: SVGPathElement | null = null): Pt {
+    const ownLine = line ? lineIdOf.get(line) ?? '' : '';
+    const key = `${i}|${p.x.toFixed(1)},${p.y.toFixed(1)}|${w}|${own.x},${own.y}|${avoid ? `${avoid.x},${avoid.y}` : ''}|${coldOn(i) ? 1 : 0}|${ownLine}`;
     lastRestKey = key;
     const hit = restCache.get(key);
     if (hit) return hit;
-    const { chips } = drawnFor(i);
+    const { chips, lines } = drawnFor(i);
     const gB = grid('boxes');
-    const gC = grid('chips', chips);
-    const gL = grid('lines', drawnFor(i).lines);
+    const gC = grid('rest', chips);
+    const gL = grid('lines', lines);
+    // Lines other than its own, and the frame's outline: a pill resting on one reads as travelling by it.
+    const gO = grid('lines', lines.filter((id) => id !== ownLine));
+    /** How many points along the pill's tie (from the dot to the pill's nearest edge, past its first few units) fall on a grid. */
+    // The tie leaves the dot past the chip of its own line, which may sit right by it: that chip does not count here.
+    const gChipsOnly = grid('chips', chips.filter((id) => id !== ownLine));
+    const tieOn = (b: Box, g: Int32Array) => {
+      const ex = Math.max(b.x, Math.min(p.x, b.x + b.w));
+      const ey = Math.max(b.y, Math.min(p.y, b.y + b.h));
+      const len = Math.hypot(ex - p.x, ey - p.y);
+      let n = 0;
+      for (let d = 8; d < len; d += 3) {
+        const q = { x: p.x + ((ex - p.x) * d) / len, y: p.y + ((ey - p.y) * d) / len };
+        if (covered(g, { x: q.x - 0.5, y: q.y - 0.5, w: 1, h: 1 })) n++;
+      }
+      return n;
+    };
     const bad = (o: Pt) => {
       const b = pillAt(p, o, w);
-      return covered(gB, b) + covered(gC, b) + (avoid && gapOf(avoid, b) < 1 ? 50 : 0) + (b.x < 2 || b.y < 2 || b.x + b.w > W - 2 || b.y + b.h > H - 2 ? 400 : 0) + (tieCrosses(p, b) ? 50 : 0);
+      return covered(gB, b) + covered(gC, b) + (avoid && gapOf(avoid, b) < 1 ? 50 : 0) + (b.x < 2 || b.y < 2 || b.x + b.w > W - 2 || b.y + b.h > H - 2 ? 4000 : 0) + (tieCrosses(p, b) ? 50 : 0) + tieOn(b, gChipsOnly) * 10;
     };
-    let best = { o: own, cost: bad(own) ? 1e9 : 0 };
+    // Another line under the pill, or under its tie, reads as the way it travelled: avoided where there is room.
+    const across = (o: Pt) => {
+      const b = pillAt(p, o, w);
+      return covered(gO, b) * 25 + tieOn(b, gO) * 60;
+    };
+    let best = { o: own, cost: bad(own) ? 1e9 : across(own) };
     if (best.cost) {
       for (const v of [vertical, !vertical]) {
         for (const c of candidates(w, v)) {
           const b = bad(c.o);
-          const cost = (b ? 10000 + b : 0) + c.extra + (v === vertical ? 0 : 10) + covered(gL, pillAt(p, c.o, w)) * 0.3;
+          const cost = (b ? 10000 + b : 0) + across(c.o) + c.extra + (v === vertical ? 0 : 10) + covered(gL, pillAt(p, c.o, w)) * 0.3;
           if (cost < best.cost) best = { o: c.o, cost };
+        }
+      }
+    }
+    // Nothing near the leg's own places is clear: look all round the dot, nearest first, for the closest clear place.
+    if (best.cost >= 150) {
+      const ownSide = (o: Pt) => (vertical ? Math.sign(o.x) === Math.sign(own.x) : Math.sign(o.y) === Math.sign(own.y));
+      for (let dy = -150; dy <= 150; dy += 4) {
+        for (let dx = -240; dx <= 240; dx += 4) {
+          const o = { x: dx, y: dy };
+          const b = pillAt(p, o, w);
+          const near = ptGap(p, b);
+          if (near < PILL_GAP - 0.5) continue;
+          const base = near * 1.5 + (ownSide(o) ? 0 : 6);
+          if (base >= best.cost) continue;
+          const hard = bad(o);
+          const cost = (hard ? 10000 + hard : 0) + base + covered(gL, b) * 0.3;
+          if (cost >= best.cost) continue;
+          const cr = across(o);
+          if (cost + cr < best.cost) best = { o, cost: cost + cr };
         }
       }
     }
@@ -1511,7 +1639,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       const avoid = other.g.style.display !== 'none' ? other.pillBox : null;
       const blocked = (o: Pt) => {
         const b = pillAt(tk.at!, o, tk.pillW);
-        return covered(grid('boxes'), b) + covered(grid('chips', chips), b) + (avoid && gapOf(avoid, b) < 1 ? 1 : 0) + (b.x < 0 || b.y < 0 || b.x + b.w > W || b.y + b.h > H ? 1 : 0);
+        // Off the drawing is worst: the pill would be cut off.
+        return covered(grid('boxes'), b) + covered(grid('rest', chips), b) + (avoid && gapOf(avoid, b) < 1 ? 1 : 0) + (b.x < 0 || b.y < 0 || b.x + b.w > W || b.y + b.h > H ? 4000 : 0);
       };
       if (!blocked(tk.target ?? tk.off)) continue;
       let best: { o: Pt; cost: number } | null = null;
@@ -1634,7 +1763,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   function endPlace(i: number, which: Who): Pt {
     const legs = pathLegs(i, which);
     const l = legs[legs.length - 1];
-    return restPlace(i, legEnd(l), pillWidth(l.label), l.off, l.vertical, which === 'branch' ? restBox(i, 'main') : null);
+    return restPlace(i, legEnd(l), pillWidth(l.label), l.off, l.vertical, which === 'branch' ? restBox(i, 'main') : null, l.el);
   }
   /** The pill's place at the end of step i, or where it waits on a step with no trip: as the last leg left it. */
   function restOff(i: number): Pt {
@@ -1661,7 +1790,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       const tk = who === 'main' ? token : branchTok;
       const first = legs[0];
       const st = legStart(first);
-      const sp = restPlace(i, st, pillWidth(first.label), first.off, first.vertical, avoid);
+      const sp = restPlace(i, st, pillWidth(first.label), first.off, first.vertical, avoid, first.el);
       const tAt = tk.at;
       if (who === 'main' && tAt && tokenShown()) {
         // Carrying on from where it stopped: a turn, if its words or its side change.
@@ -1681,10 +1810,10 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
           const start = legStart(l);
           const d = Math.hypot(start.x - prev.x, start.y - prev.y);
           if (d > 8 && who === 'main') {
-            const bp0 = restPlace(i, start, pillWidth(l.label), l.off, l.vertical, avoid);
+            const bp0 = restPlace(i, start, pillWidth(l.label), l.off, l.vertical, avoid, l.el);
             const noB = !restClear();
             const bp = noB ? l.off : bp0;
-            const ap = restPlace(i, prev, pillWidth(legs[n - 1].label), legs[n - 1].off, legs[n - 1].vertical, avoid);
+            const ap = restPlace(i, prev, pillWidth(legs[n - 1].label), legs[n - 1].off, legs[n - 1].vertical, avoid, legs[n - 1].el);
             // Out where it arrived (from a clear place), in where the next line starts (at a clear place), then to its place on the line.
             if (!sameOff(ap, legs[n - 1].off)) segs.push(turnAt(prev, legs[n - 1].label, legs[n - 1].label, legs[n - 1].off, ap, who, avoid));
             segs.push({ kind: 'hop', a: prev, b: start, label: legs[n - 1].label, next: l.label, offA: ap, offB: bp, noPillB: noB });
@@ -1695,7 +1824,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       });
       // Arrived: if its place on the line sits on something here, it crosses to a clear place while the token holds.
       const last = legs[legs.length - 1];
-      const ep = restPlace(i, legEnd(last), pillWidth(last.label), last.off, last.vertical, avoid);
+      const ep = restPlace(i, legEnd(last), pillWidth(last.label), last.off, last.vertical, avoid, last.el);
       if (!sameOff(ep, last.off)) segs.push(turnAt(legEnd(last), last.label, last.label, last.off, ep, who, avoid));
     };
     const legs = pathLegs(i);
@@ -1741,6 +1870,12 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       // (and on the first frame drawn in the turn whatever u is, so a slow frame cannot skip that).
       const first = !sg.seen;
       sg.seen = true;
+      // Same words, a new side, both places clear: the pill slides across instead of fading.
+      if (change && sg.label === sg.next && !sg.hideA && !sg.hideB) {
+        const e = ease(Math.min(1, Math.max(0, u)));
+        place(tk, sg.at.x, sg.at.y, sg.label, 1, { x: sg.offA.x + (sg.offB.x - sg.offA.x) * e, y: sg.offA.y + (sg.offB.y - sg.offA.y) * e }, 1);
+        return;
+      }
       const op = change ? (u < 0.1 || first ? 1 : u < 0.5 ? (sg.hideA ? 0 : Math.max(0, 1 - (u - 0.1) / 0.28)) : sg.hideB ? 0 : Math.max(0, (u - 0.66) / 0.34)) : 1;
       place(tk, sg.at.x, sg.at.y, u < 0.5 ? sg.label : sg.next, 1, u < 0.5 ? sg.offA : sg.offB, op);
     } else if (sg.kind === 'hop') {
@@ -1806,7 +1941,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
    */
   const stepBoxes = new Map<string, Box>();
   function stepBox(i: number): Box {
-    const key = `${i}|${showCold ? 1 : 0}`;
+    const key = `${i}|${coldOn(i) ? 1 : 0}`;
     const hit = stepBoxes.get(key);
     if (hit) return hit;
     const s = design.tour[i];
@@ -1834,8 +1969,12 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
 
   /** A phone, upright or sideways: the tour zooms the diagram to fit each step. */
   const small = () => innerWidth < 600 || innerHeight < 500;
-  /** The smallest scale the tour zooms to on a small screen. */
-  const FLOOR_SCALE = 0.5;
+  /**
+   * The smallest scale the tour zooms to on a small screen: the diagram's
+   * smallest text (16.5 units) is then 11px. A step that does not fit at it is
+   * not shrunk further; the view pans with the token instead.
+   */
+  const FLOOR_SCALE = 0.67;
   /** The scale the tour has zoomed to for this step on a small screen (null: the reading scale), and whether the step fits at it. */
   let tourK: number | null = null;
   let stepFits = true;
@@ -1858,6 +1997,178 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     return k;
   }
 
+  // ---- the tour on a small screen: one fixed canvas, the diagram zoomed and panned inside it ----
+  /**
+   * On a phone the tour draws the diagram in a canvas of one height for the
+   * whole tour, filling the screen under the stuck readout, so nothing below it
+   * moves from step to step. The diagram is zoomed to each step (never below
+   * FLOOR_SCALE) and letterboxed in the canvas when it is smaller.
+   */
+  let cam = false;
+  /** The screen size the canvas height was worked out for: it is worked out once for the tour, and again only if the screen changes. */
+  let camFor = '';
+  const CAM_PAD = 10;
+  function setCam(on: boolean): void {
+    if (cam !== on) {
+      cam = on;
+      canvas.classList.toggle('cam', on);
+      stage.classList.toggle('cam', on);
+      if (!on) {
+        canvas.style.height = '';
+        canvas.scrollTop = 0;
+      }
+      syncPan();
+    }
+    if (!on) camFor = '';
+    // The readout as it stands collapsed: More opened does not shrink the canvas.
+    if (on && !moreOpen && camFor !== `${innerWidth}x${innerHeight}`) {
+      camFor = `${innerWidth}x${innerHeight}`;
+      const pb = panBar.hidden ? 0 : panBar.offsetHeight;
+      canvas.style.height = `${Math.max(140, Math.floor(innerHeight - head.offsetHeight - pb))}px`;
+    }
+  }
+  /** Put the view's centre at (cx, cy) at scale k: the canvas scrolls, and where the diagram is smaller than the canvas it sits in the middle. */
+  function camApply(k: number, cx: number, cy: number): void {
+    tourK = k;
+    zoomFor();
+    const cw = canvas.clientWidth;
+    const ch = canvas.clientHeight;
+    const sw = W * k;
+    const sh = H * k;
+    canvas.scrollLeft = sw <= cw ? 0 : Math.max(0, Math.min(cx * k - cw / 2, sw - cw));
+    canvas.scrollTop = sh <= ch ? 0 : Math.max(0, Math.min(cy * k - ch / 2, sh - ch));
+  }
+  /** What the canvas shows now, in diagram units. */
+  function camView(): Box {
+    const k = tourK ?? baseK();
+    const cw = canvas.clientWidth;
+    const ch = canvas.clientHeight;
+    const ox = Math.max(0, (cw - W * k) / 2);
+    const oy = Math.max(0, (ch - H * k) / 2);
+    return { x: (canvas.scrollLeft - ox) / k, y: (canvas.scrollTop - oy) / k, w: cw / k, h: ch / k };
+  }
+  /** The view centre that shows a region, at scale k. */
+  const camCentre = (u: Box): Pt => ({ x: u.x + u.w / 2, y: u.y + u.h / 2 });
+  /** Whether a region fits the canvas at scale k, with a margin. */
+  const camFits = (u: Box, k: number) => u.w * k <= canvas.clientWidth - 2 * CAM_PAD && u.h * k <= canvas.clientHeight - 2 * CAM_PAD;
+  /** The first of the regions that fits, or the last one. */
+  const firstFit = (us: (Box | null)[], k: number) => {
+    const ok = us.filter(Boolean) as Box[];
+    return ok.find((u) => camFits(u, k)) ?? ok[ok.length - 1];
+  };
+  const chipOf = (l: PathSeg | undefined, i: number): Box | null => {
+    if (!l) return null;
+    const id = lineIdOf.get(l.el)!;
+    return drawnFor(i).chips.includes(id) ? chipBox.get(id)! : null;
+  };
+  const dotBox = (p: Pt): Box => ({ x: p.x - DOT_R, y: p.y - DOT_R, w: 2 * DOT_R, h: 2 * DOT_R });
+  const fromBoxOf = (l: PathSeg) => {
+    const fl = flowById.get(lineIdOf.get(l.el)!)!;
+    return boxOf(l.back ? fl.to : fl.from);
+  };
+  /** Where a step comes to rest: the box the trip ends at, the chip of its last leg and the token's label, and the branch too when they all fit. */
+  function camRestRegion(i: number, k: number): Box {
+    const legs = pathLegs(i);
+    const last = legs[legs.length - 1];
+    const pill = restBox(i, 'main');
+    const must = pill ? union(union(endBox(i), pill), dotBox(endOf(i))) : endBox(i);
+    const withChip = chipOf(last, i) ? union(must, chipOf(last, i)!) : must;
+    let all: Box | null = null;
+    if (design.tour[i].branch) {
+      const br = pathLegs(i, 'branch');
+      const bl = br[br.length - 1];
+      const bp = restBox(i, 'branch');
+      if (bl && bp) {
+        const fl = flowById.get(lineIdOf.get(bl.el)!)!;
+        all = union(union(withChip, bp), boxOf(bl.back ? fl.from : fl.to));
+      }
+    }
+    return firstFit([all, withChip, must], k);
+  }
+  /** Where a step too big for the canvas starts: the box and chip of its first leg and the token's label, placed so that the way it goes is in view. */
+  function camStartRegion(i: number, k: number): Box {
+    const legs = pathLegs(i);
+    const first = legs[0];
+    if (!first) return camRestRegion(i, k);
+    const st = legStart(first);
+    const sp = union(dotBox(st), pillAt(st, first.off, pillWidth(first.label)));
+    const s0 = union(fromBoxOf(first), sp);
+    const s1 = chipOf(first, i) ? union(s0, chipOf(first, i)!) : s0;
+    const r = firstFit([union(s1, endBox(i)), s1, sp], k);
+    if (r !== s1 && r !== s0) return r;
+    // Slide the view towards where the trip goes, keeping the start in it.
+    const vw = (canvas.clientWidth - 2 * CAM_PAD) / k;
+    const vh = (canvas.clientHeight - 2 * CAM_PAD) / k;
+    const e = endBox(i);
+    const toRight = e.x + e.w / 2 >= r.x + r.w / 2;
+    const toDown = e.y + e.h / 2 >= r.y + r.h / 2;
+    const w = Math.max(r.w, vw);
+    const hh = Math.max(r.h, vh);
+    return { x: toRight ? r.x : r.x + r.w - w, y: toDown ? r.y : r.y + r.h - hh, w, h: hh };
+  }
+  /** Glide the zoom and the view centre together, and the page to y, in about 280ms (at once with reduced motion). Returns how long it takes. */
+  function camGlide(k1: number, c1: Pt, y1: number): number {
+    cancelAnimationFrame(followRaf);
+    const k0 = tourK ?? k1;
+    const v = camView();
+    const c0 = tourK == null ? c1 : { x: v.x + v.w / 2, y: v.y + v.h / 2 };
+    const y0 = window.scrollY;
+    if (tourK == null || reducedMotion() || (Math.abs(k1 - k0) < 0.002 && Math.hypot(c1.x - c0.x, c1.y - c0.y) * k1 < 1 && Math.abs(y1 - y0) < 1)) {
+      camApply(k1, c1.x, c1.y);
+      if (Math.abs(y1 - window.scrollY) > 0.5) window.scrollTo(0, y1);
+      return 0;
+    }
+    const t0 = performance.now();
+    const ms = 280;
+    const step2 = (now: number) => {
+      if (!alive || !cam) return;
+      const t = Math.min(1, (now - t0) / ms);
+      const e = ease(t);
+      camApply(k0 + (k1 - k0) * e, c0.x + (c1.x - c0.x) * e, c0.y + (c1.y - c0.y) * e);
+      window.scrollTo(0, y0 + (y1 - y0) * e);
+      if (t < 1) followRaf = requestAnimationFrame(step2);
+    };
+    followRaf = requestAnimationFrame(step2);
+    return ms;
+  }
+  /** The page sits with the stage at the top of the screen for the whole tour: the readout, then the canvas. */
+  const camPageY = () => Math.max(0, Math.min(stage.getBoundingClientRect().top + window.scrollY, document.documentElement.scrollHeight - innerHeight));
+  /** The step's first view on a small screen: the whole step if it fits at or above the floor, otherwise where its trip starts. */
+  function camStep(i: number): number {
+    setCam(true);
+    const u = stepBox(i);
+    const kFit = Math.min((canvas.clientWidth - 2 * CAM_PAD) / u.w, (canvas.clientHeight - 2 * CAM_PAD) / u.h);
+    stepFits = kFit >= FLOOR_SCALE;
+    const k = stepFits ? Math.min(BASE_SCALE, kFit) : FLOOR_SCALE;
+    const r = stepFits ? u : camStartRegion(i, k);
+    return camGlide(k, camCentre(r), camPageY());
+  }
+  /** The trip has ended: a step too big for the canvas comes to rest on where it ended. */
+  function camRest(i: number): number {
+    if (!cam || stepFits || tourK == null) return 0;
+    return camGlide(tourK, camCentre(camRestRegion(i, tourK)), window.scrollY);
+  }
+  /** While the token moves through a step too big for the canvas, the view pans with it, a little each frame. */
+  function camFollow(x: number, y: number, tk: Tok): void {
+    if (stepFits || tourK == null || reducedMotion() || !followsTokenOrStill()) return;
+    const k = tourK;
+    const dot = union(dotBox({ x, y }), tk.pillBox ?? dotBox({ x, y }));
+    const s0 = design.tour[step];
+    const bl = s0.branch?.path.length ? legOf(s0.branch.path[s0.branch.path.length - 1]) : null;
+    const dest = tk === branchTok && bl ? boxOf(bl.back ? bl.fl.from : bl.fl.to) : endBox(step);
+    const r = firstFit([union(dot, dest), dot], k);
+    const v = camView();
+    const m = CAM_PAD / k;
+    let dx = 0;
+    let dy = 0;
+    if (r.x < v.x + m) dx = r.x - v.x - m;
+    else if (r.x + r.w > v.x + v.w - m) dx = r.x + r.w - (v.x + v.w - m);
+    if (r.y < v.y + m) dy = r.y - v.y - m;
+    else if (r.y + r.h > v.y + v.h - m) dy = r.y + r.h - (v.y + v.h - m);
+    if (Math.abs(dx) * k < 0.5 && Math.abs(dy) * k < 0.5) return;
+    camApply(k, v.x + v.w / 2 + dx * 0.35, v.y + v.h / 2 + dy * 0.35);
+  }
+
   /** The part of the screen the diagram can be seen in: below the stuck readout, inside the canvas. */
   function viewport(): { top: number; bottom: number } {
     const stuck = step >= 0 && !stage.classList.contains('reading') && !stage.classList.contains('unstick');
@@ -1878,13 +2189,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     return !(cv.bottom < 60 || cv.top > innerHeight - 60);
   }
   function keepInView(x: number, y: number, tk: Tok = token): void {
-    if (tourK != null && !fitted) {
-      if (stepFits || !followsTokenOrStill()) return;
-      const dot = union({ x: x - DOT_R, y: y - DOT_R, w: 2 * DOT_R, h: 2 * DOT_R }, tk.pillBox ?? { x, y, w: 0, h: 0 });
-      const s0 = design.tour[step];
-      const bl = s0.branch?.path.length ? legOf(s0.branch.path[s0.branch.path.length - 1]) : null;
-      const dest = tk === branchTok && bl ? boxOf(bl.back ? bl.fl.from : bl.fl.to) : endBox(step);
-      showRegion(dot, union(dot, dest), reducedMotion() ? 1 : 0.35);
+    if (cam) {
+      camFollow(x, y, tk);
       return;
     }
     if (!followsToken()) return;
@@ -1925,35 +2231,6 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     }
     if (Math.abs(dy) > 0.5) window.scrollBy(0, dy * 0.35);
   }
-  /**
-   * Pan (and scroll the page) the least that shows `want` whole, 8px inside
-   * the visible part of the diagram, or failing that `must`. `ease` is the
-   * share of the way to go this frame.
-   */
-  function showRegion(must: Box, want: Box, easeBy: number): void {
-    const k = svg.getBoundingClientRect().width / W;
-    const cr = canvas.getBoundingClientRect();
-    const sr = svg.getBoundingClientRect();
-    const v = viewport();
-    const top = Math.max(v.top, cr.top);
-    const visW = Math.min(innerWidth, cr.right) - Math.max(0, cr.left);
-    const visH = v.bottom - top;
-    const m = 8;
-    const r = want.w * k <= visW - 2 * m && want.h * k <= visH - 2 * m ? want : must;
-    let dx = 0;
-    const l = sr.left + r.x * k;
-    const rr = sr.left + (r.x + r.w) * k;
-    if (l < Math.max(0, cr.left) + m) dx = l - Math.max(0, cr.left) - m;
-    else if (rr > Math.min(innerWidth, cr.right) - m) dx = rr - Math.min(innerWidth, cr.right) + m;
-    let dy = 0;
-    const t0 = sr.top + r.y * k;
-    const b0 = sr.top + (r.y + r.h) * k;
-    if (t0 < top + m) dy = t0 - top - m;
-    else if (b0 > v.bottom - m) dy = b0 - v.bottom + m;
-    if (Math.abs(dx) > 0.5) canvas.scrollLeft += dx * easeBy;
-    if (Math.abs(dy) > 0.5) window.scrollBy(0, dy * easeBy);
-  }
-
   /** The box a step's trip ends at (or its first lit box, for a step with no trip). */
   function endBox(i: number): Box {
     const s0 = design.tour[i];
@@ -2020,6 +2297,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   /** The token has arrived: bring the end into view, then (on a larger screen) show any lit part still out of sight, and wait to read. */
   function arrived(i: number): void {
     stage.dataset.phase = 'rest';
+    if (cam) {
+      camRest(i);
+      dwell(i);
+      return;
+    }
     const end = settle(i);
     const extra = end && tourK == null ? glance(i, end, end.ms + 700) : 0;
     dwell(i, undefined, extra ? extra + 1200 : 0);
@@ -2039,10 +2321,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const sr = stage.getBoundingClientRect();
     const vh = innerHeight;
     if (!force && (sr.bottom < 40 || sr.top > vh - 40)) return 0;
-    if (small() && !fitted) return fitStep(i);
-    if (tourK != null) {
+    if (small() && !fitted) return camStep(i);
+    if (cam || tourK != null) {
       tourK = null;
       stepFits = true;
+      setCam(false);
       zoomFor();
     }
     const u = stepBox(i);
@@ -2073,90 +2356,6 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       if (vh < 500 && stuck) y = Math.max(y, stageTop);
     }
     return glide(sl, y);
-  }
-
-  /**
-   * On a small screen, each step starts with the diagram zoomed (never below
-   * half size) and panned to show every part the step lights and the whole of
-   * the token's trip, and stays there for the step. A step too big even at
-   * half size is shown from where its trip starts, and the view follows the
-   * token. Returns how long the glide takes.
-   */
-  function fitStep(i: number): number {
-    const u = stepBox(i);
-    const cw = canvas.clientWidth;
-    const stuck = !stage.classList.contains('unstick');
-    const headH = stuck ? head.offsetHeight : 0;
-    const availH = innerHeight - headH;
-    const pad = 10;
-    const kFit = Math.min((cw - 2 * pad) / u.w, (availH - 2 * pad) / u.h);
-    const k = Math.min(baseK(), Math.max(FLOOR_SCALE, kFit));
-    stepFits = kFit >= FLOOR_SCALE;
-    // Too big: show where the trip starts, with as much as fits towards where it goes.
-    let r = u;
-    if (!stepFits) {
-      const st = startOf(i);
-      const legs = pathLegs(i);
-      const first = legs[0];
-      const sp = first ? union({ x: st.x - DOT_R, y: st.y - DOT_R, w: 2 * DOT_R, h: 2 * DOT_R }, pillAt(st, first.off, pillWidth(first.label))) : { x: st.x - 20, y: st.y - 20, w: 40, h: 40 };
-      const vw = (cw - 2 * pad) / k;
-      const vh2 = (availH - 2 * pad) / k;
-      const e = endBox(i);
-      const toRight = e.x + e.w / 2 >= sp.x + sp.w / 2;
-      const toDown = e.y + e.h / 2 >= sp.y + sp.h / 2;
-      r = {
-        x: Math.max(u.x, Math.min(toRight ? sp.x : sp.x + sp.w - vw, u.x + u.w - vw)),
-        y: Math.max(u.y, Math.min(toDown ? sp.y : sp.y + sp.h - vh2, u.y + u.h - vh2)),
-        w: Math.min(vw, u.w),
-        h: Math.min(vh2, u.h),
-      };
-    }
-    const canvasTop = canvas.getBoundingClientRect().top + window.scrollY;
-    const svgW = W * k;
-    const svgH = H * k;
-    // The diagram is centred in the canvas when it is narrower.
-    const sl = svgW <= cw ? 0 : Math.max(0, Math.min((r.x + r.w / 2) * k - cw / 2, svgW - cw));
-    const lo = canvasTop - headH;
-    const hi = canvasTop + svgH - innerHeight;
-    let y = canvasTop + (r.y + r.h / 2) * k - (headH + availH / 2);
-    // The whole diagram fits under the readout: the stage sits at the top for the step, the readout stuck above it.
-    y = hi >= lo ? Math.max(lo, Math.min(y, hi)) : lo;
-    const docMax = document.documentElement.scrollHeight + (svgH - svg.getBoundingClientRect().height) - innerHeight;
-    y = Math.max(0, Math.min(y, docMax));
-    return glideZoom(k, sl, y);
-  }
-
-  /** Glide the zoom, the canvas and the page together, in about 280ms (at once with reduced motion). Returns how long it takes. */
-  function glideZoom(k1: number, sl1: number, y1: number): number {
-    cancelAnimationFrame(followRaf);
-    const k0 = tourK ?? baseK();
-    const sl0 = canvas.scrollLeft;
-    const y0 = window.scrollY;
-    const apply = (k: number, sl: number, y: number) => {
-      tourK = k;
-      zoomFor();
-      canvas.scrollLeft = sl;
-      window.scrollTo(0, y);
-    };
-    if (Math.abs(k1 - k0) < 0.002 && Math.abs(sl1 - sl0) < 1 && Math.abs(y1 - y0) < 1) {
-      if (tourK == null) apply(k1, sl1, y1);
-      return 0;
-    }
-    if (reducedMotion()) {
-      apply(k1, sl1, y1);
-      return 0;
-    }
-    const t0 = performance.now();
-    const ms = 280;
-    const step2 = (now: number) => {
-      if (!alive) return;
-      const t = Math.min(1, (now - t0) / ms);
-      const e = ease(t);
-      apply(k0 + (k1 - k0) * e, sl0 + (sl1 - sl0) * e, y0 + (y1 - y0) * e);
-      if (t < 1) followRaf = requestAnimationFrame(step2);
-    };
-    followRaf = requestAnimationFrame(step2);
-    return ms;
   }
 
   /** Glide the page and the canvas together to a place: returns how long that takes (0 when already there, or with reduced motion). */
@@ -2329,7 +2528,10 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
         return;
       }
       if (i < design.tour.length - 1) go(i + 1, false);
-      else pause();
+      else {
+        pause(false);
+        status.textContent = 'End of the tour.';
+      }
     }, dwellMs);
   }
 
@@ -2398,7 +2600,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     stage.classList.remove('reading');
     // The readout takes its touring height first, so the view is worked out with the readout as it will be.
     stage.classList.add('touring');
-    syncHead();
+    countLong.textContent = `Step ${i + 1} of ${design.tour.length}`;
+    countShort.textContent = `${i + 1}/${design.tour.length}`;
+    measureReserve();
     const ms = follow(i, manual || whole);
     if (ms > 0) {
       // The view glides to the step first. The readout, the lit boxes and lines change on the frame the glide starts,
@@ -2508,6 +2712,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     // Back to the reading scale.
     tourK = null;
     stepFits = true;
+    setCam(false);
     sync();
     zoomFor();
     // The readout drops its touring height: keep the diagram where it was on screen.
@@ -2545,8 +2750,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const k0 = zoomFor();
     const k = fitted ? svg.getBoundingClientRect().width / W || k0 : k0;
     for (const sm of legend.querySelectorAll<SVGSVGElement>('svg.hld-sample')) sizeSample(sm, k);
-    const over = canvas.scrollWidth > canvas.clientWidth + 1;
-    panBar.hidden = !over && !fitted;
+    const over = !cam && canvas.scrollWidth > canvas.clientWidth + 1;
+    // On the tour on a phone the overview button stays on show under the canvas.
+    panBar.hidden = !over && !fitted && !cam;
     pan.classList.toggle('more-left', over && canvas.scrollLeft > 2);
     pan.classList.toggle('more-right', over && canvas.scrollLeft < canvas.scrollWidth - canvas.clientWidth - 2);
     if (over) {
@@ -2558,6 +2764,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       canvas.removeAttribute('role');
       canvas.removeAttribute('aria-label');
     }
+    // Floating in the corner of the tour's canvas on a phone, the button says less.
+    const fitText = cam ? 'Whole diagram' : 'Overview: whole diagram, small text';
+    if (fitBtn.textContent !== fitText) fitBtn.textContent = fitText;
     panHint.textContent = fitted
       ? 'Overview: the text is too small to read. Turn this off to read the labels.'
       : coarse()
@@ -2695,6 +2904,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     requestAnimationFrame(() => {
       if (!alive) return;
       const missing = (what: string) => {
+        // The address goes back to the page itself, so it never names something that is not there.
+        history.replaceState(history.state, '', base);
         renderDetail(null, `There is no ${what} called "${open.id}" on this diagram. Pick one below.`);
         detailBody.scrollIntoView({ block: 'start' });
         (detailBody.querySelector('.hld-missing') as HTMLElement).focus({ preventScroll: true });
