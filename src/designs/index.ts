@@ -9,6 +9,12 @@ export const DESIGNS: { id: string; name: string; hint: string; load: () => Prom
     load: () => import('./web-crawler').then((m) => m.webCrawler),
   },
   {
+    id: 'ledger',
+    name: 'Ledger service',
+    hint: 'Follow one Faster Payment through a strictly consistent ledger',
+    load: () => import('./ledger').then((m) => m.ledger),
+  },
+  {
     id: 'fraud-alerts',
     name: 'Suspicious transaction alerts',
     hint: 'Follow one held payment to the owner and back',
