@@ -43,7 +43,7 @@ function build(): Promise<Doc[]> {
       docs.push({
         kind: 'Connection',
         title: `${name(f.from)} to ${name(f.to)}`,
-        also: [f.via, mode, ...(f.label ? [f.label] : [])],
+        also: [f.via, mode, ...(f.label ? [f.label] : []), ...(f.travels ? [f.travels] : [])],
         text: [f.how, f.delivery, ...f.alts].join(' '),
         href: `${base}/f/${f.id}`,
         where: `${d.name}: connection by ${f.via}`,

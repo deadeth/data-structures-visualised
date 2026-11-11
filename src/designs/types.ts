@@ -66,6 +66,8 @@ export interface Flow {
   to: string;
   /** What travels: the purpose of the hop. */
   label?: string;
+  /** What travels, in full, for the detail's "What travels" when the short label on the diagram is too terse. */
+  travels?: string;
   /** SVG path data in diagram space. Drawn as given; the token travels along it. */
   d: string;
   /**
@@ -109,6 +111,10 @@ export interface TourStep {
   pill?: (PillSide | undefined)[];
   /** A side trip that leaves from where the main path ends: a second token travels it, so the reader sees the split. */
   branch?: { path: string[]; label: string; pill?: PillSide };
+  /** Connections that fail on this step (a lease that expires, a call that is refused): drawn red and dashed. */
+  failed?: string[];
+  /** Show the recovery and reprocessing paths for this step, whatever the key's toggle says. */
+  recovery?: boolean;
 }
 
 export interface Design {

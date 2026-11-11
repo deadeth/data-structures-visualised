@@ -375,7 +375,7 @@ export const webCrawler: Design = {
     },
     {
       id: 'get', from: 'fetcher', to: 'web', d: 'M715,160 H735 Q745,160 745,150 V146 Q745,136 755,136 H1180 Q1190,136 1190,126 V62', label: 'GET',
-      mode: 'external', via: 'HTTPS', chip: 0.74,
+      mode: 'external', via: 'HTTPS', chip: 0.655,
       how: 'An HTTP GET over TLS, sent to the address that was checked. There is a deadline for connecting, for the handshake and for reading, and a cap on size and on redirects.',
       delivery: 'Nothing is promised by the other side. Timeouts, 429 and 5xx go to retry with back-off, three attempts in all.',
       alts: ['HTTP/2, to reuse one connection per host.', 'A HEAD request first, to skip very large files.', 'A headless browser, for pages that need scripts.', 'Streaming the body straight into the archive file as it arrives.'],
@@ -408,10 +408,15 @@ export const webCrawler: Design = {
     },
     {
       id: 'snapshot', from: 'frontier', to: 'blob', d: 'M400,230 V248 Q400,258 410,258 H1130 Q1140,258 1140,268 V289', label: 'snapshot',
-      mode: 'write', via: 'S3 PUT', chip: 0.732, cold: true,
+      mode: 'write', via: 'S3 PUT, GET', chip: 0.2, cold: true,
       how: 'Every few minutes the node writes a snapshot of its frontier (queues, heap and leases) to the object store, with the discovered-urls offsets it had read up to. A node that takes over these slots restores the latest snapshot and replays the topic from those offsets.',
       delivery: 'Each snapshot is a new object, written once, and the newest complete one wins. Losing one only means replaying more of the topic.',
       alts: ['Replicating the frontier to a standby node, which is faster to fail over and doubles the disks.', 'Rebuilding the frontier from the metadata store, which is the slow last resort.'],
+      reply: {
+        id: 'restore', label: 'restore',
+        how: 'After a failover the new owner reads the newest complete snapshot with an S3 GET and rebuilds its queues and heap from it.',
+        delivery: 'Read-only and repeatable. A snapshot that cannot be read means falling back to an older one and replaying more of the topic.',
+      },
     },
     {
       id: 'render', from: 'parser', to: 'render', d: 'M952,346 H1070 Q1080,346 1080,356 V450 Q1080,460 1090,460 H1110', label: 'needs scripts',
@@ -456,7 +461,7 @@ export const webCrawler: Design = {
       alts: ['Marking the URL seen when it is fetched, not when it is queued, which lets duplicates pile up in the frontier.'],
     },
     {
-      id: 'cross', from: 'filter', to: 'kafka', d: 'M558,356 V428', label: 'other node',
+      id: 'cross', from: 'filter', to: 'kafka', d: 'M558,356 V428', label: 'not mine', travels: 'URLs whose host another node owns',
       mode: 'async', via: 'Kafka produce', chip: 0.5,
       how: 'Links whose host belongs to another node are produced to the discovered-urls topic, keyed by host and sent in batches. There is one partition per slot.',
       delivery: 'At-least-once, and in order per host. The seen-check at the far end makes repeats harmless.',
@@ -573,10 +578,13 @@ export const webCrawler: Design = {
     },
     {
       title: 'When a node dies',
-      text: 'Each node holds a lease on its slots of hosts. If it stops renewing, the coordinator gives those slots to another node with a higher epoch. The new owner restores the frontier from the last snapshot in the object store, replays the topic, and waits out the old lease before its first fetch.',
-      focus: ['coord', 'frontier'],
-      path: ['coord', '<coord'],
-      labels: ['lease', 'renewed'],
+      text: 'Each node renews a lease on its slots of hosts. This one stopped, so its lease ran out: the red dashes. The coordinator moves the slots to another node with a higher epoch, which shuts the old one out. The new owner loads the last snapshot from the object store, replays the topic, then waits out the old lease.',
+      focus: ['coord', 'frontier', 'blob', 'kafka', 'seen'],
+      path: ['<coord', 'restore'],
+      labels: ['slots, epoch 8', 'snapshot'],
+      branch: { path: ['inbound'], label: 'replay' },
+      failed: ['coord'],
+      recovery: true,
     },
   ],
 
