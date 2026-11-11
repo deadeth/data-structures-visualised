@@ -7,6 +7,9 @@ import { MODES, type Component, type Design, type Flow } from '../designs/types'
 const NS = 'http://www.w3.org/2000/svg';
 const SPEEDS = [0.5, 1, 2] as const;
 const SPEED_NAMES: Record<number, string> = { 0.5: 'Half speed', 1: 'Normal speed', 2: 'Double speed' };
+/** With reduced motion the speeds set only the wait on each step: half speed waits longest. */
+const WAIT_NAMES: Record<number, string> = { 0.5: 'long', 1: 'normal', 2: 'short' };
+const WAIT_TITLES: Record<number, string> = { 0.5: 'Twice as long on each step', 1: 'The usual time on each step', 2: 'Half as long on each step' };
 /** Token travel at 1x, in diagram units a second. */
 const PACE = 260;
 /** The shortest leg at 1x, so that a short hop still reads as movement. */
@@ -333,7 +336,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const { w, h: hh } = sizeOf(c);
     // An input is a rounded tab, rounder than a service's box but not a full pill, so its words keep clear of the ends.
     const rx = c.kind === 'input' ? Math.min(20, hh / 2) : 10;
-    const g = el('g', { transform: `translate(${c.x - w / 2},${c.y - hh / 2})`, tabindex: -1, role: 'button', 'aria-expanded': 'false', 'aria-controls': DETAIL_ID, 'aria-label': `${[c.short ?? c.name, c.tech, ...(c.lines ?? [])].join(' ')}${c.short ? `. ${c.name}` : ''}. Component.` }, `hld-node kind-${c.kind}`);
+    const g = el('g', { transform: `translate(${c.x - w / 2},${c.y - hh / 2})`, tabindex: -1, role: 'button', 'aria-expanded': 'false', 'aria-controls': DETAIL_ID }, `hld-node kind-${c.kind}`);
     g.dataset.id = c.id;
     g.append(el('rect', { x: -6, y: -6, width: w + 12, height: hh + 12, rx: rx + 6 }, 'hld-ring'));
     // A store is a cylinder, so its shape cannot be read as a box with a link under its text.
@@ -374,6 +377,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       if (i < c.lines!.length - 1) spaced(t);
       g.append(t);
     });
+    // The box is named by its own words, so its name always starts with what it shows, even when the canvas cuts it at an edge.
+    // The rest of the name (its full name, and that it is a component) follows in words drawn too small to see.
+    const tail = el('tspan', { 'font-size': 0.01 }, 'hld-gap');
+    tail.textContent = `${c.short ? `. ${c.name}` : ''}. Component.`;
+    (g.lastElementChild as SVGTextElement).append(tail);
     g.addEventListener('click', (e) => select(c.id, e.detail === 0 ? 'key' : 'pointer', g));
     nodeEls.set(c.id, g);
     items.push(g);
@@ -406,12 +414,15 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   }
   const token = makeToken('main');
   const branchTok = makeToken('branch');
-  svg.append(token.g, branchTok.g, labelLayer, chipLayer);
+  // The token is drawn last, above the chips, so a chip never hides the dot or its words, moving or at rest.
+  svg.append(labelLayer, chipLayer, token.g, branchTok.g);
 
   const canvas = h('div.hld-canvas', null);
   canvas.append(svg);
   const skip = h('button.hld-skip', { type: 'button', onclick: () => (index.querySelector('button') as HTMLElement).focus() }, 'Skip diagram');
-  const pan = h('div.hld-pan', null, skip, canvas);
+  /** On a phone, at rest: a small sign at the canvas's edge for each lit box out of view, naming it and pointing to it. Tapping one pans there. */
+  const marks = h('div.hld-marks', { 'aria-hidden': 'true' });
+  const pan = h('div.hld-pan', null, skip, canvas, marks);
   const fitBtn = h('button.hld-fit', { type: 'button', 'aria-pressed': 'false', onclick: () => setFit(!fitted) }, 'Overview: whole diagram, small text') as HTMLButtonElement;
   const panHint = h('span.hld-pan-hint', null);
   const panBar = h('div.hld-panbar', null, panHint, fitBtn);
@@ -431,24 +442,29 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     h(`button.hld-icon${cls}`, { type: 'button', 'aria-label': label, title: keys ? `${label} (${keys})` : label, 'data-keys': keys, onclick: fn }, icon(name)) as HTMLButtonElement;
   const restartBtn = btn('restart', 'Back to the start', '', () => go(0, true), '.hld-restart');
   const backBtn = btn('back', 'Previous step', 'Left arrow', () => go(step - 1, true));
-  const nextBtn = btn('next', 'Next step', 'Right arrow', () => go(step + 1, true));
+  /** The step Next goes to: off the tour, the step the reader left at (as Play resumes there), else the first. */
+  const nextStep = () => (step < 0 && leftAt > 0 ? leftAt : step + 1);
+  const nextBtn = btn('next', 'Next step', 'Right arrow', () => go(nextStep(), true));
   const playBtn = h('button.hld-play', { type: 'button', onclick: () => toggle() }, icon('play'), playLabel) as HTMLButtonElement;
   const countLong = h('span.hld-count-long', null, `${design.tour.length} steps`);
   const countShort = h('span.hld-count-short', { 'aria-hidden': 'true' }, `${design.tour.length}`);
   const counter = h('span.hld-count', null, countLong, countShort);
   const exploreBtn = h('button.hld-quiet', { type: 'button', title: 'Leave the tour (Escape)', onclick: () => leaveTour(true) }, icon('close'), h('span', null, 'Leave the tour'));
   const speedBtns: HTMLButtonElement[] = [];
-  // With reduced motion nothing moves, so the speeds set only how long each step waits: the group says so.
-  const speedName = h('span', { 'aria-hidden': 'true' }, reducedMotion() ? 'Dwell' : 'Speed');
-  const speedGroup = h('div.hld-speed', { role: 'group', 'aria-label': reducedMotion() ? 'Time on each step' : 'Tour speed' }, speedName);
+  // With reduced motion nothing moves, so the speeds set only how long each step waits: the group and its buttons say so.
+  const still = reducedMotion();
+  const speedWord = (s: number) => (still ? WAIT_NAMES[s] : `${s}×`);
+  const speedName = h('span', { 'aria-hidden': 'true' }, still ? 'Time on each step' : 'Speed');
+  const speedGroup = h('div.hld-speed', { role: 'group', 'aria-label': still ? 'Time on each step' : 'Tour speed' }, speedName);
   for (const s of SPEEDS) {
     // The name starts with the words on the button, so a voice user can say what they see.
-    const b = h('button', { type: 'button', 'aria-pressed': String(s === 1), 'aria-label': `${s}×, ${SPEED_NAMES[s].toLowerCase()}`, title: SPEED_NAMES[s], onclick: () => setSpeed(s) }, `${s}×`) as HTMLButtonElement;
+    const b = h('button', { type: 'button', 'aria-pressed': String(s === 1), 'aria-label': still ? WAIT_NAMES[s] : `${s}×, ${SPEED_NAMES[s].toLowerCase()}`, title: still ? WAIT_TITLES[s] : SPEED_NAMES[s], onclick: () => setSpeed(s) }, speedWord(s)) as HTMLButtonElement;
     speedBtns.push(b);
     speedGroup.append(b);
   }
   // On a phone the three speeds become one button that steps through them, so the transport fits one row.
-  const speedCycle = h('button.hld-speed-cycle', { type: 'button', onclick: () => setSpeed(SPEEDS[(SPEEDS.indexOf(speed as (typeof SPEEDS)[number]) + 1) % SPEEDS.length]) }, '1×') as HTMLButtonElement;
+  const speedCycle = h('button.hld-speed-cycle', { type: 'button', onclick: () => setSpeed(SPEEDS[(SPEEDS.indexOf(speed as (typeof SPEEDS)[number]) + 1) % SPEEDS.length]) }, speedWord(1)) as HTMLButtonElement;
+  const cycleName = (s: number) => (still ? `${WAIT_NAMES[s]}. Change the time on each step` : `${s}×, ${SPEED_NAMES[s].toLowerCase()}. Change speed`);
   // The tour's keys, on show where there is room and a keyboard; they follow the site-wide shortcut switch.
   const keyHints = h('p.hld-keys', { 'aria-hidden': 'true' }, h('kbd', null, 'Space'), ' play ', h('kbd', null, '←'), h('kbd', null, '→'), ' step ', h('kbd', null, 'R'), ' replay');
   const transport = h('div.hld-transport', null, h('div.hld-nav', null, restartBtn, backBtn, playBtn, nextBtn), counter, exploreBtn, keyHints, speedGroup, speedCycle);
@@ -485,6 +501,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   // ---- the key -----------------------------------------------------------------
   let showCold = stored(COLD_KEY) === 'on';
   const coldBox = h('input', { type: 'checkbox', id: `${design.id}-cold`, checked: showCold, onchange: () => setCold(coldBox.checked) }) as HTMLInputElement;
+  /** On a step about recovery the paths show whatever the box says: the box shows ticked, and says why. */
+  const coldWhy = h('span.hld-cold-why', null, ': this step shows them');
+  coldWhy.hidden = true;
   const keyItem = (glyph: SVGSVGElement, label: string, note: string, cold = false) => h(cold ? 'li.cold' : 'li', null, glyph, h('span', null, label), h('span.visually-hidden', null, `: ${note}`));
   const legend = h(
     'div.hld-legend', null,
@@ -502,7 +521,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     ),
     h(
       'div.hld-key-row', null,
-      h('p.hld-cold-toggle', null, coldBox, h('label', { for: `${design.id}-cold` }, 'Show recovery and reprocessing paths')),
+      h('p.hld-cold-toggle', null, coldBox, h('label', { for: `${design.id}-cold` }, 'Show recovery and reprocessing paths', coldWhy)),
       h(
         'details.hld-key-notes', null,
         h('summary', null, 'What each line promises'),
@@ -1010,6 +1029,12 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       let dy = 0;
       if (f.bottom > innerHeight - 12) dy = f.bottom - innerHeight + 12;
       if (c.top - dy < headH + 8) dy = c.top - headH - 8;
+      // On the tour the readout is never left half on screen: if it would be cut, the transport becomes the top edge.
+      if (step >= 0) {
+        const r = readout.getBoundingClientRect();
+        const t = transport.getBoundingClientRect();
+        if (r.top - dy < 0 && r.bottom - dy > 0) dy = t.top;
+      }
       if (Math.abs(dy) > 1) window.scrollBy({ top: dy, behavior });
     } else {
       const d = detailBody.getBoundingClientRect();
@@ -1215,13 +1240,18 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     stage.classList.toggle('playing', playing);
     const atEnd = step === design.tour.length - 1;
     playBtn.replaceChildren(icon(playing ? 'pause' : 'play'), playLabel);
-    playLabel.textContent = playing ? 'Pause' : !inTour ? (leftAt > 0 ? `Resume at step ${leftAt + 1}` : 'Play the tour') : atEnd && !trip && !starting ? 'Replay' : 'Play';
+    playLabel.textContent = playing ? 'Pause' : !inTour ? (leftAt > 0 ? `Resume at step ${leftAt + 1}` : 'Play the tour') : atEnd && !trip && !starting ? 'Play again from step 1' : 'Play';
     playBtn.setAttribute('aria-label', playLabel.textContent);
     disable(restartBtn, inTour ? step <= 0 : leftAt <= 0);
     disable(backBtn, step <= 0);
     disable(nextBtn, atEnd);
     if (!inTour && document.activeElement === exploreBtn) playBtn.focus({ preventScroll: true });
     exploreBtn.hidden = !inTour;
+    const forced = inTour && !!s?.recovery && !showCold;
+    coldBox.checked = showCold || forced;
+    if (forced && document.activeElement === coldBox) playBtn.focus({ preventScroll: true });
+    coldBox.disabled = forced;
+    coldWhy.hidden = !forced;
     syncHead();
     paintFlows(light);
     // Chips may have come or gone: each pill checks it still covers nothing.
@@ -1238,8 +1268,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const inTour = step >= 0;
     const limit = innerHeight * HEAD_SHARE;
     const tH = transport.offsetHeight;
-    // Very narrow (a 320px phone): the readout shows only the step's title until More is pressed, so the diagram keeps most of the screen.
-    const tiny = inTour && small() && innerWidth < 360;
+    // A phone held upright: the readout shows only the step's title until More is pressed, so the diagram keeps most of the screen.
+    const tiny = inTour && small() && innerWidth < 600;
     const brief = inTour && (tiny || reserve + tH > limit);
     stage.classList.toggle('brief', brief);
     stage.classList.toggle('tiny', tiny);
@@ -1293,7 +1323,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       playBtn.style.removeProperty('--play-w');
       let most = 0;
       // "Resume at step 12", shown only off the tour, may make it wider still.
-      for (const t of ['Play the tour', 'Pause', 'Play', 'Replay']) {
+      for (const t of ['Play the tour', 'Pause', 'Play', 'Play again from step 1']) {
         playLabel.textContent = t;
         most = Math.max(most, playBtn.offsetWidth);
       }
@@ -1310,6 +1340,20 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     // On a phone on its side the transport sits on the title's line: the title keeps clear of it, at its widest.
     countLong.textContent = `Step ${n} of ${n}`;
     countShort.textContent = `${n}/${n}`;
+    // The count keeps the width of its longest wording, so the controls after it never shift between steps.
+    counter.style.minWidth = '';
+    counter.style.minWidth = `${Math.ceil(counter.getBoundingClientRect().width)}px`;
+    // The key hints show only where the transport keeps to one row with them, at its widest.
+    const wasPlay = playLabel.textContent;
+    playLabel.textContent = 'Play again from step 1';
+    keyHints.classList.remove('squeezed');
+    const wraps = () => {
+      const kids = Array.from(transport.children).filter((c) => (c as HTMLElement).offsetParent) as HTMLElement[];
+      const rs = kids.map((c) => c.getBoundingClientRect());
+      return rs.length > 1 && Math.max(...rs.map((r) => r.top)) >= Math.min(...rs.map((r) => r.bottom));
+    };
+    if (wraps()) keyHints.classList.add('squeezed');
+    playLabel.textContent = wasPlay;
     head.style.setProperty('--hld-tw', `${Math.ceil(transport.offsetWidth)}px`);
     const most = { full: 0, brief: 0, tiny: 0 };
     for (const mode of ['full', 'brief', 'tiny'] as const) {
@@ -1472,8 +1516,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
    * One pill place for a whole leg, chosen once from the leg's whole path: the
    * place with least under it along the way, where it rests at either end clear
    * of every box, chip and the other token's pill. On the move it may pass over
-   * a thin line (its halo keeps it legible) or slip under a chip (chips are
-   * drawn above it), but it never fades and never changes side mid-leg.
+   * a thin line (its halo keeps it legible) or over a chip (the token is drawn
+   * above the chips), but it never fades and never changes side mid-leg.
    */
   const sideCache = new Map<string, Pt>();
   function legPlace(i: number, which: Who, n: number, l: Omit<PathSeg, 'off'>, avoid: Box | null): Pt {
@@ -1482,7 +1526,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     if (hit) return hit;
     const s = design.tour[i];
     const { chips, lines } = drawnFor(i);
-    // The leg's own chip sits on its way: the pill may slip under it on the move, but not rest under it.
+    // The leg's own chip sits on its way: the pill may pass over it on the move, but not rest on it.
     const own = legOf((which === 'main' ? s.path : s.branch!.path)[n]).fl.id;
     const gBoxes = grid('boxes');
     const gChips = grid('rest', chips);
@@ -2007,7 +2051,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   let cam = false;
   /** The screen size the canvas height was worked out for: it is worked out once for the tour, and again only if the screen changes. */
   let camFor = '';
-  const CAM_PAD = 10;
+  const CAM_PAD = 6;
   function setCam(on: boolean): void {
     if (cam !== on) {
       cam = on;
@@ -2066,36 +2110,66 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const fl = flowById.get(lineIdOf.get(l.el)!)!;
     return boxOf(l.back ? fl.to : fl.from);
   };
-  /** Where a step comes to rest: the box the trip ends at, the chip of its last leg and the token's label, and the branch too when they all fit. */
-  function camRestRegion(i: number, k: number): Box {
-    const legs = pathLegs(i);
-    const last = legs[legs.length - 1];
-    const pill = restBox(i, 'main');
-    const must = pill ? union(union(endBox(i), pill), dotBox(endOf(i))) : endBox(i);
-    const withChip = chipOf(last, i) ? union(must, chipOf(last, i)!) : must;
-    let all: Box | null = null;
-    if (design.tour[i].branch) {
-      const br = pathLegs(i, 'branch');
-      const bl = br[br.length - 1];
-      const bp = restBox(i, 'branch');
-      if (bl && bp) {
-        const fl = flowById.get(lineIdOf.get(bl.el)!)!;
-        all = union(union(withChip, bp), boxOf(bl.back ? fl.from : fl.to));
-      }
+  /** The scale at which a region just fits the canvas, with a margin. */
+  const fitK = (u: Box) => Math.min((canvas.clientWidth - 2 * CAM_PAD) / u.w, (canvas.clientHeight - 2 * CAM_PAD) / u.h);
+  /**
+   * The largest scale the tour zooms to on a small screen: where the diagram
+   * just fills the canvas's height, so no empty band shows above or below it
+   * while part of it is out of view. Never below the floor.
+   */
+  const camMaxK = () => Math.max(FLOOR_SCALE, Math.min(1, canvas.clientHeight / H));
+  /** A leg's two boxes, in the order the token travels them. */
+  const legEnds = (l: PathSeg): [Box, Box] => {
+    const fl = flowById.get(lineIdOf.get(l.el)!)!;
+    const a = boxOf(fl.from);
+    const b = boxOf(fl.to);
+    return l.back ? [b, a] : [a, b];
+  };
+  /** One token's trip: every box it leaves or reaches, the chips of its legs, and its label where it comes to rest. */
+  function tripRegion(i: number, which: Who): Box | null {
+    const legs = pathLegs(i, which);
+    if (!legs.length) return null;
+    let u: Box | null = null;
+    for (const l of legs) {
+      const [a, b] = legEnds(l);
+      u = union(union(u, a), b);
+      const c = chipOf(l, i);
+      if (c) u = union(u, c);
     }
-    return firstFit([all, withChip, must], k);
+    const pb = restBox(i, which);
+    return pb ? union(u, pb) : u;
+  }
+  /** The connections that fail on a step, with their boxes and chips: the step opens on them. */
+  function failRegion(i: number): Box | null {
+    let u: Box | null = null;
+    const { chips } = drawnFor(i);
+    for (const id of design.tour[i].failed ?? []) {
+      const fl = flowById.get(id)!;
+      u = union(union(u, boxOf(fl.from)), boxOf(fl.to));
+      if (chips.includes(id)) u = union(u, chipBox.get(id)!);
+    }
+    return u;
+  }
+  /** Where a step ends: the box the trip ends at, the dot and the token's label, and the chip of its last leg unless `chip` is false. */
+  function endRegion(i: number, chip = true): Box {
+    const legs = pathLegs(i);
+    const e = endOf(i);
+    let u = union(union(endBox(i), dotBox(e)), pillAt(e, restOff(i), pillWidth(endLabel(i))));
+    const c = chip ? chipOf(legs[legs.length - 1], i) : null;
+    if (c) u = union(u, c);
+    return u;
   }
   /** Where a step too big for the canvas starts: the box and chip of its first leg and the token's label, placed so that the way it goes is in view. */
   function camStartRegion(i: number, k: number): Box {
     const legs = pathLegs(i);
     const first = legs[0];
-    if (!first) return camRestRegion(i, k);
+    if (!first) return endRegion(i);
     const st = legStart(first);
     const sp = union(dotBox(st), pillAt(st, first.off, pillWidth(first.label)));
     const s0 = union(fromBoxOf(first), sp);
     const s1 = chipOf(first, i) ? union(s0, chipOf(first, i)!) : s0;
-    const r = firstFit([union(s1, endBox(i)), s1, sp], k);
-    if (r !== s1 && r !== s0) return r;
+    const fitsAt = (u: Box) => u.w * k <= canvas.clientWidth - 2 * CAM_PAD && u.h * k <= canvas.clientHeight - 2 * CAM_PAD;
+    const r = [s1, s0, sp].find(fitsAt) ?? sp;
     // Slide the view towards where the trip goes, keeping the start in it.
     const vw = (canvas.clientWidth - 2 * CAM_PAD) / k;
     const vh = (canvas.clientHeight - 2 * CAM_PAD) / k;
@@ -2105,6 +2179,63 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const w = Math.max(r.w, vw);
     const hh = Math.max(r.h, vh);
     return { x: toRight ? r.x : r.x + r.w - w, y: toDown ? r.y : r.y + r.h - hh, w, h: hh };
+  }
+  /** What the canvas would show centred on c at scale k, in diagram units, held inside the diagram as camApply holds it. */
+  function camViewAt(k: number, c: Pt): Box {
+    const cw = canvas.clientWidth;
+    const ch = canvas.clientHeight;
+    const sw = W * k;
+    const sh = H * k;
+    const sl = sw <= cw ? 0 : Math.max(0, Math.min(c.x * k - cw / 2, sw - cw));
+    const st = sh <= ch ? 0 : Math.max(0, Math.min(c.y * k - ch / 2, sh - ch));
+    return { x: (sl - Math.max(0, (cw - sw) / 2)) / k, y: (st - Math.max(0, (ch - sh) / 2)) / k, w: cw / k, h: ch / k };
+  }
+  /**
+   * The camera's plan for a step on a small screen. It rests on the whole
+   * step if that fits at or above the floor; else on every box the trip
+   * touches with their chips and the token's label; else on where the trip
+   * ends (with the connections that fail, when they fit too). The scale is
+   * the largest at which that fits, up to filling the canvas's height. A step
+   * whose trip is not all in that view, or whose failure is not, opens on its
+   * source (or its failure) for a beat and the view follows the token.
+   */
+  let camPlan: { k: number; rest: Box; start: Box | null } | null = null;
+  function planCam(i: number): { k: number; rest: Box; start: Box | null; whole: boolean } {
+    const fits = (u: Box | null): u is Box => !!u && fitK(u) >= FLOOR_SCALE - 1e-6;
+    const all = stepBox(i);
+    const main = tripRegion(i, 'main');
+    const br = design.tour[i].branch ? tripRegion(i, 'branch') : null;
+    const trip = main && br ? union(main, br) : main;
+    const end = endRegion(i);
+    const bare = endRegion(i, false);
+    const fail = failRegion(i);
+    let rest = end;
+    let whole = false;
+    if (fits(all)) {
+      rest = all;
+      whole = true;
+    } else if (fits(trip)) {
+      rest = trip;
+      whole = true;
+    } else if (br && fits(main)) {
+      // The main trip fits but not its branch: rest on the main trip; the view follows the branch token on its way.
+      rest = main;
+    } else {
+      // The last leg whole: the box it leaves, its chip, the box it reaches and the label.
+      const legs = pathLegs(i);
+      const ll = legs[legs.length - 1];
+      const leg = ll ? union(union(end, legEnds(ll)[0]), legEnds(ll)[1]) : end;
+      // A step about a failure keeps the failure in its rest view when it can: before the last leg's chip, if that is far off.
+      const tries = fail ? [union(leg, fail), union(end, fail), union(bare, fail), leg, end, bare] : [leg, end, bare];
+      rest = tries.find(fits) ?? bare;
+    }
+    const k = Math.min(camMaxK(), Math.max(FLOOR_SCALE, fitK(rest)));
+    const view = camViewAt(k, camCentre(rest));
+    let start: Box | null = null;
+    if (fail && !within(fail, view, 1)) start = fits(fail) ? fail : union(boxOf(design.tour[i].failed![0]), dotBox(startOf(i)));
+    else if (!whole && pathLegs(i).length) start = camStartRegion(i, k);
+    // A failure the view must open on is framed at a scale that shows it whole, if the rest allows.
+    return { k, rest, start, whole: whole && !start };
   }
   /** Glide the zoom and the view centre together, and the page to y, in about 280ms (at once with reduced motion). Returns how long it takes. */
   function camGlide(k1: number, c1: Pt, y1: number): number {
@@ -2133,21 +2264,113 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   }
   /** The page sits with the stage at the top of the screen for the whole tour: the readout, then the canvas. */
   const camPageY = () => Math.max(0, Math.min(stage.getBoundingClientRect().top + window.scrollY, document.documentElement.scrollHeight - innerHeight));
-  /** The step's first view on a small screen: the whole step if it fits at or above the floor, otherwise where its trip starts. */
+  /** How long a step holds its opening view (its source, or its failure) before the token sets off, with motion. */
+  const BEAT = 700;
+  /** Set by the view for the step it is opening: whether it opens on something for a beat first. */
+  let openBeat = 0;
+  /** The step's first view on a small screen: the whole step if it fits at or above the floor, otherwise where its trip starts (or its failure). */
   function camStep(i: number): number {
     setCam(true);
-    const u = stepBox(i);
-    const kFit = Math.min((canvas.clientWidth - 2 * CAM_PAD) / u.w, (canvas.clientHeight - 2 * CAM_PAD) / u.h);
-    stepFits = kFit >= FLOOR_SCALE;
-    const k = stepFits ? Math.min(BASE_SCALE, kFit) : FLOOR_SCALE;
-    const r = stepFits ? u : camStartRegion(i, k);
-    return camGlide(k, camCentre(r), camPageY());
+    const p = planCam(i);
+    camPlan = p;
+    stepFits = p.whole;
+    const motion = !reducedMotion();
+    openBeat = motion && p.start ? BEAT : 0;
+    const r = motion && p.start ? p.start : p.rest;
+    return camGlide(p.k, camCentre(r), camPageY());
   }
-  /** The trip has ended: a step too big for the canvas comes to rest on where it ended. */
-  function camRest(i: number): number {
-    if (!cam || stepFits || tourK == null) return 0;
-    return camGlide(tourK, camCentre(camRestRegion(i, tourK)), window.scrollY);
+  /** The trip has ended: the view comes to rest on the step's rest frame. */
+  function camRest(_i: number): number {
+    if (!cam || !camPlan || tourK == null) return 0;
+    return camGlide(camPlan.k, camCentre(camPlan.rest), window.scrollY);
   }
+  /**
+   * The edge signs: at rest on a small screen, each lit box not wholly in view
+   * gets a sign at the edge of the canvas it lies beyond, saying its name with
+   * an arrow towards it. They are for the eye and the finger: the readout
+   * already names both ends of the step, so they are hidden from screen readers.
+   */
+  function updateMarks(): void {
+    if (!cam || step < 0 || fitted || tourK == null || stage.dataset.phase !== 'rest') {
+      if (marks.firstChild) marks.replaceChildren();
+      return;
+    }
+    const k = tourK;
+    const v = camView();
+    const cw = canvas.clientWidth;
+    const ch = canvas.clientHeight;
+    const taken: { side: string; at: number }[] = [];
+    const out: HTMLElement[] = [];
+    // What a sign must not cover: the lit boxes in view, the live chips, and the token.
+    const px = (b: Box): Box => ({ x: (b.x - v.x) * k, y: (b.y - v.y) * k, w: b.w * k, h: b.h * k });
+    const avoid: Box[] = [];
+    for (const id of design.tour[step].focus) avoid.push(px(boxOf(id)));
+    for (const l of liveLegs()) if (chipShown(l.fl, needed(true), new Set(liveLegs().map((x) => x.fl.id)))) avoid.push(px(chipBox.get(l.fl.id)!));
+    for (const tk of [token, branchTok]) {
+      if (tk.g.style.display === 'none' || !tk.at) continue;
+      avoid.push(px(dotBox(tk.at)));
+      if (tk.pillBox) avoid.push(px(tk.pillBox));
+    }
+    for (const id of design.tour[step].focus) {
+      const b = boxOf(id);
+      if (within(b, v, 0.5)) continue;
+      const cx = b.x + b.w / 2;
+      const cy = b.y + b.h / 2;
+      const dx = (cx - (v.x + v.w / 2)) / v.w;
+      const dy = (cy - (v.y + v.h / 2)) / v.h;
+      const side = Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : dy < 0 ? 'top' : 'bottom';
+      const across = side === 'left' || side === 'right';
+      // A box partly in view: its sign sits beside it along the edge, not on the part that shows.
+      const partY = b.y + b.h > v.y && b.y < v.y + v.h;
+      const partX = b.x + b.w > v.x && b.x < v.x + v.w;
+      let at = across ? (cy - v.y) * k : (cx - v.x) * k;
+      if (across && partX && partY) at = (b.y + b.h - v.y) * k + 20 <= ch - 18 ? (b.y + b.h - v.y) * k + 20 : (b.y - v.y) * k - 20;
+      else if (!across && partX && partY) at = (b.x + b.w - v.x) * k + 74 <= cw - 70 ? (b.x + b.w - v.x) * k + 74 : (b.x - v.x) * k - 74;
+      at = across ? Math.max(20, Math.min(ch - 20, at)) : Math.max(70, Math.min(cw - 70, at));
+      // Two signs on one edge never sit on each other.
+      while (taken.some((t) => t.side === side && Math.abs(t.at - at) < (across ? 34 : 120))) at += across ? 34 : 120;
+      taken.push({ side, at });
+      const c = byId.get(id)!;
+      const name = c.short ?? c.name;
+      const arrow = { left: '←', right: '→', top: '↑', bottom: '↓' }[side];
+      const m = h(`div.hld-mark.${side}`, { onclick: () => camGlide(k, { x: cx, y: cy }, window.scrollY) }, side === 'right' ? `${name} ${arrow}` : `${arrow} ${name}`);
+      m.style.setProperty('--at', `${at.toFixed(0)}px`);
+      out.push(m);
+    }
+    marks.replaceChildren(...out);
+    // Laid out: a sign that covers a lit box, a live chip or the token slides along its edge to the nearest clear place.
+    const cr = canvas.getBoundingClientRect();
+    const placed: Box[] = [];
+    for (const m of out) {
+      const r = m.getBoundingClientRect();
+      const box0 = { x: r.left - cr.left, y: r.top - cr.top, w: r.width, h: r.height };
+      const across = m.classList.contains('left') || m.classList.contains('right');
+      const at0 = parseFloat(m.style.getPropertyValue('--at'));
+      const lo = across ? 18 : r.width / 2 + 4;
+      const hi = across ? ch - 18 : cw - r.width / 2 - 4;
+      // Nearest first along the whole edge; where nowhere is clear, the place that covers least.
+      let best = { at: at0, cost: Infinity };
+      const overlap = (a: Box, o: Box) => Math.max(0, Math.min(a.x + a.w, o.x + o.w + 2) - Math.max(a.x, o.x - 2)) * Math.max(0, Math.min(a.y + a.h, o.y + o.h + 2) - Math.max(a.y, o.y - 2));
+      for (let at = lo; at <= hi; at += 4) {
+        const d = at - at0;
+        const b = across ? { ...box0, y: box0.y + d } : { ...box0, x: box0.x + d };
+        const cost = [...avoid, ...placed].reduce((t, o) => t + overlap(b, o), 0) * 10 + Math.abs(d);
+        if (cost < best.cost) best = { at, cost };
+      }
+      m.style.setProperty('--at', `${best.at.toFixed(0)}px`);
+      const r2 = m.getBoundingClientRect();
+      placed.push({ x: r2.left - cr.left, y: r2.top - cr.top, w: r2.width, h: r2.height });
+    }
+  }
+  let marksRaf = 0;
+  canvas.addEventListener('scroll', () => {
+    if (!cam || marksRaf) return;
+    marksRaf = requestAnimationFrame(() => {
+      marksRaf = 0;
+      if (alive) updateMarks();
+    });
+  }, { passive: true });
+
   /** While the token moves through a step too big for the canvas, the view pans with it, a little each frame. */
   function camFollow(x: number, y: number, tk: Tok): void {
     if (stepFits || tourK == null || reducedMotion() || !followsTokenOrStill()) return;
@@ -2298,7 +2521,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   function arrived(i: number): void {
     stage.dataset.phase = 'rest';
     if (cam) {
-      camRest(i);
+      const ms = camRest(i);
+      updateMarks();
+      if (ms) window.setTimeout(() => alive && updateMarks(), ms + 30);
       dwell(i);
       return;
     }
@@ -2322,6 +2547,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const vh = innerHeight;
     if (!force && (sr.bottom < 40 || sr.top > vh - 40)) return 0;
     if (small() && !fitted) return camStep(i);
+    // A step about a failure shows the failure for a beat before the token sets off, at every size.
+    openBeat = !reducedMotion() && design.tour[i].failed?.length ? BEAT : 0;
     if (cam || tourK != null) {
       tourK = null;
       stepFits = true;
@@ -2603,7 +2830,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     countLong.textContent = `Step ${i + 1} of ${design.tour.length}`;
     countShort.textContent = `${i + 1}/${design.tour.length}`;
     measureReserve();
-    const ms = follow(i, manual || whole);
+    openBeat = 0;
+    marks.replaceChildren();
+    const ms0 = follow(i, manual || whole);
+    // The view glides to the step, then holds its opening view for a beat when it has one.
+    const ms = ms0 + (ms0 > 0 || openBeat ? openBeat : 0);
     if (ms > 0) {
       // The view glides to the step first. The readout, the lit boxes and lines change on the frame the glide starts,
       // and the old token goes on that frame too; the new trip fades the token in where it starts once the view is there.
@@ -2712,9 +2943,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     // Back to the reading scale.
     tourK = null;
     stepFits = true;
+    camPlan = null;
     setCam(false);
     sync();
     zoomFor();
+    updateMarks();
     // The readout drops its touring height: keep the diagram where it was on screen.
     const after = canvas.getBoundingClientRect().top;
     if (Math.abs(after - before) > 0.5 && before < innerHeight && canvas.getBoundingClientRect().bottom > 0) window.scrollBy(0, after - before);
@@ -2726,15 +2959,15 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const old = speed;
     speed = s;
     speedBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(SPEEDS[i] === s)));
-    speedCycle.textContent = `${s}×`;
-    speedCycle.setAttribute('aria-label', `${s}×, ${SPEED_NAMES[s].toLowerCase()}. Change speed`);
+    speedCycle.textContent = speedWord(s);
+    speedCycle.setAttribute('aria-label', cycleName(s));
     // A running trip reads the speed on every frame, and the glide has no timer of its own: only a running wait needs re-arming.
     if (playing && timer) {
       const left = Math.max(0, dwellMs - (performance.now() - dwellAt));
       dwell(step, Math.max(0, (left * Math.max(1, old)) / Math.max(1, s)));
     } else if (!playing && dwellLeft) dwellLeft = (dwellLeft * Math.max(1, old)) / Math.max(1, s);
   }
-  speedCycle.setAttribute('aria-label', '1×, normal speed. Change speed');
+  speedCycle.setAttribute('aria-label', cycleName(1));
 
   function setFit(on: boolean): void {
     fitted = on;
@@ -2743,6 +2976,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     fitBtn.setAttribute('aria-pressed', String(on));
     syncPan();
     if (step >= 0) follow(step, true);
+    updateMarks();
   }
 
   /** The cues for a diagram wider than its box: a fade at each edge with more to see, and a line saying so. */
@@ -2764,7 +2998,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       canvas.removeAttribute('role');
       canvas.removeAttribute('aria-label');
     }
-    // Floating in the corner of the tour's canvas on a phone, the button says less.
+    // In the strip under the tour's canvas on a phone, the button says less.
     const fitText = cam ? 'Whole diagram' : 'Overview: whole diagram, small text';
     if (fitBtn.textContent !== fitText) fitBtn.textContent = fitText;
     panHint.textContent = fitted
@@ -2773,8 +3007,25 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
         ? 'The diagram is wider than the screen: drag it sideways to see the rest.'
         : 'The diagram is wider than its box: scroll it sideways, or focus it and use the arrow keys.';
   }
+  /**
+   * A diagram wider than its box, at rest: it starts scrolled so the node's
+   * frame is in the middle, with the outside boxes at the edges, until the
+   * reader moves it.
+   */
+  let handled = false;
+  function centreFrame(): void {
+    if (handled || step >= 0 || cam || fitted) return;
+    const over = canvas.scrollWidth - canvas.clientWidth;
+    if (over <= 1) return;
+    const k = svg.getBoundingClientRect().width / W;
+    canvas.scrollLeft = Math.max(0, Math.min((fr.x + fr.w / 2) * k - canvas.clientWidth / 2, over));
+  }
   // A reader who takes hold of the diagram stops the glance at the parts out of sight.
-  for (const ev of ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const) canvas.addEventListener(ev, () => glanceTimer && cancelGlance(), { passive: true });
+  for (const ev of ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const)
+    canvas.addEventListener(ev, () => {
+      handled = true;
+      if (glanceTimer) cancelGlance();
+    }, { passive: true });
   canvas.addEventListener('scroll', () => {
     pan.classList.toggle('more-left', canvas.scrollLeft > 2);
     pan.classList.toggle('more-right', canvas.scrollLeft < canvas.scrollWidth - canvas.clientWidth - 2);
@@ -2808,7 +3059,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     if (!onControls && !(onBody && stageInView())) return;
     if (e.key === 'ArrowRight' && step < design.tour.length - 1) {
       e.preventDefault();
-      go(step + 1, true);
+      go(nextStep(), true);
     } else if (e.key === 'ArrowLeft' && step > 0) {
       e.preventDefault();
       go(step - 1, true);
@@ -2870,6 +3121,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       measureReserve();
       if (step < 0) stepText.textContent = restText();
       syncPan();
+      centreFrame();
       sync(!starting);
       // The readout settles its height (title only, or the whole step) first; then the view follows the step.
       requestAnimationFrame(() =>
@@ -2885,6 +3137,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   renderDetail(null);
   sync();
   syncPan();
+  centreFrame();
 
   /** Focus moved by a link, not a key: no mark is drawn for it until the reader presses a key there. */
   function quietFocus(e: HTMLElement): void {
@@ -2909,7 +3162,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
         renderDetail(null, `There is no ${what} called "${open.id}" on this diagram. Pick one below.`);
         detailBody.scrollIntoView({ block: 'start' });
         (detailBody.querySelector('.hld-missing') as HTMLElement).focus({ preventScroll: true });
-        status.textContent = `No ${what} called ${open.id}.`;
+        // Said after a moment: a status region filled in the same moment it is added to the page is often not read out.
+        status.textContent = '';
+        window.setTimeout(() => {
+          if (alive) status.textContent = `No ${what} called ${open.id}.`;
+        }, 400);
       };
       const h3 = () => detailBody.querySelector('h3') as HTMLElement | null;
       if (open.kind === 'c') {

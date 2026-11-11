@@ -86,7 +86,7 @@ export const webCrawler: Design = {
       fails: 'Slow or hostile servers hold sockets open for ever, so every phase has a deadline. On a 429 or 503, honour Retry-After, otherwise double the host\'s delay and shorten it slowly after successes. Many errors in a row pause the host for hours.',
       alternatives: [
         { name: 'Event-loop fetchers, many small nodes', chosen: true, good: 'Thousands of sockets per process, cheap to add and lose.', cost: 'Back-pressure has to be designed, not assumed.' },
-        { name: 'A few very large network-optimised machines', good: 'For a one-off crawl of 10 billion pages in five days, about eight 200 Gbit/s instances carry the bandwidth.', cost: 'Each machine is a large blast radius, and the estimate needs load testing.' },
+        { name: 'A few very large network-optimised machines', good: 'For a one-off crawl of 10 billion pages in five days at about 100 KB a page: 1 PB in 432,000 seconds, about 18.5 Gbit/s. One 200 Gbit/s instance carries that bandwidth; two or three give a spare and room for slow sites.', cost: 'Each machine is a large blast radius, and the estimate needs load testing.' },
         { name: 'A thread per request', good: 'Simple code.', cost: 'Memory and context switching at thousands of concurrent fetches.' },
       ],
       say: 'A crawler fetches URLs chosen by strangers, so it is a request-forgery engine by design. I check every resolved address against private ranges, connect to exactly that address, and check again on each redirect.',
@@ -630,8 +630,8 @@ export const webCrawler: Design = {
     },
     {
       name: 'One-off crawl for a corpus',
-      scale: '10 billion pages in under five days',
-      shape: 'A queue with visibility timeouts and a dead-letter queue, stateless fetchers on a few very large machines, a metadata table, and a lock and counter per domain in Redis. Simpler to build, and enough when nothing is revisited.',
+      scale: '10 billion pages in under five days: at about 100 KB a page, about 18.5 Gbit/s',
+      shape: 'A queue with visibility timeouts and a dead-letter queue, stateless fetchers on two or three large network-optimised machines (one 200 Gbit/s instance carries the bandwidth), a metadata table, and a lock and counter per domain in Redis. Simpler to build, and enough when nothing is revisited.',
     },
     {
       name: 'One site, one machine',
