@@ -70,7 +70,9 @@ document.addEventListener('keydown', (e) => {
   const t = e.target as HTMLElement;
   if (e.key === '/' && shortcutsOn() && !e.ctrlKey && !e.metaKey && !e.altKey && !t.closest('input, textarea, select, [contenteditable]')) {
     e.preventDefault();
-    searchInput.focus();
+    // Mid-page the box may already be on screen (the sidebar sticks): then the page stays where it is.
+    const r = searchInput.getBoundingClientRect();
+    searchInput.focus({ preventScroll: r.top >= 0 && r.bottom <= innerHeight });
     searchInput.select();
   }
 });

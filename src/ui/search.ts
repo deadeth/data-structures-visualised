@@ -4,7 +4,7 @@ import { MODES } from '../designs/types';
 import { slug } from './design-page';
 
 interface Doc {
-  kind: 'Term' | 'Component' | 'Connection' | 'Tour step' | 'Structure';
+  kind: 'Term' | 'Component' | 'Connection' | 'Tour step' | 'Decision' | 'Structure';
   title: string;
   /** Other names that should find this entry. */
   also: string[];
@@ -37,17 +37,29 @@ function build(): Promise<Doc[]> {
       });
     }
     for (const f of d.flows) {
+      const mode = MODES.find((m) => m.id === f.mode)!.label;
       docs.push({
         kind: 'Connection',
         title: `${name(f.from)} to ${name(f.to)}`,
-        also: [f.via, MODES.find((m) => m.id === f.mode)!.label],
+        also: [f.via, mode, ...(f.label ? [f.label] : [])],
         text: [f.how, f.delivery, ...f.alts].join(' '),
         href: `${base}/f/${f.id}`,
         where: `${d.name}: connection by ${f.via}`,
       });
+      // The reply on a two-way line is found on its own, and opens the same line.
+      if (f.reply) {
+        docs.push({
+          kind: 'Connection',
+          title: `${name(f.to)} to ${name(f.from)}`,
+          also: [f.via, mode, f.reply.label],
+          text: [f.reply.how, f.reply.delivery].join(' '),
+          href: `${base}/f/${f.reply.id}`,
+          where: `${d.name}: the reply on the ${f.via} line`,
+        });
+      }
     }
     d.tour.forEach((t, i) => docs.push({ kind: 'Tour step', title: t.title, also: [], text: t.text, href: `${base}/t/${i + 1}`, where: `${d.name}: tour step ${i + 1}` }));
-    for (const dec of d.decisions) docs.push({ kind: 'Term', title: dec.choice, also: [], text: `${dec.a} ${dec.b} ${dec.call}`, href: base, where: `${d.name}: decisions worth defending` });
+    for (const dec of d.decisions) docs.push({ kind: 'Decision', title: dec.choice, also: [], text: `${dec.a} ${dec.b} ${dec.call}`, href: base, where: `${d.name}: decisions worth defending` });
 
     await Promise.all(
       CATALOG.filter((c) => isReady(c.id)).map(async (c) => {
@@ -159,7 +171,7 @@ const followed = new Map<string, string>();
 export async function mountSearch(host: HTMLElement, query: string, returning = false): Promise<() => void> {
   const q = query.trim();
   const words = fold(q).split(/\s+/).filter(Boolean);
-  const list = h('ol.search-results', null);
+  const list = h('div.search-groups', null);
   const summary = h('p.search-summary', null, q ? 'Searching…' : 'Type in the search box to look something up.');
   const tries = h(
     'p.search-tries', null, 'Try: ',
@@ -177,25 +189,37 @@ export async function mountSearch(host: HTMLElement, query: string, returning = 
       .slice(0, 40);
     summary.textContent = hits.length ? `${hits.length === 40 ? 'The best 40 matches' : hits.length === 1 ? '1 match' : `${hits.length} matches`} across the glossary, the system design and the data structures.` : `Nothing matches "${q}". Check the spelling, or try a shorter word.`;
     announce(summary.textContent);
+    // Results are grouped by where they live, best match first within each group, and the groups in the order of their best match.
+    const groupOf = (k: Doc['kind']) => (k === 'Term' ? 'Glossary' : k === 'Structure' ? 'Data structures' : 'System design');
+    const groups = new Map<string, Doc[]>();
     for (const { d } of hits) {
-      // When the match is in another name for the entry (a technology, an alternative) and not its text, show that name, marked.
-      const inText = has(d.text, words);
-      const other = !inText && !has(d.title, words) ? d.also.find((a) => has(a, words)) : undefined;
-      list.append(
-        h(
-          'li', null,
-          h('p.search-kind', null, d.kind),
-          // The kind is read out with the title, so two results with one name (a term and a structure) can be told apart.
-          h('h2', null, h('a', { href: d.href, onclick: () => followed.set(q, d.href) }, excerpt(d.title, words, true), h('span.visually-hidden', null, `, ${d.kind.toLowerCase()}`))),
-          other ? h('p.search-also', null, 'Also: ', excerpt(other, words, true)) : null,
-          h('p.search-text', null, excerpt(d.text, words, d.kind === 'Term')),
-          h('p.search-where', null, d.where),
-        ),
-      );
+      const g = groupOf(d.kind);
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g)!.push(d);
+    }
+    for (const [g, docs] of groups) {
+      const ol = h('ol.search-results', null);
+      for (const d of docs) {
+        // When the match is in another name for the entry (a technology, an alternative) and not its text, show that name, marked.
+        const inText = has(d.text, words);
+        const other = !inText && !has(d.title, words) ? d.also.find((a) => has(a, words)) : undefined;
+        ol.append(
+          h(
+            'li', null,
+            h('p.search-kind', null, h('span.search-pill', { class: `kind-${slug(d.kind)}` }, d.kind)),
+            // The kind is read out with the title, so two results with one name (a term and a structure) can be told apart.
+            h('h3', null, h('a', { href: d.href, onclick: () => followed.set(q, d.href) }, excerpt(d.title, words, true), h('span.visually-hidden', null, `, ${d.kind.toLowerCase()}`))),
+            other ? h('p.search-also', null, 'Also: ', excerpt(other, words, true)) : null,
+            h('p.search-text', null, excerpt(d.text, words, d.kind === 'Term')),
+            h('p.search-where', null, d.where),
+          ),
+        );
+      }
+      list.append(h('section.search-group', { 'aria-label': `${g}, ${docs.length} ${docs.length === 1 ? 'match' : 'matches'}` }, h('h2.search-group-head', null, g, h('span.search-group-count', null, ` ${docs.length}`)), ol));
     }
     const back = returning ? followed.get(q) : undefined;
     if (back) {
-      const a = [...list.querySelectorAll('h2 a')].find((x) => x.getAttribute('href') === back) as HTMLElement | undefined;
+      const a = [...list.querySelectorAll('h3 a')].find((x) => x.getAttribute('href') === back) as HTMLElement | undefined;
       a?.focus({ preventScroll: true });
     }
   } else announce(summary.textContent ?? '');

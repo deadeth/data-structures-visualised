@@ -1,6 +1,12 @@
 /* System design pages: a diagram you can tour and open up. Uses the site's tokens. */
 
+/* The design page may run wider than the text pages, so a big screen gets a big diagram. */
+main:has(> .design) {
+  max-width: 1600px;
+}
+
 .hld {
+  overflow-anchor: none;
   margin-top: 16px;
   border: 1px solid var(--rule);
   border-radius: var(--radius);
@@ -14,7 +20,8 @@
   background: var(--surface);
 }
 
-.hld.touring:not(.reading) .hld-head {
+/* Never more than 40 per cent of the screen: past that the readout shows only its title (see .brief), and if even that is too tall it stops sticking (.unstick). */
+.hld.touring:not(.reading):not(.unstick) .hld-head {
   position: sticky;
   top: 0;
   z-index: 3;
@@ -25,6 +32,25 @@
   padding: 11px 20px 11px;
   background: var(--ink);
   color: #fff;
+}
+
+.hld-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+/* Before the tour the readout is one line: the title, then how to use the diagram. */
+.hld:not(.touring) .hld-readout:not(.hld-measure) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 14px;
+  padding-block: 10px;
+}
+
+.hld:not(.touring) .hld-readout:not(.hld-measure) .hld-step-text {
+  margin-top: 0;
 }
 
 /* A hidden copy at the same width, used to find the tallest step. */
@@ -57,6 +83,35 @@
 }
 
 .hld-step-via:empty {
+  display: none;
+}
+
+.hld-more {
+  flex: none;
+  margin-left: auto;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1.5px solid #8a99b0;
+  border-radius: var(--radius-s);
+  background: none;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: #fff;
+  cursor: pointer;
+}
+
+.hld-more[hidden] {
+  display: none;
+}
+
+.hld-more:focus-visible {
+  outline-color: #fff;
+}
+
+/* On a short screen only the step's title shows until More is pressed. */
+.hld.brief:not(.more) .hld-readout:not(.hld-measure) .hld-step-text,
+.hld.brief:not(.more) .hld-readout:not(.hld-measure) .hld-step-via {
   display: none;
 }
 
@@ -116,6 +171,11 @@
   color: var(--ink-2);
   min-width: 9ch;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.hld-count-short {
+  display: none;
 }
 
 .hld-quiet {
@@ -157,6 +217,7 @@
   color: var(--ink-2);
 }
 
+/* The speeds are words like the other controls, in the text face with even figures. */
 .hld-speed button,
 .hld-speed-cycle {
   height: 30px;
@@ -164,7 +225,8 @@
   border: 0;
   border-radius: 7px;
   background: none;
-  font: 600 0.86rem var(--mono);
+  font: 650 0.9rem var(--sans);
+  font-variant-numeric: tabular-nums;
   color: var(--ink-2);
   cursor: pointer;
 }
@@ -235,30 +297,34 @@
   display: none;
 }
 
+/* The overview is a secondary choice: a quiet button, not an equal of reading the diagram. */
 .hld-fit {
   min-height: 36px;
-  padding: 0 12px;
-  border: 1.5px solid var(--rule-strong);
-  border-radius: var(--radius-s);
-  background: var(--surface);
+  padding: 0 4px;
+  border: 0;
+  background: none;
   font: inherit;
   font-weight: 600;
   color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
   cursor: pointer;
 }
 
 .hld-fit[aria-pressed='true'] {
+  padding: 0 12px;
+  border-radius: var(--radius-s);
   background: var(--ink);
-  border-color: var(--ink);
   color: #fff;
+  text-decoration: none;
 }
 
-/* Skip past the diagram's tab stop: hidden until it has focus. */
+/* Skip past the diagram's tab stop: hidden until it has focus, then shown in the diagram's top-left corner. */
 .hld-skip {
   position: absolute;
-  left: 16px;
+  top: 8px;
+  left: 8px;
   z-index: 4;
-  margin-top: 8px;
   padding: 8px 14px;
   border: 0;
   border-radius: var(--radius-s);
@@ -289,19 +355,19 @@
 }
 
 .hld-canvas:focus-visible {
-  outline: 3px solid var(--ink);
+  outline: 3px solid var(--path);
   outline-offset: -3px;
 }
 
 /*
  * The diagram scales with the stage, down to the size where its smallest text
- * (15 units) is 12.5px on screen. Narrower than that, it pans sideways, unless
- * the reader asks for it shrunk to fit.
+ * (16 units) is 12.2px on screen, and box subtitles (17.5 units) are 13.3px. Narrower than that, it pans sideways, unless
+ * the reader asks for the overview.
  */
 .hld-svg {
   display: block;
   width: 100%;
-  min-width: calc(var(--hld-w, 1280) * 0.8px);
+  min-width: calc(var(--hld-w, 1280) * 0.76px);
   height: auto;
   font-family: var(--sans);
 }
@@ -318,13 +384,14 @@
 }
 
 .hld-frame-label {
-  font-size: 15.5px;
+  font-size: 16px;
   font-weight: 600;
   fill: var(--ink-2);
-  paint-order: stroke;
-  stroke: #fff;
-  stroke-width: 7px;
-  stroke-linejoin: round;
+}
+
+.hld-frame-label.note {
+  font-weight: 400;
+  font-style: italic;
 }
 
 .hld-flow {
@@ -334,10 +401,11 @@
   marker-end: url(#hld-arrow);
 }
 
-/* One line style per way of talking. The legend under the diagram names them. */
+/* One line style per way of talking. The key under the diagram names them. */
 .hld-flow.mode-local {
   stroke: #75849a;
   stroke-width: 1.5;
+  marker-end: url(#hld-arrow-quiet);
 }
 
 .hld-flow.mode-call {
@@ -364,7 +432,16 @@
   stroke-linecap: round;
 }
 
-/* Off the hot path: recovery and reprocessing. A thin grey dash of its own, whatever the mode. */
+/* A line that carries a request and its reply has an arrowhead at each end. */
+.hld-flow.two-way {
+  marker-start: url(#hld-arrow);
+}
+
+.hld-flow.two-way.mode-local {
+  marker-start: url(#hld-arrow-quiet);
+}
+
+/* Off the hot path: recovery and reprocessing. A thin grey dash of its own, whatever the mode, and hidden until asked for. */
 .hld-flow.cold {
   stroke: #75849a;
   stroke-width: 1.3;
@@ -373,12 +450,13 @@
   marker-end: url(#hld-arrow-quiet);
 }
 
-.hld-flow.mode-local {
-  marker-end: url(#hld-arrow-quiet);
+.hld-svg .cold:not(.need) {
+  display: none;
 }
 
 .hld-flow.sample {
   marker-end: none;
+  marker-start: none;
 }
 
 .hld-hit {
@@ -392,6 +470,12 @@
 .hld-chip {
   cursor: pointer;
   outline: none;
+  transition: opacity 0.15s;
+}
+
+/* An in-process call has no chip at rest: the thin arrow says it. The chip shows when the line is live, pointed at, focused or open. */
+.hld-chip.quiet-chip:not(.show):not(:focus) {
+  opacity: 0;
 }
 
 .hld-chip-box {
@@ -405,7 +489,7 @@
 }
 
 .hld-chip text {
-  font-size: 15.5px;
+  font-size: 16px;
   font-weight: 650;
   fill: var(--ink);
 }
@@ -463,13 +547,13 @@
 }
 
 /*
- * Keyboard focus is its own shape: an ink ring set 5 units outside the box or
- * chip, on a white halo, so it reads apart from lit (blue), live and selected.
+ * Keyboard focus is the site's focus colour, as a ring set 5 units outside the
+ * box or chip, on a white halo.
  */
 .hld-ring {
   fill: none;
-  stroke: var(--ink);
-  stroke-width: 2.6;
+  stroke: var(--path);
+  stroke-width: 3;
   visibility: hidden;
   paint-order: stroke;
 }
@@ -480,86 +564,107 @@
   filter: drop-shadow(0 0 1.5px #fff) drop-shadow(0 0 1.5px #fff);
 }
 
-/* The key: three across and two down, so no item is left alone on a row. */
+/* ---- the key ---------------------------------------------------------------- */
+
 .hld-legend {
   display: grid;
-  grid-template-columns: repeat(3, max-content);
-  gap: 0 34px;
-  margin: 0;
   padding: 5px 20px 6px;
-  list-style: none;
   border-top: 1px solid var(--rule);
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   color: var(--ink-2);
 }
 
-.hld-legend li {
+.hld-key,
+.hld-key-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 22px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hld-key li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 26px;
+}
+
+.hld-key svg {
+  flex: none;
+}
+
+.hld-cold-toggle {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 30px;
+  color: var(--ink);
+  font-weight: 600;
 }
 
-.hld-legend svg {
-  flex: none;
+.hld-cold-toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--ink);
+  cursor: pointer;
+}
+
+.hld-cold-toggle label {
+  cursor: pointer;
+}
+
+.hld-key-notes summary {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.hld-key-notes summary::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 6px solid currentColor;
+  border-block: 4.5px solid transparent;
+  transition: transform 0.15s;
+}
+
+.hld-key-notes[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.hld-key-notes summary::-webkit-details-marker {
+  display: none;
+}
+
+.hld-key-notes dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px 16px;
+  margin: 4px 0 8px;
+  max-width: 90ch;
+}
+
+.hld-key-notes dt {
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.hld-key-notes[open] {
+  flex-basis: 100%;
 }
 
 .hld-lead {
   margin-bottom: 14px;
   max-width: 78ch;
   color: var(--ink-2);
-}
-
-.hld-glossary {
-  display: grid;
-  grid-template-columns: minmax(12ch, 22ch) minmax(0, 1fr);
-  gap: 12px 24px;
-}
-
-/* Each term and its text are one row, so a link to a term marks the whole row. */
-.hld-gloss-row {
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: subgrid;
-  padding: 4px 0;
-  border-radius: var(--radius-s);
-  scroll-margin-top: 90px;
-}
-
-.hld-glossary dt {
-  font-weight: 700;
-}
-
-.hld-gloss-row.found {
-  box-shadow: inset 4px 0 0 var(--ink);
-  background: #f6f8fb;
-  padding: 8px 12px 8px 14px;
-  margin-inline: -14px -12px;
-}
-
-.hld-glossary dd {
-  max-width: 80ch;
-  line-height: 1.5;
-}
-
-.hld-gloss-links {
-  margin-top: 4px;
-}
-
-.hld-sep {
-  color: var(--ink-2);
-}
-
-.hld-where {
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  font-weight: 600;
-  color: var(--ink);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  cursor: pointer;
-  white-space: nowrap;
 }
 
 .hld-tip {
@@ -585,6 +690,11 @@
   marker-end: url(#hld-arrow-linked);
 }
 
+.hld-flow.two-way.linked,
+.hld-flow.two-way.peek {
+  marker-start: url(#hld-arrow-linked);
+}
+
 /*
  * On the tour the connections the token travels are blue and a little heavier,
  * but keep their own line style: a call stays solid, a log stays dashed. The
@@ -595,7 +705,7 @@
   marker-end: url(#hld-arrow-live);
 }
 
-.hld-flow.live.both {
+.hld-flow.two-way.live {
   marker-start: url(#hld-arrow-live);
 }
 
@@ -613,43 +723,32 @@
   stroke-width: 3.2;
 }
 
-/* Purpose labels show when a line is live, open, linked to an open box, or pointed at. The chip, the legend and the table carry the rest. */
-/* A short line from a label set beside its chip, so it never floats. */
+/* Purpose labels show for an open box's own lines, or the one line open or pointed at, each with a leader to its line. */
 .hld-leader {
   stroke: var(--ink-2);
   stroke-width: 1.2;
   opacity: 0;
-  transition: opacity 0.15s;
   pointer-events: none;
 }
 
-.hld-leader.on,
-.hld-leader.peek,
-.hld-svg.labels-all .hld-leader {
+.hld-leader.on {
   opacity: 1;
 }
 
 .hld-flow-label {
-  font-size: 15.5px;
-  fill: var(--ink-2);
+  font-size: 16px;
+  font-weight: 650;
+  fill: var(--ink);
   paint-order: stroke;
   stroke: #fff;
   stroke-width: 5px;
   stroke-linejoin: round;
   opacity: 0;
-  transition: opacity 0.15s;
   pointer-events: none;
 }
 
-.hld-flow-label.on,
-.hld-flow-label.peek,
-.hld-svg.labels-all .hld-flow-label {
-  opacity: 1;
-}
-
 .hld-flow-label.on {
-  fill: var(--ink);
-  font-weight: 700;
+  opacity: 1;
 }
 
 .hld-node {
@@ -673,21 +772,22 @@
   stroke-dasharray: 6 5;
 }
 
-.hld-shelf {
+.hld-shelf,
+.hld-cap {
   stroke: var(--ink);
   stroke-width: 1.6;
   fill: none;
 }
 
 .hld-name {
-  font-size: 16.5px;
+  font-size: 17px;
   font-weight: 700;
   fill: var(--ink);
 }
 
 .hld-tech,
 .hld-line {
-  font-size: 15.5px;
+  font-size: 17.5px;
   fill: var(--ink-2);
 }
 
@@ -702,8 +802,13 @@
   stroke-width: 2.6;
 }
 
+.hld-node.lit .hld-cap {
+  stroke: var(--path);
+}
+
 .hld-node.quiet .hld-box,
-.hld-node.quiet .hld-shelf {
+.hld-node.quiet .hld-shelf,
+.hld-node.quiet .hld-cap {
   stroke: #75849a;
 }
 
@@ -716,19 +821,46 @@
   stroke-width: 4;
 }
 
+.hld-node.sample {
+  cursor: default;
+}
+
+/* The token: a small dot on the line in the colour this site keeps for the followed key, with its label on a pill beside it. Chips are drawn above it. */
 .hld-token {
   pointer-events: none;
 }
 
-.hld-token rect {
+.hld-dot {
+  fill: var(--key);
+  stroke: #fff;
+  stroke-width: 2.5;
+}
+
+.hld-pill rect {
   fill: var(--key);
   stroke: #fff;
   stroke-width: 2;
 }
 
-.hld-token text {
-  font: 700 15.5px var(--mono);
+.hld-pill text {
+  font: 700 16px var(--mono);
   fill: #fff;
+}
+
+/* The second token on a branch: the same colour, drawn hollow, so the reader sees the split. */
+.hld-token.branch .hld-dot {
+  fill: #fff;
+  stroke: var(--key);
+  stroke-width: 3;
+}
+
+.hld-token.branch .hld-pill rect {
+  fill: #fff;
+  stroke: var(--key);
+}
+
+.hld-token.branch .hld-pill text {
+  fill: var(--key);
 }
 
 /* ---- details -------------------------------------------------------------- */
@@ -781,9 +913,13 @@
   background: var(--surface);
 }
 
+/* Nothing open: one line, not a card's worth of space. */
+.hld-detail-body:has(> .hld-hint:only-child) {
+  padding-block: 10px;
+}
+
 .hld-hint {
   color: var(--ink-2);
-  max-width: 70ch;
 }
 
 .hld-detail-head {
@@ -791,6 +927,10 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px 14px;
+}
+
+.hld-detail-glyph {
+  align-self: center;
 }
 
 .hld-back {
@@ -849,12 +989,84 @@
   line-height: 1.5;
 }
 
+.hld-detail-grid p + p {
+  margin-top: 4px;
+}
+
 /* Bullets hang in the margin, so the list's text lines up with the paragraphs around it. */
-.hld-detail-grid ul:not(.hld-alts) {
+.hld-detail-grid ul:not(.hld-alts):not(.hld-talks) {
   padding-left: 0;
   list-style-position: outside;
   display: grid;
   gap: 4px;
+}
+
+/* What this box talks to: the chip as drawn, then what travels. */
+.hld-talks {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.hld-talk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 3px 6px;
+  margin-left: -6px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.hld-talk:hover {
+  background: #eef1f6;
+}
+
+.hld-tag {
+  flex: none;
+  padding: 1px 10px 2px;
+  border: 1.4px solid var(--ink);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 0.86rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.hld-tag.mode-local,
+.hld-tag.cold {
+  border-color: #75849a;
+  background: #eef1f6;
+  color: var(--ink-2);
+}
+
+.hld-tag.mode-async {
+  background: var(--ink);
+  color: #fff;
+}
+
+.hld-tag.mode-write {
+  border-width: 2.4px;
+}
+
+.hld-tag.mode-external,
+.hld-tag.cold {
+  border-style: dashed;
+}
+
+.hld-cold-note {
+  font-size: 0.86rem;
+  color: var(--ink-2);
 }
 
 .hld-alts {
@@ -886,7 +1098,7 @@
   padding: 1px 8px 2px;
   border: 1.5px solid var(--ink);
   border-radius: 10px;
-  font-size: 0.8rem;
+  font-size: 0.86rem;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -911,6 +1123,20 @@
 
 /* ---- written sections ------------------------------------------------------ */
 
+/* Every section below the diagram is the same card. */
+.design .hld-card {
+  padding: 22px 26px 26px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.hld-card .table-wrap {
+  border: 0;
+  border-radius: 0;
+  margin-inline: -10px;
+}
+
 .hld-table {
   width: 100%;
 }
@@ -924,8 +1150,8 @@
 .hld-framings > div {
   padding: 16px 18px 18px;
   border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  background: var(--surface);
+  border-radius: var(--radius-s);
+  background: #f6f8fb;
 }
 
 .hld-framings h3 {
@@ -953,9 +1179,100 @@
   max-width: 76ch;
 }
 
+/* The glossary, A to Z, with a row of letters to jump by. */
+.hld-az {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 16px;
+}
+
+.hld-az button {
+  min-width: 36px;
+  min-height: 36px;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  font: inherit;
+  font-weight: 650;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.hld-az button:hover {
+  border-color: var(--ink);
+}
+
+.hld-glossary {
+  display: grid;
+  gap: 6px;
+}
+
+.hld-gloss-row {
+  padding: 8px 12px 10px;
+  margin-inline: -12px;
+  border-radius: var(--radius-s);
+  scroll-margin-top: 90px;
+  break-inside: avoid;
+}
+
+.hld-glossary dt {
+  font-weight: 700;
+}
+
+.hld-gloss-row.found {
+  box-shadow: inset 4px 0 0 var(--ink);
+  background: #f6f8fb;
+}
+
+.hld-glossary dd {
+  max-width: 80ch;
+  line-height: 1.5;
+}
+
+.hld-gloss-links {
+  margin-top: 4px;
+}
+
+.hld-sep {
+  color: var(--ink-2);
+}
+
+/* Two columns of terms on a wide screen. */
+@media (min-width: 1200px) {
+  .hld-glossary {
+    display: block;
+    columns: 2;
+    column-gap: 44px;
+  }
+
+  .hld-gloss-row {
+    margin-bottom: 6px;
+  }
+}
+
+.hld-where {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* In the glossary the links are a quiet second line, in regular weight. */
+.hld-gloss-links .hld-where,
+.hld-gloss-links .hld-struct {
+  font-weight: 400;
+}
+
 .hld-sources {
   display: grid;
-  gap: 8px;
+  gap: 12px;
   padding-left: 1.1em;
 }
 
@@ -963,24 +1280,25 @@
   font-weight: 600;
 }
 
+.hld-source-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-2);
+}
+
 .hld-struct {
   font-weight: 600;
   white-space: nowrap;
 }
 
-.hld-glossary dt:focus {
-  outline: none;
-}
-
-.hld-glossary dt:focus-visible,
-.hld-detail-head h3:focus-visible {
-  outline: 3px solid var(--ink);
+/* Headings and rows that the page moves focus to show a quiet outline; a keyboard user gets the site's ring. */
+.hld-detail-head h3:focus,
+.hld-gloss-row:focus,
+.hld-missing:focus {
+  outline: 2px solid var(--rule-strong);
   outline-offset: 3px;
 }
 
-.hld-detail-head h3:focus {
-  outline: none;
-}
 
 /* The lede is one line here, so that the heading, the readout and the whole diagram with its key fit one screen. */
 .design .lede {
@@ -997,17 +1315,8 @@
 @media (max-width: 899px) {
   .hld-detail-grid,
   .hld-framings,
-  .hld-drills,
-  .hld-glossary {
+  .hld-drills {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .hld-glossary {
-    gap: 4px;
-  }
-
-  .hld-glossary dd {
-    margin-bottom: 12px;
   }
 
   .hld-drills dd {
@@ -1019,6 +1328,10 @@
   }
 
   .hld-detail-body {
+    padding: 18px 16px 20px;
+  }
+
+  .design .hld-card {
     padding: 18px 16px 20px;
   }
 }
@@ -1081,10 +1394,12 @@
 
   .hld-speed-cycle {
     display: block;
+    flex: none;
     margin-left: auto;
   }
 
   .hld-quiet {
+    flex: none;
     width: 40px;
     justify-content: center;
     border: 1px solid var(--rule-strong);
@@ -1109,7 +1424,32 @@
   }
 }
 
-/* A phone held sideways: the readout stacks above the diagram as upright, but tighter, so the diagram keeps the height. */
+/* Very narrow: the count becomes "5/13", read out in full. */
+@media (max-width: 379px) {
+  .hld-count-long {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .hld-count-short {
+    display: inline;
+  }
+
+  .hld-nav {
+    gap: 0;
+  }
+
+  .hld-transport {
+    gap: 4px;
+    padding-inline: 6px;
+  }
+}
+
+/* A short screen (a phone held sideways, or a page zoomed far in): the site bar, the heading and the readout fold up so the diagram is on the first screen. */
 @media (max-height: 500px) {
   .hld-readout {
     padding: 8px 16px;
@@ -1133,6 +1473,78 @@
   .hld-transport {
     padding: 4px 10px;
   }
+
+  .fold-side .sidebar,
+  html:has(.design) .sidebar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px 14px;
+    padding: 6px 14px;
+  }
+
+  html:has(.design) .brand {
+    font-size: 0.95rem;
+  }
+
+  html:has(.design) .search {
+    margin: 0;
+  }
+
+  html:has(.design) .search > label,
+  html:has(.design) .search-keys {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  html:has(.design) .search-input {
+    height: 36px;
+  }
+
+  html:has(.design) .menu[open] {
+    grid-column: 1 / -1;
+  }
+
+  html:has(.design) .side-foot {
+    display: none;
+  }
+
+  html:has(.design) .menu > summary {
+    min-height: 36px;
+  }
+
+  html:has(.design) main {
+    padding-top: 8px;
+  }
+
+  .design .page-head {
+    margin-bottom: 4px;
+  }
+
+  .design .page-head h1 {
+    font-size: 1.3rem;
+  }
+
+  .design .page-head .lede {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .design .hld {
+    margin-top: 6px;
+  }
+
+  .hld:not(.touring) .hld-readout:not(.hld-measure) .hld-step-text {
+    display: none;
+  }
 }
 
 @media (max-width: 599px) {
@@ -1142,23 +1554,31 @@
   }
 
   .hld-legend {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2px 12px;
     padding-inline: 14px;
     font-size: 0.86rem;
   }
 
-  .hld-legend svg {
-    width: 54px;
+  .hld-key,
+  .hld-key-row {
+    gap: 0 16px;
   }
 
   .hld-detail-head .hld-back {
     margin-left: 0;
   }
+
+  .hld-key-notes dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hld-flow-label {
+  .hld-chip {
     transition: none;
   }
+}
+
+.hld-tether {
+  stroke: var(--key);
+  stroke-width: 1.6;
 }
