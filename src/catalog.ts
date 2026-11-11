@@ -47,6 +47,13 @@ export const CATALOG: CatalogEntry[] = [
     cheat: { lookup: 'O(k) key length', insert: 'O(k)', remove: 'O(k)', ordered: 'Yes', pick: 'Autocomplete, prefix search, IP routing tables.' },
   },
   {
+    id: 'append-log',
+    name: 'Append-only log',
+    group: 'Storage and indexes',
+    blurb: 'An array that only grows at the end. Readers keep their own place, so many can read and replay.',
+    cheat: { lookup: 'O(1) by offset', insert: 'O(1) append', remove: 'Oldest segment only', ordered: 'By arrival, per partition', pick: 'Events for many readers, with replay.' },
+  },
+  {
     id: 'hash-table',
     name: 'Hash table',
     group: 'Hashing and distribution',
@@ -68,6 +75,13 @@ export const CATALOG: CatalogEntry[] = [
     cheat: { lookup: 'O(k) hashes', insert: 'O(k) hashes', remove: 'Not supported', ordered: 'No', pick: 'Skipping disk or network reads for keys that are absent.' },
   },
   {
+    id: 'simhash',
+    name: 'SimHash',
+    group: 'Hashing and distribution',
+    blurb: 'A fingerprint that stays close when the text stays close. Near-duplicate pages differ in only a few bits.',
+    cheat: { lookup: 'O(1) to compare two', insert: 'O(words)', remove: 'Not shown', ordered: 'No', pick: 'Spotting near-duplicate pages in a crawl.' },
+  },
+  {
     id: 'lru-cache',
     name: 'LRU cache',
     group: 'Caches and queues',
@@ -87,6 +101,20 @@ export const CATALOG: CatalogEntry[] = [
     group: 'Caches and queues',
     blurb: 'A fixed array with a head and a tail that wrap around. A full buffer is how backpressure starts.',
     cheat: { lookup: 'O(1) at the head', insert: 'O(1)', remove: 'O(1)', ordered: 'By arrival', pick: 'Bounded buffers between a producer and a consumer.' },
+  },
+  {
+    id: 'token-bucket',
+    name: 'Token bucket',
+    group: 'Caches and queues',
+    blurb: 'A rate limiter in two numbers. Tokens drip in at a steady rate; a request takes one or is turned away.',
+    cheat: { lookup: 'O(1) check', insert: 'O(1) lazy refill', remove: 'O(1) take', ordered: 'No', pick: 'Rate limits that allow a short burst and hold a steady average.' },
+  },
+  {
+    id: 'crawl-frontier',
+    name: 'Crawl frontier',
+    group: 'Caches and queues',
+    blurb: 'Priority queues in front, one queue per host behind, and a heap of next allowed times.',
+    cheat: { lookup: 'O(1) to see if anything is due', insert: 'O(1)', remove: 'O(log B) for B back queues', ordered: 'By priority, then by host delay', pick: 'Web crawlers.' },
   },
   {
     id: 'stack',
