@@ -65,6 +65,7 @@ export const webCrawler: Design = {
       ],
       say: 'Kafka is good plumbing between stages, but it cannot be the frontier. It cannot delay one host while serving another. The frontier is a scheduler, so I would build it.',
       see: [
+        { id: 'crawl-frontier', label: 'Crawl frontier' },
         { id: 'heap', label: 'Binary heap' },
         { id: 'priority-queue', label: 'Priority queue' },
         { id: 'lsm-tree', label: 'LSM tree (RocksDB)' },
@@ -134,6 +135,7 @@ export const webCrawler: Design = {
         { name: 'Per-host limits only', good: 'Simplest.', cost: 'Hammers shared hosts and platforms.' },
       ],
       say: 'Politeness has three layers: one request in flight per host from the frontier\'s shape, token buckets per address for shared hosting, and back-off when a site says slow down.',
+      see: [{ id: 'token-bucket', label: 'Token bucket' }],
     },
     {
       id: 'web',
@@ -167,7 +169,7 @@ export const webCrawler: Design = {
         { name: 'A full document tree, or regular expressions', good: 'Quick to write.', cost: 'Deep nesting exhausts memory, and backtracking patterns can run for minutes.' },
       ],
       say: 'Fetching and parsing scale and fail differently, so I split them, and I store the raw page between the two so I can replay the parser without touching the web.',
-      see: [{ id: 'hash-table', label: 'Hash table' }],
+      see: [{ id: 'simhash', label: 'SimHash' }, { id: 'hash-table', label: 'Hash table' }],
     },
     {
       id: 'render',
@@ -235,6 +237,7 @@ export const webCrawler: Design = {
         { name: 'A managed queue (SQS)', good: 'No brokers to run.', cost: 'No keyed partitions, so it cannot keep a host on one owner without a queue per host, and per-request pricing adds up at 50,000 messages a second.' },
       ],
       say: 'The log carries URLs between nodes and gives me replay. It does not decide what to fetch.',
+      see: [{ id: 'append-log', label: 'Append-only log' }],
     },
     {
       id: 'coord',
@@ -633,7 +636,7 @@ export const webCrawler: Design = {
 
   sources: [
     { label: 'Hello Interview: Design a Web Crawler', href: 'https://www.hellointerview.com/learn/system-design/problem-breakdowns/web-crawler', note: 'The one-off, queue-centred framing: SQS with a dead-letter queue, DynamoDB, Redis locks and counters, and the five-day capacity estimate.' },
-    { label: 'Heydon and Najork, Mercator: A Scalable, Extensible Web Crawler (1999)', note: 'The host-queue frontier and the DNS finding.' },
+    { label: 'Heydon and Najork, Mercator: A Scalable, Extensible Web Crawler (1999)', note: 'Per-host queues for politeness, and the DNS finding. The front and back queue design is from the authors\' later work.' },
     { label: 'RFC 9309, Robots Exclusion Protocol (2022)', href: 'https://www.rfc-editor.org/rfc/rfc9309', note: 'Matching rules, caching for at most 24 hours, and what to do on errors.' },
     { label: 'Manku, Jain and Das Sarma, Detecting Near-Duplicates for Web Crawling (2007)', note: 'SimHash at web scale.' },
     { label: 'Three preparation dossiers supplied for this page', note: 'The continuous-crawl design, the estimates and the failure drills.' },
@@ -646,7 +649,7 @@ export const webCrawler: Design = {
     { term: 'Shingle', also: ['n-gram'], where: 'parser', text: 'A run of a few consecutive words from a page. Comparing sets of shingles compares content while ignoring small edits.' },
     { term: 'Content hash', also: ['SHA-256', 'exact duplicate'], where: 'parser', text: 'A hash of the page body after light normalisation. The same content at two URLs gives the same hash, so the second copy is stored as a pointer and its links are not extracted again.' },
     { term: 'WARC', also: ['Web ARChive'], where: 'blob', text: 'The standard file format for stored web responses (ISO 28500). Each record holds the request, the response headers and the body. Many records go into one compressed file, with an index of byte ranges so one page can be read back.' },
-    { term: 'Mercator frontier', also: ['front queue', 'back queue', 'dual queue'], where: 'frontier', text: 'A frontier in two halves, named after the Mercator crawler. Front queues order URLs by priority. Back queues hold one host each, and a heap of next-allowed times decides which back queue may be served. Priority and politeness are separated, so neither starves the other.' },
+    { term: 'Mercator frontier', also: ['front queue', 'back queue', 'dual queue'], where: 'frontier', text: 'A frontier in two halves, named after the Mercator crawler. The 1999 paper used one queue per worker thread, chosen by host; the front and back queues with a heap come from later work by the same authors and the Manning, Raghavan and Schütze textbook. Front queues order URLs by priority. Back queues hold one host each, and a heap of next-allowed times decides which back queue may be served. Priority and politeness are separated, so neither starves the other.' },
     { term: 'Lease', also: ['visibility timeout'], where: 'frontier', text: 'A hand-out with a deadline. The frontier gives a URL to a fetcher for a fixed time. If the work is not completed by then, the URL goes back in the queue. An SQS visibility timeout is the same idea.' },
     { term: 'Dead-letter queue', also: ['DLQ'], where: 'frontier', text: 'Where a message goes after failing a set number of times, so that it stops blocking the queue and can be inspected. Here, a URL that fails three fetches is marked dead and retried rarely.' },
     { term: 'Epoch', also: ['fencing token', 'generation'], where: 'coord', text: 'A number that goes up each time a slot changes owner. Stores reject writes that carry an older epoch, so a node that was paused and woke up cannot overwrite the work of its replacement.' },
