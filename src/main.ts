@@ -37,30 +37,73 @@ nav.append(navGroup('System designs', [h('li', null, link('/d/web-crawler', 'Dis
 
 const menu = h('details.menu', null, h('summary', null, 'All structures'), nav);
 
+/**
+ * Single-key shortcuts ("/" for search here; the structure pages' speed keys
+ * and the design tour's keys read the same setting) can be switched off.
+ * Stored as dsv.shortcuts = "on" | "off"; on unless switched off.
+ */
+const SHORTCUTS = 'dsv.shortcuts';
+const shortcutsOn = () => {
+  try {
+    return localStorage.getItem(SHORTCUTS) !== 'off';
+  } catch {
+    return true;
+  }
+};
+
 // One search box for the whole site. Typing shows results in the main column; "/" jumps to it.
-const searchInput = h('input.search-input', { type: 'search', id: 'site-search', placeholder: 'SimHash, lease, Kafka…', autocomplete: 'off', spellcheck: false, 'aria-keyshortcuts': '/' }) as HTMLInputElement;
+const searchInput = h('input.search-input', { type: 'search', id: 'site-search', placeholder: 'SimHash, lease, Kafka…', autocomplete: 'off', spellcheck: false }) as HTMLInputElement;
 let searchTimer = 0;
 searchInput.addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer = window.setTimeout(() => {
     const q = searchInput.value.trim();
-    // Replace, so that typing a word does not leave a trail of history entries.
-    history.replaceState(null, '', q ? `#/search/${encodeURIComponent(q)}` : '#/search/');
+    const to = q ? `#/search/${encodeURIComponent(q)}` : '#/search/';
+    // The first keystroke from another page adds one history entry, so Back returns to that page.
+    // After that each keystroke replaces it, so typing a word does not leave a trail.
+    if (/^#\/search\//.test(location.hash)) history.replaceState(null, '', to);
+    else history.pushState(null, '', to);
     void route(true);
   }, 140);
 });
 document.addEventListener('keydown', (e) => {
   const t = e.target as HTMLElement;
-  if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !t.closest('input, textarea, select')) {
+  if (e.key === '/' && shortcutsOn() && !e.ctrlKey && !e.metaKey && !e.altKey && !t.closest('input, textarea, select, [contenteditable]')) {
     e.preventDefault();
     searchInput.focus();
     searchInput.select();
   }
 });
-const search = h('form.search', { role: 'search', onsubmit: (e: Event) => e.preventDefault() }, h('label', { for: 'site-search' }, 'Search'), searchInput);
+const keysBox = h('input', { type: 'checkbox', id: 'site-keys', checked: shortcutsOn() }) as HTMLInputElement;
+const syncKeys = () => {
+  if (keysBox.checked) searchInput.setAttribute('aria-keyshortcuts', '/');
+  else searchInput.removeAttribute('aria-keyshortcuts');
+};
+keysBox.addEventListener('change', () => {
+  try {
+    localStorage.setItem(SHORTCUTS, keysBox.checked ? 'on' : 'off');
+  } catch {
+    // Storage can be blocked; the switch still works for this visit.
+  }
+  syncKeys();
+});
+syncKeys();
+const search = h(
+  'form.search', { role: 'search', onsubmit: (e: Event) => e.preventDefault() },
+  h('label', { for: 'site-search' }, 'Search'),
+  searchInput,
+  h('p.search-keys', null, keysBox, h('label', { for: 'site-keys' }, 'Keyboard shortcuts'), h('span.search-keys-hint', { 'aria-hidden': 'true' }, h('kbd', null, '/'), ' to search')),
+);
 const wide = matchMedia('(min-width: 900px)');
-const syncMenu = () => (menu.open = wide.matches);
+// The design page needs the width for its diagram: below 1300px the sidebar folds into the top bar there, as on a phone.
+const roomy = matchMedia('(min-width: 1300px)');
+let folds = false;
+const syncMenu = () => {
+  document.documentElement.classList.toggle('fold-side', folds && !roomy.matches);
+  menu.open = wide.matches && !(folds && !roomy.matches);
+};
 wide.addEventListener('change', syncMenu);
+roomy.addEventListener('change', syncMenu);
 syncMenu();
 
 app.append(
@@ -80,11 +123,21 @@ app.append(
 
 let teardown: (() => void) | null = null;
 let navToken = 0;
+/** Where each search results page was scrolled to, so Back returns to the same place in the list. */
+const searchScroll = new Map<string, number>();
+let shown = '';
 
 async function route(typing = false): Promise<void> {
   const token = ++navToken;
+  if (/^#\/search\//.test(shown) && !typing) searchScroll.set(shown, window.scrollY);
+  shown = location.hash;
   const path = location.hash.replace(/^#/, '') || '/';
   const found = /^\/search\/(.*)$/.exec(path);
+  const design0 = /^\/d\//.test(path);
+  if (design0 !== folds) {
+    folds = design0;
+    syncMenu();
+  }
   if (!found) searchInput.value = '';
   else if (!typing) searchInput.value = decodeURIComponent(found[1]);
   teardown?.();
@@ -124,8 +177,11 @@ async function route(typing = false): Promise<void> {
   }
   try {
     const off = await mount;
-    if (token === navToken) teardown = off;
-    else off();
+    if (token === navToken) {
+      teardown = off;
+      const back = found && !typing ? searchScroll.get(location.hash) : undefined;
+      if (back) window.scrollTo(0, back);
+    } else off();
   } catch (err) {
     console.error(err);
     if (token === navToken) main.replaceChildren(h('article', null, h('h1', null, 'This page failed to load'), h('p', null, 'Reload the page to try again.')));

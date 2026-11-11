@@ -8,11 +8,32 @@
   overflow: clip;
 }
 
+/* Readout and transport travel together. During the tour they stick to the top of the screen, so the diagram can scroll under them and neither is ever lost. */
+.hld-head {
+  position: relative;
+  background: var(--surface);
+}
+
+.hld.touring .hld-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  box-shadow: 0 1px 0 var(--rule);
+}
+
 .hld-readout {
-  padding: 14px 20px 14px;
+  padding: 13px 20px 13px;
   background: var(--ink);
   color: #fff;
-  min-height: 8.2rem;
+}
+
+/* A hidden copy at the same width, used to find the tallest step. */
+.hld-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .hld-step-title {
@@ -29,13 +50,24 @@
   line-height: 1.45;
 }
 
+.hld-step-via {
+  margin-top: 8px;
+  font-size: 0.93rem;
+  color: #d6deea;
+}
+
+.hld-step-via:empty {
+  display: none;
+}
+
 .hld-transport {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px 18px;
-  padding: 10px 16px;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--rule);
+  background: var(--surface);
 }
 
 .hld-nav {
@@ -83,9 +115,12 @@
   font-size: 0.93rem;
   color: var(--ink-2);
   min-width: 9ch;
+  white-space: nowrap;
 }
 
 .hld-quiet {
+  display: inline-flex;
+  align-items: center;
   height: 40px;
   padding: 0 4px;
   border: 0;
@@ -96,6 +131,14 @@
   text-decoration-thickness: 1.5px;
   text-underline-offset: 3px;
   cursor: pointer;
+}
+
+.hld-quiet svg {
+  display: none;
+}
+
+.hld-quiet[hidden] {
+  display: none;
 }
 
 .hld-speed {
@@ -114,7 +157,8 @@
   color: var(--ink-2);
 }
 
-.hld-speed button {
+.hld-speed button,
+.hld-speed-cycle {
   height: 30px;
   min-width: 44px;
   border: 0;
@@ -134,6 +178,13 @@
   color: #fff;
 }
 
+.hld-speed-cycle {
+  display: none;
+  height: 40px;
+  border: 1px solid var(--rule-strong);
+  color: var(--ink);
+}
+
 /* ---- the diagram --------------------------------------------------------- */
 
 .hld-canvas {
@@ -142,10 +193,19 @@
   background-size: 22px 22px;
 }
 
+.hld-canvas:focus-visible {
+  outline: 3px solid var(--ink);
+  outline-offset: -3px;
+}
+
+/*
+ * The diagram scales with the stage, down to the size where its smallest text
+ * (14.5 units) is 12px on screen. Narrower than that, it pans sideways.
+ */
 .hld-svg {
   display: block;
   width: 100%;
-  min-width: 1040px;
+  min-width: calc(var(--hld-w, 1180) * 0.828px);
   height: auto;
   font-family: var(--sans);
 }
@@ -158,9 +218,13 @@
 }
 
 .hld-frame-label {
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 600;
   fill: var(--ink-2);
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 7px;
+  stroke-linejoin: round;
 }
 
 .hld-flow {
@@ -173,7 +237,7 @@
 /* One line style per way of talking. The legend under the diagram names them. */
 .hld-flow.mode-local {
   stroke: #8493a8;
-  stroke-width: 1.4;
+  stroke-width: 1.5;
 }
 
 .hld-flow.mode-call {
@@ -200,8 +264,19 @@
   stroke-linecap: round;
 }
 
+/* Off the hot path: recovery and reprocessing. Same line style, drawn light. */
+.hld-flow.cold {
+  stroke: #a3afc0;
+  stroke-width: 1.5;
+  marker-end: url(#hld-arrow-cold);
+}
+
 .hld-flow.sample {
-  marker-end: none;
+  marker-end: url(#hld-arrow);
+}
+
+.hld-flow.sample.cold {
+  marker-end: url(#hld-arrow-cold);
 }
 
 .hld-hit {
@@ -217,19 +292,19 @@
   outline: none;
 }
 
-.hld-chip rect {
+.hld-chip-box {
   fill: var(--surface);
   stroke: var(--ink);
   stroke-width: 1.4;
 }
 
 .hld-chip text {
-  font-size: 13px;
+  font-size: 14.5px;
   font-weight: 650;
   fill: var(--ink);
 }
 
-.hld-chip.mode-local rect {
+.hld-chip.mode-local .hld-chip-box {
   fill: #eef1f6;
   stroke: #8493a8;
 }
@@ -238,7 +313,7 @@
   fill: var(--ink-2);
 }
 
-.hld-chip.mode-async rect {
+.hld-chip.mode-async .hld-chip-box {
   fill: var(--ink);
 }
 
@@ -246,34 +321,56 @@
   fill: #fff;
 }
 
-.hld-chip.mode-write rect {
+.hld-chip.mode-write .hld-chip-box {
   stroke-width: 2.6;
 }
 
-.hld-chip.mode-external rect {
+.hld-chip.mode-external .hld-chip-box {
   stroke-dasharray: 3 3;
 }
 
-.hld-chip:hover rect {
+.hld-chip.cold .hld-chip-box {
+  fill: #f6f8fb;
+  stroke: #a3afc0;
+  stroke-width: 1.4;
+}
+
+.hld-chip.cold text {
+  fill: var(--ink-2);
+}
+
+.hld-chip:hover .hld-chip-box {
   stroke-width: 2.8;
 }
 
-.hld-chip.live rect {
+.hld-chip.live .hld-chip-box {
   stroke: var(--path);
   stroke-width: 3;
   stroke-dasharray: none;
 }
 
-.hld-chip.picked rect {
+.hld-chip.picked .hld-chip-box {
   stroke: var(--ink);
   stroke-width: 3.6;
   stroke-dasharray: none;
 }
 
-.hld-chip:focus-visible rect {
-  stroke: var(--path);
-  stroke-width: 4;
-  stroke-dasharray: none;
+/*
+ * Keyboard focus is its own shape: an ink ring set 5 units outside the box or
+ * chip, on a white halo, so it reads apart from lit (blue), live and selected.
+ */
+.hld-ring {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 2.6;
+  visibility: hidden;
+  paint-order: stroke;
+}
+
+.hld-node:focus-visible .hld-ring,
+.hld-chip:focus-visible .hld-ring {
+  visibility: visible;
+  filter: drop-shadow(0 0 1.5px #fff) drop-shadow(0 0 1.5px #fff);
 }
 
 .hld-legend {
@@ -292,13 +389,6 @@
   display: flex;
   align-items: center;
   gap: 9px;
-}
-
-.hld-step-via {
-  margin-top: 8px;
-  min-height: 1.4em;
-  font-size: 0.93rem;
-  color: #d6deea;
 }
 
 .hld-lead {
@@ -341,49 +431,77 @@
   white-space: nowrap;
 }
 
-.hld-head {
+.hld-tip {
   fill: #7d8ba0;
 }
 
-.hld-head.live {
+.hld-tip.live {
   fill: var(--path);
 }
 
-.hld-head.linked {
+.hld-tip.linked {
   fill: var(--ink);
 }
 
-.hld-flow.linked {
+.hld-tip.cold {
+  fill: #a3afc0;
+}
+
+.hld-flow.linked,
+.hld-flow.peek {
   stroke: var(--ink);
   stroke-width: 3;
   marker-end: url(#hld-arrow-linked);
 }
 
+/*
+ * On the tour the connections the token travels are blue and a little heavier,
+ * but keep their own line style: a call stays solid, a log stays dashed. The
+ * token carries the motion, so the line itself never moves.
+ */
 .hld-flow.live {
   stroke: var(--path);
-  stroke-width: 2.8;
-  stroke-dasharray: 9 7;
-  stroke-linecap: butt;
   marker-end: url(#hld-arrow-live);
-  animation: hld-march 0.9s linear infinite;
 }
 
-@keyframes hld-march {
-  to {
-    stroke-dashoffset: -32;
-  }
+.hld-flow.live.both {
+  marker-start: url(#hld-arrow-live);
 }
 
+.hld-flow.live.mode-local {
+  stroke-width: 2.8;
+}
+
+.hld-flow.live.mode-call,
+.hld-flow.live.mode-write {
+  stroke-width: 3;
+}
+
+.hld-flow.live.mode-async,
+.hld-flow.live.mode-external {
+  stroke-width: 3.2;
+}
+
+/* Purpose labels show when a line is live, open, linked to an open box, or pointed at. The chip, the legend and the table carry the rest. */
 .hld-flow-label {
-  font-size: 13.5px;
+  font-size: 14.5px;
   fill: var(--ink-2);
   paint-order: stroke;
   stroke: #fff;
   stroke-width: 5px;
   stroke-linejoin: round;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
 }
 
-.hld-flow-label.live {
+.hld-flow-label.on,
+.hld-flow-label.peek,
+.hld-svg.labels-all .hld-flow-label {
+  opacity: 1;
+}
+
+.hld-flow-label.on {
   fill: var(--ink);
   font-weight: 700;
 }
@@ -416,24 +534,19 @@
 }
 
 .hld-name {
-  font-size: 15.5px;
+  font-size: 16.5px;
   font-weight: 700;
   fill: var(--ink);
 }
 
 .hld-tech,
 .hld-line {
-  font-size: 13.5px;
+  font-size: 14.5px;
   fill: var(--ink-2);
 }
 
 .hld-node:hover .hld-box {
   stroke-width: 2.6;
-}
-
-.hld-node:focus-visible .hld-box {
-  stroke: var(--path);
-  stroke-width: 4;
 }
 
 /* On the tour: the boxes this step is about are outlined in the "visited" blue; the rest step back. */
@@ -457,12 +570,18 @@
   stroke-width: 4;
 }
 
+.hld-token {
+  pointer-events: none;
+}
+
 .hld-token rect {
   fill: var(--key);
+  stroke: #fff;
+  stroke-width: 2;
 }
 
 .hld-token text {
-  font: 700 14px var(--mono);
+  font: 700 15px var(--mono);
   fill: #fff;
 }
 
@@ -670,6 +789,32 @@
   font-weight: 600;
 }
 
+.hld-struct {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.hld-glossary dt:focus {
+  outline: none;
+}
+
+.hld-glossary dt:focus-visible,
+.hld-detail-head h3:focus-visible {
+  outline: 3px solid var(--ink);
+  outline-offset: 3px;
+}
+
+.hld-detail-head h3:focus {
+  outline: none;
+}
+
+/* Wide screens: the stage takes the page's side padding too, so the diagram stays at a readable size without panning. */
+@media (min-width: 900px) {
+  .hld {
+    margin-inline: -24px;
+  }
+}
+
 @media (max-width: 899px) {
   .hld-detail-grid,
   .hld-framings,
@@ -694,28 +839,167 @@
     margin-left: 0;
   }
 
-  .hld-readout {
-    min-height: 13rem;
-  }
-
   .hld-detail-body {
     padding: 18px 16px 20px;
   }
 }
 
-@media (max-width: 520px) {
-  .hld-speed button,
+/* Phones, upright or sideways: the stage runs edge to edge, and the transport is a row of icons. */
+@media (max-width: 599px), (max-height: 500px) and (max-width: 1099px) {
+  .hld {
+    margin-inline: calc(-1 * clamp(18px, 4vw, 56px));
+    border-radius: 0;
+    border-inline: 0;
+  }
+
+  .hld-readout {
+    padding: 12px 16px;
+  }
+
+  .hld-step-title {
+    font-size: 1.04rem;
+  }
+
+  .hld-step-text {
+    font-size: 0.95rem;
+    line-height: 1.4;
+  }
+
+  .hld-step-via {
+    margin-top: 5px;
+    font-size: 0.88rem;
+  }
+
+  .hld-transport {
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding: 6px 10px;
+  }
+
+  .hld-restart,
+  .hld-speed {
+    display: none;
+  }
+
+  .hld-play {
+    min-width: 44px;
+    width: 44px;
+    padding: 0;
+  }
+
+  .hld-play-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .hld-count {
+    min-width: 0;
+    font-size: 0.88rem;
+  }
+
+  .hld-speed-cycle {
+    display: block;
+    margin-left: auto;
+  }
+
+  .hld-quiet {
+    width: 40px;
+    justify-content: center;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-s);
+  }
+
+  .hld-quiet svg {
+    display: block;
+  }
+
+  .hld-quiet span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
   .hld-index button {
     min-height: 40px;
   }
+}
 
-  .hld-speed button {
-    height: 40px;
+/*
+ * Short, wide screens (a phone held sideways): the readout and transport sit in
+ * a column beside the diagram, and the stage fills the screen, so the step and
+ * the diagram are both in view. The diagram scrolls inside its own box.
+ */
+@media (max-height: 500px) and (min-width: 600px) {
+  .hld {
+    display: grid;
+    grid-template-columns: minmax(250px, 40%) minmax(0, 1fr);
+    grid-template-rows: calc(100dvh - 2px) auto;
+  }
+
+  .hld-head,
+  .hld.touring .hld-head {
+    position: relative;
+    grid-column: 1;
+    grid-row: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    border-right: 1px solid var(--rule);
+    box-shadow: none;
+  }
+
+  .hld-readout {
+    flex: 1 0 auto;
+    padding: 10px 14px;
+  }
+
+  .hld-step-title {
+    font-size: 1rem;
+  }
+
+  .hld-step-text {
+    font-size: 0.9rem;
+    line-height: 1.36;
+  }
+
+  .hld-step-via {
+    font-size: 0.84rem;
+  }
+
+  /* The count gets a row of its own under the buttons. */
+  .hld-transport {
+    flex-wrap: wrap;
+    gap: 4px 6px;
+    border-bottom: 0;
+  }
+
+  .hld-count {
+    order: 5;
+    flex-basis: 100%;
+    padding-left: 4px;
+  }
+
+  .hld-canvas {
+    grid-column: 2;
+    grid-row: 1;
+    overflow: auto;
+  }
+
+  .hld-legend {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hld-flow.live {
-    animation: none;
+  .hld-flow-label {
+    transition: none;
   }
 }

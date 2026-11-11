@@ -127,6 +127,29 @@ function excerpt(text: string, words: string[], whole: boolean): (string | HTMLE
   return out;
 }
 
+/**
+ * One live region for the whole site, outside the page that search rebuilds,
+ * so a screen reader hears the result count once the typing pauses rather than
+ * a fresh region on every keystroke.
+ */
+let live: HTMLElement | null = null;
+let liveTimer = 0;
+function announce(text: string): void {
+  if (!live || !live.isConnected) {
+    live = h('p.visually-hidden', { id: 'search-status', role: 'status', 'aria-live': 'polite' });
+    document.body.append(live);
+  }
+  clearTimeout(liveTimer);
+  liveTimer = window.setTimeout(() => {
+    live!.textContent = text;
+  }, 700);
+}
+
+const has = (s: string, words: string[]) => {
+  const f = fold(s);
+  return words.some((w) => f.includes(w));
+};
+
 const SUGGEST = ['SimHash', 'Bloom filter', 'lease', 'Kafka', 'robots.txt', 'SSRF', 'WARC', 'idempotent', 'B+ tree', 'eviction'];
 
 /** The results page. The search box itself lives in the sidebar and drives this through the address. */
@@ -134,7 +157,7 @@ export async function mountSearch(host: HTMLElement, query: string): Promise<() 
   const q = query.trim();
   const words = fold(q).split(/\s+/).filter(Boolean);
   const list = h('ol.search-results', null);
-  const summary = h('p.search-summary', { role: 'status' }, q ? 'Searching…' : 'Type in the search box to look something up.');
+  const summary = h('p.search-summary', null, q ? 'Searching…' : 'Type in the search box to look something up.');
   const tries = h(
     'p.search-tries', null, 'Try: ',
     SUGGEST.flatMap((s, i) => [i ? ', ' : '', h('a', { href: `#/search/${encodeURIComponent(s)}` }, s)]),
@@ -150,17 +173,22 @@ export async function mountSearch(host: HTMLElement, query: string): Promise<() 
       .sort((a, b) => b.s - a.s || a.d.title.localeCompare(b.d.title))
       .slice(0, 40);
     summary.textContent = hits.length ? `${hits.length === 40 ? 'The best 40 matches' : hits.length === 1 ? '1 match' : `${hits.length} matches`} across the glossary, the system design and the data structures.` : `Nothing matches "${q}". Check the spelling, or try a shorter word.`;
+    announce(summary.textContent);
     for (const { d } of hits) {
+      // When the match is in another name for the entry (a technology, an alternative) and not its text, show that name, marked.
+      const inText = has(d.text, words);
+      const other = !inText && !has(d.title, words) ? d.also.find((a) => has(a, words)) : undefined;
       list.append(
         h(
           'li', null,
           h('p.search-kind', null, d.kind),
           h('h2', null, h('a', { href: d.href }, excerpt(d.title, words, true))),
+          other ? h('p.search-also', null, 'Also: ', excerpt(other, words, true)) : null,
           h('p.search-text', null, excerpt(d.text, words, d.kind === 'Term')),
           h('p.search-where', null, d.where),
         ),
       );
     }
-  }
+  } else announce(summary.textContent ?? '');
   return () => page.remove();
 }
