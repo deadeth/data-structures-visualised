@@ -1,3 +1,4 @@
+import { CELL_H, TAG_H } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Cell, Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef } from '../../core/types';
 import java from './code/LruCache.java?raw';
@@ -331,6 +332,8 @@ const LIFT_Y = LIST_Y - 52;
 /** Where a node waits, raised and to the left of the head, before it is linked in. */
 const STAGE_X = -SPACING * 0.75;
 const LABEL_X = -52;
+const TAG_GAP = 8;
+const TAG_W = NODE_W;
 
 export function layout(s: LruState): Scene {
   const nodes: SceneNode[] = [];
@@ -357,7 +360,6 @@ export function layout(s: LruState): Scene {
       x,
       y: LIST_Y,
       cells: box(n),
-      caption: n === s.head ? (n === s.tail ? 'head and tail' : 'head') : n === s.tail ? 'tail' : undefined,
     });
     if (n.next) {
       edges.push({ id: nextId(n, n.next), from: nid(n), to: nid(n.next), kind: 'side', arrow: true, offset: -6 });
@@ -373,6 +375,11 @@ export function layout(s: LruState): Scene {
     }
   }
   for (const n of s.map.values()) edges.push({ id: pid(n), from: MAP, to: nid(n), kind: 'tree', fromCell: n.slot, arrow: true });
+  // head and tail are pointer tags under the node they point at; on one node they stack, head nearer.
+  const shared = !!s.head && s.head === s.tail;
+  const tagY = (k: number) => LIST_Y + CELL_H / 2 + TAG_GAP + TAG_H / 2 + k * (TAG_H + 8);
+  if (s.head) nodes.push({ id: 'ptr-head', x: headX, y: tagY(0), cells: [{ text: 'head', w: TAG_W }], shape: 'tag' });
+  if (s.tail) nodes.push({ id: 'ptr-tail', x: tailX, y: tagY(shared ? 1 : 0), cells: [{ text: 'tail', w: TAG_W }], shape: 'tag' });
 
   decor.push({ id: 'l-map', type: 'label', x: LABEL_X, y: MAP_Y, text: 'Hash map', anchor: 'end', strong: true });
   decor.push({ id: 'l-list', type: 'label', x: LABEL_X, y: LIST_Y, text: 'Linked list', anchor: 'end', strong: true });
@@ -380,7 +387,7 @@ export function layout(s: LruState): Scene {
   // so the view does not zoom in and out as nodes leave and join the list.
   decor.push({ id: 'pin-left', type: 'label', x: STAGE_X - NODE_W / 2, y: LIFT_Y, text: '' });
   decor.push({ id: 'pin-right', type: 'label', x: (s.capacity - 1) * SPACING + NODE_W / 2, y: LIFT_Y, text: '' });
-  const labelY = LIST_Y + 54;
+  const labelY = tagY(shared ? 1 : 0) + TAG_H / 2 + 16;
   if (s.head && s.head === s.tail) {
     decor.push({ id: 'l-recent', type: 'label', x: headX, y: labelY, text: 'most and least recent', anchor: 'middle' });
   } else if (s.head) {

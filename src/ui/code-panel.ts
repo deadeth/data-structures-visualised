@@ -16,6 +16,12 @@ function savedLang(): Lang {
   return 'python';
 }
 
+/** Height of one row of code in CSS px: 0.75rem at 1.65, rounded to whole pixels as --code-row is in the CSS. */
+export function codeRowPx(): number {
+  const rem = typeof document === 'undefined' ? 16 : parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  return Math.round(0.75 * 1.65 * rem);
+}
+
 /** Sorted line indexes grouped into runs of consecutive lines. */
 export function runsOf(lines: number[]): number[][] {
   const out: number[][] = [];
@@ -66,7 +72,7 @@ export class CodeView {
     this.body = h(kind === 'full' ? 'div.code-body' : 'div.code-window-body', null);
     this.up = h('button.code-more.up', { type: 'button', hidden: true, onclick: () => this.reveal(-1) });
     this.down = h('button.code-more.down', { type: 'button', hidden: true, onclick: () => this.reveal(1) });
-    this.root = h(kind === 'full' ? 'div.code-view' : 'div.code-window-view', null, this.body, this.up, this.down);
+    this.root = h(kind === 'full' ? 'div.code-view' : 'div.code-window-view', null, this.body, h('div.code-mores', null, this.up, this.down));
     this.body.addEventListener('scroll', () => this.queueMore(), { passive: true });
     if (typeof ResizeObserver !== 'undefined') {
       let last = 0;
@@ -78,6 +84,14 @@ export class CodeView {
         this.syncScrollable();
         this.follow(0);
       }).observe(this.body);
+      if (kind === 'full') {
+        // The side column's listing is as tall as the column allows, in whole rows, so its bottom never cuts a row.
+        new ResizeObserver(() => {
+          const room = this.root.clientHeight;
+          // One more pixel for the rule along its top.
+          if (room > 0) this.body.style.height = `${Math.floor((room - 1) / codeRowPx()) * codeRowPx() + 1}px`;
+        }).observe(this.root);
+      }
     }
   }
 
@@ -102,8 +116,8 @@ export class CodeView {
         // so block structure survives a narrow column. The spaces stay in the text (at no width) so a copy keeps them.
         const n = text.length - text.trimStart().length;
         const code = h('code', null);
-        code.style.paddingLeft = `${n + 2}ch`;
-        code.style.textIndent = '-2ch';
+        // The indent's width is set in CSS from --ind (in characters), so a phone can halve it.
+        code.style.setProperty('--ind', String(n));
         if (n) code.append(h('span.code-indent', null, text.slice(0, n)));
         for (const t of tokenise(text.slice(n), lang)) code.append(t.kind === 'plain' ? document.createTextNode(t.text) : h(`span.tok-${t.kind}`, null, t.text));
         // A blank line holds a newline-free space so a copied listing keeps the blank line between functions.
@@ -169,7 +183,9 @@ export class CodeView {
       this.syncMore();
       return;
     }
-    this.glide(this.place(run[0], run[1]), ms);
+    // Lines wholly out of view: ease out, so they arrive at once and slow into place, rather than starting slowly off screen.
+    const outside = this.bottom(run[1]) <= st || this.top(run[0]) >= st + view;
+    this.glide(this.place(run[0], run[1]), ms, outside);
   }
 
   /**
@@ -203,7 +219,7 @@ export class CodeView {
   }
 
   /** Scroll the surface (never the page) to `target`, on the canvas's clock when there is time to see it. */
-  private glide(target: number, ms: number): void {
+  private glide(target: number, ms: number, out = false): void {
     cancelAnimationFrame(this.raf);
     this.raf = 0;
     const body = this.body;
@@ -223,7 +239,7 @@ export class CodeView {
         return this.syncMore();
       }
       const t = Math.min(1, (now - t0) / ms);
-      body.scrollTop = from + d * ease(t);
+      body.scrollTop = from + d * (out ? 1 - (1 - t) ** 3 : ease(t));
       this.lastSet = body.scrollTop;
       if (t < 1) this.raf = requestAnimationFrame(tick);
       else {
@@ -273,7 +289,8 @@ export class CodeView {
     const set = (b: HTMLButtonElement, n: number, where: string, arrow: string) => {
       b.hidden = n === 0;
       if (!n) return;
-      const label = `${n} more highlighted line${n === 1 ? '' : 's'} ${where}`;
+      // The name starts with the visible words, so speech input can use them.
+      const label = `${n} more ${where}: highlighted line${n === 1 ? '' : 's'} out of view`;
       if (b.getAttribute('aria-label') === label) return;
       b.setAttribute('aria-label', label);
       b.replaceChildren(h('span', { 'aria-hidden': 'true' }, arrow), ` ${n} more ${where}`);

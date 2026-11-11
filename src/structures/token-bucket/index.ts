@@ -1,4 +1,4 @@
-import { LABEL_MAX, PROBE_H, SUB_ROOM } from '../../core/fit';
+import { LABEL_CHAR_W, LABEL_LINE, LABEL_MAX, PROBE_H, SUB_ROOM } from '../../core/fit';
 import { CELL_GAP, CELL_H, TAG_H, TRAY_PAD } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef, Tone } from '../../core/types';
@@ -171,7 +171,7 @@ function decide(s: BucketState, r: Req, rec: Rec, inBurst: boolean): boolean {
     r.outcome = 'allowed';
     s.allowed++;
     rec.count('allowed');
-    markCells(rec, s.tokens, s.tokens + r.cost, 'bad');
+    // The spent slots are simply empty again: an allowed request is not a failure, so no red here.
     rec.line('take');
     rec.step(
       `Take ${tok(r.cost)}, leaving ${s.tokens}. ${name} is allowed at once: it never waited in a queue.` + (inBurst ? `` : ` Cost: two comparisons at most.`),
@@ -231,7 +231,7 @@ export function burst(s: BucketState, count: number, rec: Rec): number {
 export function tick(s: BucketState, k: number, rec: Rec): boolean {
   rec.line('tick');
   if (s.now + k > MAX_TICK) {
-    rec.step(`Sorry, this page's clock stops at tick ${MAX_TICK} so the numbers stay readable, and it reads ${s.now}. Use Reset to start again from tick 0. A real limiter reads the system clock, which has no such limit.`);
+    rec.step(`Sorry, this page's clock stops at tick ${MAX_TICK} so the numbers stay readable, and it reads ${s.now}. Use Reset bucket to start again from tick 0. A real limiter reads the system clock, which has no such limit.`);
     return false;
   }
   const from = s.now;
@@ -268,21 +268,23 @@ const REQ_PITCH = 62;
 const SLOT_W = 44;
 const TICK_W = 40;
 const TICK_PITCH = 42;
-/** Room above a row for the probe chip, then the row's label above that. */
+/** Room above a row for the probe chip. Each row's label sits to its left, so it takes no height. */
 const CHIP_ROOM = PROBE_H + 16;
 const REQ_Y = 0;
-const REQ_LABEL_Y = REQ_Y - CELL_H / 2 - CHIP_ROOM - 10;
-const BUCKET_LABEL_Y = REQ_Y + CELL_H / 2 + SUB_ROOM + LABEL_MAX;
 const BUCKET_H = CELL_H + TRAY_PAD * 2;
-const BUCKET_Y = BUCKET_LABEL_Y + 8 + CHIP_ROOM + BUCKET_H / 2;
-const CLOCK_LABEL_Y = BUCKET_Y + BUCKET_H / 2 + LABEL_MAX + 10;
-const TICK_Y = CLOCK_LABEL_Y + 12 + CELL_H / 2;
+const BUCKET_Y = REQ_Y + CELL_H / 2 + SUB_ROOM + CHIP_ROOM + BUCKET_H / 2;
+const TICK_Y = BUCKET_Y + BUCKET_H / 2 + 18 + CELL_H / 2;
+/** Right edge of the row labels, and the longest line they have. */
+const LABEL_X = -18;
+const LABEL_CHARS = 25;
+/** A two-line label centred on its row. */
+const labelY = (rowY: number) => rowY - LABEL_LINE / 2;
 const NOW_Y = TICK_Y + CELL_H / 2 + 8 + TAG_H / 2;
 const LAST_Y = NOW_Y + TAG_H + 4;
-const LEFT = -8;
+const LEFT = LABEL_X - Math.ceil(LABEL_CHARS * LABEL_CHAR_W);
 /** Narrow enough to fit a phone at the smallest scale without scrolling sideways. */
 const WIDTH = 392;
-const TOP = REQ_LABEL_Y - LABEL_MAX * 0.65;
+const TOP = REQ_Y - CELL_H / 2 - CHIP_ROOM;
 const BOTTOM = LAST_Y + TAG_H / 2 + 4;
 const TOKEN = '●';
 
@@ -311,9 +313,10 @@ export function layout(s: BucketState): Scene {
   decor.push({
     id: 'requests',
     type: 'label',
-    x: 0,
-    y: REQ_LABEL_Y,
-    text: s.requests.length ? 'Requests, oldest on the left' : 'Requests: none yet',
+    x: LABEL_X,
+    y: labelY(REQ_Y),
+    text: s.requests.length ? 'Requests,\noldest on the left' : 'Requests:\nnone yet',
+    anchor: 'end',
     strong: true,
   });
 
@@ -328,9 +331,10 @@ export function layout(s: BucketState): Scene {
   decor.push({
     id: 'bucket-label',
     type: 'label',
-    x: 0,
-    y: BUCKET_LABEL_Y,
-    text: `Bucket: ${s.tokens} of ${s.capacity} at tick ${s.last}, +${available(s) - s.tokens} earned since`,
+    x: LABEL_X,
+    y: labelY(BUCKET_Y),
+    text: `Bucket: ${s.tokens} of ${s.capacity} at tick ${s.last},\n+${available(s) - s.tokens} earned since`,
+    anchor: 'end',
     strong: true,
   });
 
@@ -348,7 +352,7 @@ export function layout(s: BucketState): Scene {
     if (t === s.last) lastX = x;
     nodes.push({ id: tid(t), x, y: TICK_Y, cells: [{ text: String(t), w: TICK_W }] });
   });
-  decor.push({ id: 'clock-label', type: 'label', x: 0, y: CLOCK_LABEL_Y, text: `Clock, in ticks. Refill: ${perTick(s)}`, strong: true });
+  decor.push({ id: 'clock-label', type: 'label', x: LABEL_X, y: labelY(TICK_Y), text: `Clock, in ticks.\nRefill: ${perTick(s)}`, anchor: 'end', strong: true });
   // Each tag has a row of its own, because both point at the same tick straight after a refill.
   nodes.push({ id: 'ptr-now', x: nowX, y: NOW_Y, cells: [{ text: 'now' }], shape: 'tag' });
   nodes.push({ id: 'ptr-last', x: lastX, y: LAST_Y, cells: [{ text: 'last' }], shape: 'tag' });
@@ -407,7 +411,7 @@ const def: StructureDef<BucketState> = {
       run: (s, [n], rec) => void burst(s, Number(n), rec),
       suggest: (s) => [suggestBurst(s)],
     },
-    { id: 'reset', label: 'Reset', intent: 'danger', args: [], code: ['reset'], run: (s, _args, rec) => reset(s, rec) },
+    { id: 'reset', label: 'Reset bucket', intent: 'danger', args: [], code: ['reset'], run: (s, _args, rec) => reset(s, rec) },
   ],
   layout,
   counters: [

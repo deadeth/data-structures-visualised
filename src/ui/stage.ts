@@ -1,5 +1,5 @@
 import type { Source } from '../core/code';
-import { CodePanel } from './code-panel';
+import { CodePanel, codeRowPx } from './code-panel';
 import { h } from '../core/dom';
 import { Player, SPEEDS } from '../core/player';
 import { ease } from '../core/timing';
@@ -83,6 +83,17 @@ export interface StageOptions {
   code?: boolean;
 }
 
+/** The reader's switch for single-character shortcuts. A missing value means on. */
+const SHORTCUTS_STORE = 'dsv.shortcuts';
+
+function shortcutsOn(): boolean {
+  try {
+    return localStorage.getItem(SHORTCUTS_STORE) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
 const CODE_STORE = 'dsv.code';
 /** The store used while the side panel was a Steps or Code switch. Read once, then replaced by CODE_STORE. */
 const OLD_STORE = 'dsv.side';
@@ -130,6 +141,12 @@ export class Stage {
   private wideAt = 0;
   /** The Code on/off toggle, for the page to place with its other tools. Null when there is no code. */
   readonly codeToggle: HTMLButtonElement | null = null;
+  /**
+   * Said beside the toggle when the code is on but hidden: on a short screen
+   * (a phone held sideways) there is no room for the listing between the
+   * canvas and the transport, so it is not drawn at all.
+   */
+  readonly codeNote: HTMLElement | null = null;
   private logSummary: HTMLElement | null = null;
   private log: HTMLOListElement | null = null;
   private logItems: HTMLLIElement[] = [];
@@ -148,6 +165,7 @@ export class Stage {
   private onKey: (e: KeyboardEvent) => void;
   private beside = matchMedia(LOG_BESIDE);
   private codeBeside = matchMedia(CODE_BESIDE);
+  private short = matchMedia(SHORT);
   private onBeside = () => this.syncLogPlacement(true);
   /** Movement time of the frame being shown, so the code listing glides on the same clock as the canvas. */
   private frameMs = 0;
@@ -163,9 +181,9 @@ export class Stage {
   private stickRaf = 0;
   private pageRaf = 0;
   /**
-   * The transport sticks to the bottom of the screen only while there is
-   * something to play and the readout is clear of it, so it never sits over
-   * the readout or over a canvas that has not scrolled into view yet.
+   * The transport sticks to the bottom of the screen while the readout is
+   * clear of it, so it never sits over the readout or over a canvas that has
+   * not scrolled into view yet.
    */
   private onScroll = () => {
     cancelAnimationFrame(this.stickRaf);
@@ -179,7 +197,9 @@ export class Stage {
         this.lastWidth = w;
         this.fitChips(this.player.frames);
         this.sizeMessage();
+        this.sizeRest(this.player.frames);
         this.sizeWindow();
+        this.sizeLogSplit(this.player.frames);
       }
     });
   };
@@ -232,7 +252,7 @@ export class Stage {
       h('span', { 'aria-hidden': 'true' },
         h('kbd', null, 'Space'), ' play or pause, ', h('kbd', null, '←'), ' ', h('kbd', null, '→'), ' step, ',
         h('kbd', null, '['), ' ', h('kbd', null, ']'), ' speed'),
-      h('span.visually-hidden', null, 'Keyboard: Space plays or pauses, the left and right arrows step, the square brackets change speed.'),
+      h('span.visually-hidden', null, 'Keyboard: Space plays or pauses, the left and right arrows step, and with focus in the animation the square brackets change speed.'),
     );
 
     this.countersHost = h('dl.counters');
@@ -252,6 +272,7 @@ export class Stage {
           'aria-pressed': 'false',
           onclick: () => this.setCodeOn(!this.codeOn),
         }, 'Code') as HTMLButtonElement;
+        (this as { codeNote: HTMLElement | null }).codeNote = h('span.code-short-note', { hidden: true }, 'Code is hidden on a screen this short. Turn the phone upright to read it.');
         this.codeOn = savedCodeOn();
       }
       this.logSummary.addEventListener('click', (e) => {
@@ -262,6 +283,7 @@ export class Stage {
       this.root.append(this.logWrap);
       this.beside.addEventListener('change', this.onBeside);
       this.codeBeside.addEventListener('change', this.onBeside);
+      this.short.addEventListener('change', this.onBeside);
       this.syncLogPlacement(false);
       if (this.code) this.setCodeOn(this.codeOn, false);
     }
@@ -313,6 +335,8 @@ export class Stage {
         return;
       }
       if (e.key === ']' || e.key === '[') {
+        // Single-character keys act only inside the animation, and not at all when the reader turned shortcuts off.
+        if (!t || !this.root.contains(t) || !shortcutsOn()) return;
         const i = (SPEEDS as readonly number[]).indexOf(this.player.speed) + (e.key === ']' ? 1 : -1);
         if (i >= 0 && i < SPEEDS.length) this.setSpeed(SPEEDS[i]);
         return;
@@ -336,7 +360,9 @@ export class Stage {
   private syncStick(): void {
     if (!this.root.isConnected) return;
     const room = window.innerHeight - this.transport.offsetHeight;
-    const stick = this.player.frames.length > 1 && this.readout.getBoundingClientRect().bottom < room - 48;
+    // It sticks at rest too: the stage is sized to fit at rest (sizeRest), and where a tall picture still
+    // pushes the controls below the fold they are kept on screen, as they are while an operation plays.
+    const stick = this.readout.getBoundingClientRect().bottom < room - 48;
     this.root.classList.toggle('stick', stick);
   }
 
@@ -349,6 +375,7 @@ export class Stage {
     cancelAnimationFrame(this.stickRaf);
     this.beside.removeEventListener('change', this.onBeside);
     this.codeBeside.removeEventListener('change', this.onBeside);
+    this.short.removeEventListener('change', this.onBeside);
     clearTimeout(this.announceTimer);
     this.player.pause();
     this.renderer.destroy();
@@ -474,28 +501,41 @@ export class Stage {
         if (!this.root.isConnected) return resolve();
         const vh = window.innerHeight;
         const top = this.readout.getBoundingClientRect().top;
+        let delta = 0;
+        if (this.short.matches) {
+          // A short screen: the readout sticks to the top and the transport to the bottom, so it is enough
+          // that the stage fills the screen. followProbe() then keeps the chip between them.
+          const st = this.root.getBoundingClientRect();
+          if (st.top > 0 || st.bottom < vh) delta = st.bottom - st.top >= vh ? st.top : st.bottom - vh;
+          if (st.top > 0 && delta > st.top) delta = st.top;
+          return this.scrollPage(delta, resolve);
+        }
         // Where the transport sits in the flow (it may be stuck to the bottom of the screen right now), under the code window if one shows.
         const win = this.code?.windowRoot;
         const above = win && win.offsetHeight > 0 ? win : this.canvasWrap;
         const bottom = above.getBoundingClientRect().bottom + this.transport.offsetHeight;
-        let delta = 0;
         if (top < 0) delta = top - 8;
         else if (bottom > vh) delta = Math.min(bottom - (vh - 12), top - 8);
-        if (Math.abs(delta) < 1) return resolve();
-        const smooth = !reducedMotion();
-        window.scrollBy({ top: delta, behavior: smooth ? 'smooth' : 'auto' });
-        if (!smooth) return resolve();
-        let done = false;
-        const finish = () => {
-          if (done) return;
-          done = true;
-          window.removeEventListener('scrollend', finish);
-          resolve();
-        };
-        window.addEventListener('scrollend', finish);
-        window.setTimeout(finish, 900);
+        this.scrollPage(delta, resolve);
       });
     });
+  }
+
+  /** Scroll the page by `delta`, smoothly unless motion is reduced, then call `done`. */
+  private scrollPage(delta: number, done: () => void): void {
+    if (Math.abs(delta) < 1) return done();
+    const smooth = !reducedMotion();
+    window.scrollBy({ top: delta, behavior: smooth ? 'smooth' : 'auto' });
+    if (!smooth) return done();
+    let over = false;
+    const finish = () => {
+      if (over) return;
+      over = true;
+      window.removeEventListener('scrollend', finish);
+      done();
+    };
+    window.addEventListener('scrollend', finish);
+    window.setTimeout(finish, 900);
   }
 
   /**
@@ -626,18 +666,42 @@ export class Stage {
    * once per operation, so it does not change size between steps. On a phone
    * it is a fixed strip of three rows and the canvas makes room for it instead.
    */
-  private sizeWindow(): void {
+  private sizeWindow(frames: Frame[] = this.player.frames): void {
     const win = this.code?.windowRoot;
     if (!win || win.offsetHeight === 0 || matchMedia(NARROW).matches) {
       this.root.style.removeProperty('--code-rows');
       return;
     }
-    const rowH = 0.75 * 1.65 * parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const rowH = codeRowPx();
     const used = this.readout.offsetHeight + this.canvasWrap.offsetHeight + this.transport.offsetHeight + 1;
     const head = win.querySelector<HTMLElement>('.code-head')?.offsetHeight ?? 0;
-    // 8px kept above the readout and 12px under the transport, as reveal() does; 14px is the window's own padding.
-    const rows = Math.max(3, Math.min(8, Math.floor((window.innerHeight - used - head - 8 - 12 - 14) / rowH)));
+    // 8px kept above the readout and 12px under the transport, as reveal() does. At rest three rows will do.
+    const rows = frames.length <= 1 ? 3 : Math.max(3, Math.min(8, Math.floor((window.innerHeight - used - head - 8 - 12) / rowH)));
     this.root.style.setProperty('--code-rows', String(rows));
+  }
+
+  /**
+   * At rest (a single picture, nothing to play) the canvas takes no more
+   * height than leaves the transport on screen with the page at the top, as
+   * an operation's own budget does once it is scrolled into view. The
+   * renderer still never lets it squeeze the picture below its minimum scale.
+   * During an operation the canvas keeps its usual height.
+   */
+  private sizeRest(frames: Frame[]): void {
+    const style = this.root.style;
+    style.removeProperty('--canvas-h');
+    if (frames.length > 1 || this.root.classList.contains('compact') || matchMedia(NARROW).matches || this.short.matches) return;
+    const canvas = this.canvasWrap.firstElementChild as HTMLElement;
+    const floor = canvas.style.minHeight;
+    canvas.style.minHeight = '';
+    const natural = canvas.offsetHeight;
+    canvas.style.minHeight = floor;
+    const win = this.code?.windowRoot;
+    const rowH = codeRowPx();
+    const winH = win?.isConnected ? (win.querySelector<HTMLElement>('.code-head')?.offsetHeight ?? 0) + 3 * rowH + 1 : 0;
+    const top = this.root.getBoundingClientRect().top + window.scrollY;
+    const budget = Math.floor(window.innerHeight - top - this.readout.offsetHeight - winH - this.transport.offsetHeight - 12);
+    if (budget < natural) style.setProperty('--canvas-h', `${Math.max(160, budget)}px`);
   }
 
   /** Latch `wideScene` if these frames need more width than the canvas has beside the code column. */
@@ -680,9 +744,12 @@ export class Stage {
       else if (!codeBeside && side.isConnected) side.remove();
       // The window sits under the canvas, above the transport, so the live line is read with the picture.
       const win = this.code.windowRoot;
-      const showWin = this.codeOn && !codeBeside;
+      // On a short screen the window would push the transport off the screen or sit over it: leave it out and say so.
+      const hidden = this.codeOn && !codeBeside && this.short.matches;
+      const showWin = this.codeOn && !codeBeside && !hidden;
       if (showWin && !win.isConnected) this.canvasWrap.after(win);
       else if (!showWin && win.isConnected) win.remove();
+      if (this.codeNote) this.codeNote.hidden = !hidden;
     }
     this.logSummary.textContent = beside ? 'Steps' : 'All steps';
     this.logSummary.tabIndex = beside ? -1 : 0;
@@ -717,30 +784,77 @@ export class Stage {
     btns[next].focus();
   }
 
-  /** Keep the current step in view with the one before it whole above it, never cutting an item mid-line. */
+  /**
+   * Keep the current step in view with the one before it whole above it. The
+   * list scrolls to an item's edge and its height stops at an item's edge, so
+   * no step is ever shown cut in half at either end.
+   */
   private scrollLog(): void {
     const log = this.log;
     if (!log || !this.logWrap?.open) return;
+    const items = this.logItems;
     const index = this.player.index;
-    const cur = this.logItems[index];
-    if (!cur || log.clientHeight === 0) return;
-    const prev = this.logItems[index - 1] ?? cur;
-    const edge = 16;
-    const view = log.clientHeight;
-    let top = log.scrollTop;
-    const curBottom = cur.offsetTop + cur.offsetHeight;
-    if (curBottom - prev.offsetTop + edge * 2 > view) {
-      // No room for both: the current step, whole, comes first.
-      top = cur.offsetTop - edge;
-    } else if (prev.offsetTop - edge < top) top = prev.offsetTop - edge;
-    else if (curBottom + edge > top + view) {
-      top = curBottom + edge - view;
-      // Snap forward to an item boundary so the top item is whole, as long as the previous step stays visible.
-      const first = this.logItems.find((li) => li.offsetTop + li.offsetHeight > top);
-      if (first && first.offsetTop < top) top = Math.min(first.offsetTop + first.offsetHeight, prev.offsetTop - edge);
+    const cur = items[index];
+    if (!cur) return;
+    log.style.height = '';
+    const room = log.clientHeight;
+    if (room === 0) return;
+    const topOf = (i: number) => (i <= 0 ? 0 : items[i].offsetTop);
+    const bottomOf = (i: number) => items[i].offsetTop + items[i].offsetHeight;
+    const prevI = Math.max(0, index - 1);
+    const st = log.scrollTop;
+    let top: number;
+    if (bottomOf(index) - topOf(prevI) > room) top = topOf(index);
+    else if (topOf(prevI) < st) top = topOf(prevI);
+    else if (bottomOf(index) > st + room) {
+      // Down by whole items, as little as shows the current step.
+      let i = 0;
+      while (i < prevI && bottomOf(index) - topOf(i) > room) i++;
+      top = topOf(i);
+    } else {
+      // Where the reader left it, moved on to the edge of the first item that shows whole.
+      let i = 0;
+      while (i < items.length - 1 && topOf(i) < st - 1) i++;
+      top = topOf(i);
     }
-    top = Math.max(0, top);
+    // Stop the view at the last item that fits whole, unless the rest of the list fits.
+    let height = room;
+    const rest = log.scrollHeight - top;
+    if (rest > room + 1) {
+      let last = -1;
+      for (let i = 0; i < items.length && bottomOf(i) <= top + room; i++) last = i;
+      if (last >= 0) height = bottomOf(last) - top;
+    } else if (top > 0) {
+      // The rest of the list fits: end the view with it, so the list can scroll as far as `top`.
+      height = rest;
+    }
+    if (height < room) log.style.height = `${height}px`;
     if (Math.abs(top - log.scrollTop) > 1) log.scrollTo({ top, behavior: 'auto' });
+    log.classList.toggle('more-up', top > 1);
+    log.classList.toggle('more-down', log.scrollHeight - top - log.clientHeight > 1);
+  }
+
+  /**
+   * With the code in the side column, the step log on top takes the room this
+   * operation's steps need (all of them, written out), never more than about
+   * 38% of the column; the code below gets the rest.
+   */
+  private sizeLogSplit(frames: Frame[]): void {
+    const log = this.log;
+    if (!log || !this.root.classList.contains('code-beside') || !this.logWrap) {
+      this.root.style.removeProperty('--log-h');
+      return;
+    }
+    const probe = h('ol.log', { 'aria-hidden': 'true', style: `position:absolute;visibility:hidden;left:0;top:0;bottom:auto;width:${log.clientWidth}px;height:auto;max-height:none` });
+    for (const f of frames) {
+      const text = f.compare ? [h('code', null, `${f.compare.left} ${f.compare.op} ${f.compare.right}`), ` ${f.compare.verdict}`] : [f.message];
+      probe.append(h('li', null, h('button', { type: 'button', tabIndex: -1 }, h('span', null, ...text))));
+    }
+    this.logWrap.append(probe);
+    const natural = probe.scrollHeight;
+    probe.remove();
+    const cap = Math.max(176, this.logWrap.clientHeight * 0.38 - 34);
+    this.root.style.setProperty('--log-h', `${Math.ceil(Math.min(cap, natural))}px`);
   }
 
   // ---- loading and syncing --------------------------------------------------
@@ -760,10 +874,12 @@ export class Stage {
     this.scrub.max = String(Math.max(0, frames.length - 1));
     this.sizeReadout(frames);
     this.checkWide(frames);
+    this.sizeRest(frames);
     this.loading = true;
     this.lostFocus = false;
     this.renderer.plan(frames);
-    this.sizeWindow();
+    this.sizeWindow(frames);
+    this.sizeLogSplit(frames);
     this.lastIndex = -1;
     this.player.load(frames, autoplay);
     this.loading = false;

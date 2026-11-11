@@ -3,6 +3,8 @@
  * One rule above all: magenta means "the key you are following" and is used for nothing else.
  */
 :root {
+  /* One row of example code: 0.75rem text at about 1.65, rounded to whole pixels. */
+  --code-row: round(nearest, calc(0.75rem * 1.65), 1px);
   --paper: #f2f4f7;
   --surface: #ffffff;
   --ink: #0f1b2d;
@@ -620,8 +622,19 @@ svg.scene {
   padding: 16px 6px;
   position: relative;
   scroll-padding-block: 16px;
-  /* Fade the edges so a part-scrolled list reads as continuing, not as cut. */
-  mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0.2) 0, #000 16px, #000 calc(100% - 16px), rgb(0 0 0 / 0.2) 100%);
+}
+
+/* The list stops at an item's edge (the stage sets its height); a soft shadow says more lies beyond. */
+.log.more-up {
+  box-shadow: inset 0 8px 8px -8px rgb(15 27 45 / 0.3);
+}
+
+.log.more-down {
+  box-shadow: inset 0 -8px 8px -8px rgb(15 27 45 / 0.3);
+}
+
+.log.more-up.more-down {
+  box-shadow: inset 0 8px 8px -8px rgb(15 27 45 / 0.3), inset 0 -8px 8px -8px rgb(15 27 45 / 0.3);
 }
 
 .log li {
@@ -767,6 +780,7 @@ svg.scene {
 .stage.stick > .transport {
   position: sticky;
   bottom: 0;
+  z-index: 4;
 }
 
 .transport-nav {
@@ -1596,6 +1610,10 @@ td.num {
     padding: 0 8px;
   }
 
+  .wide-only {
+    display: none;
+  }
+
   /* Tour, random keys and reset share one line on a phone. */
   .tools {
     gap: 4px 0;
@@ -1683,6 +1701,18 @@ td.num {
   color: #fff;
 }
 
+/* The code is on but a short screen has no room for it: say so beside the toggle. */
+.code-short-note {
+  flex: 1 1 14em;
+  margin-left: 4px;
+  font-size: 0.86rem;
+  color: var(--ink-2);
+}
+
+.code-short-note[hidden] {
+  display: none;
+}
+
 /* A small header over each code surface: its name, and the language switch. */
 .code-head {
   display: flex;
@@ -1759,7 +1789,8 @@ td.num {
 .code {
   margin: 0;
   padding: 10px 0 14px;
-  font: 500 0.75rem/1.65 var(--mono);
+  /* A whole number of pixels per row, so a window of rows ends on a row's edge. */
+  font: 500 0.75rem/var(--code-row) var(--mono);
   color: var(--ink);
   tab-size: 4;
 }
@@ -1778,14 +1809,22 @@ td.num {
  * and its continuation hangs 2ch deeper, so block structure stays readable.
  */
 .code-line code {
+  --ind-unit: 1;
+  padding-left: calc((var(--ind, 0) * var(--ind-unit) + 2) * 1ch);
+  text-indent: -2ch;
   font: inherit;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   min-height: 1.6em;
 }
 
-/* The leading spaces stay in the text, so a copied listing keeps its indentation, but take no room. */
+/*
+ * The leading spaces stay in the text, so a copied listing keeps its
+ * indentation, but take no room. Out of the flow as well, so a line can never
+ * break straight after them and start with an empty row.
+ */
 .code-indent {
+  position: absolute;
   font-size: 0;
 }
 
@@ -1834,15 +1873,24 @@ td.num {
   font-weight: 700;
 }
 
-/* Highlighted lines out of view: a control on the edge where they are, which scrolls to them. */
-.code-more {
+/*
+ * Highlighted lines out of view: a control for each direction, which scrolls
+ * to them. Both sit in the header row, beside the name, so they never cover code.
+ */
+.code-mores {
   position: absolute;
-  right: 12px;
+  top: -29px;
+  left: 62px;
   z-index: 1;
+  display: flex;
+  gap: 6px;
+}
+
+.code-more {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-height: 26px;
+  min-height: 24px;
   padding: 0 10px;
   border: 1.5px solid var(--ink-2);
   border-radius: 999px;
@@ -1864,48 +1912,45 @@ td.num {
 
 
 /*
- * Lines out of view above: the control sits in the header row, beside the
- * name, so it covers no code. Lines below: on the bottom edge.
- */
-.code-more.up {
-  top: -29px;
-  left: 62px;
-  right: auto;
-  min-height: 24px;
-}
-
-.code-more.down {
-  bottom: -12px;
-  min-height: 24px;
-}
-
-/* The side column's listing ends at the transport, which sits above it: keep the control inside. */
-.code-view .code-more.down {
-  bottom: 6px;
-}
-
-/*
  * The live window: with the code on, when it is not in the side column, the
  * listing sits under the canvas and follows the live lines, so the picture
  * and the code are read together. It scrolls to the rest of the listing.
  */
 .code-window {
   position: relative;
-  /* Above the transport, so a control on its lower edge is not covered. */
-  z-index: 3;
+  /* Under the transport when that sticks to the bottom of the screen: the controls are never covered. */
+  z-index: 1;
   background: var(--surface);
 }
 
 .code-window-body {
+  /* The rows measure their place from here (see CodeView). */
+  position: relative;
   overflow-y: auto;
   overscroll-behavior-y: contain;
   border-top: 1px solid var(--rule);
-  /* Up to eight rows of code: fewer when a tall scene needs the room (the stage sets --code-rows). */
-  height: calc(var(--code-rows, 8) * 1.65 * 0.75rem + 12px);
+  /*
+   * Up to eight whole rows of code: fewer when a tall scene needs the room (the
+   * stage sets --code-rows). No padding inside, so a scrolled window shows
+   * whole rows from edge to edge and never half of one.
+   */
+  height: calc(var(--code-rows, 8) * var(--code-row) + 1px);
 }
 
 .code-window .code {
-  padding: 6px 0;
+  padding: 0;
+}
+
+/*
+ * With the code window under the canvas, the sentence keeps to two lines (the
+ * whole of it is in the step log), so the height a third line would hold goes
+ * to rows of code instead.
+ */
+@media (min-width: 900px) {
+  .stage.with-code:not(.code-beside):not(.compact) .readout-msg {
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
 }
 
 /* The canvas gives up some height for the window, so the readout, the live line and the transport fit together. */
@@ -1918,6 +1963,7 @@ td.num {
  * step log on top (about 38%, never less than two steps), the code below.
  */
 .stage.code-beside:not(.compact) {
+  /* The stage sets the step log's share from the operation's steps; this is the fallback. */
   --log-h: max(176px, calc(38% - 34px));
   grid-template-columns: minmax(0, 1fr) clamp(380px, 38%, 480px);
 }
@@ -1944,18 +1990,19 @@ td.num {
 }
 
 .stage.code-beside .code-body {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   max-height: none;
+}
+
+/* Whole rows edge to edge (the listing sets its height in rows), so a scrolled listing never shows half a row. */
+.stage.code-beside .code-body .code {
+  padding: 0;
 }
 
 @media (max-width: 899px) {
   /* A phone: a strip of three rows. */
   .code-window-body {
-    height: calc(3 * 1.65 * 0.75rem + 8px);
-  }
-
-  .code-window .code {
-    padding: 4px 0;
+    height: calc(3 * var(--code-row) + 1px);
   }
 
   /* The strip's header stays slim so the readout, the canvas, the strip and the transport fit on a phone. */
@@ -1968,12 +2015,16 @@ td.num {
     height: 26px;
   }
 
-  .code-window .code-more.up {
+  .code-window .code-mores {
     top: -25px;
   }
 }
 
 @media (max-width: 520px) {
+  /* A narrow strip: half the indent per level, so a deep line keeps room for its code. */
+  .code-line code {
+    --ind-unit: 0.5;
+  }
 
   /* A phone keeps the step list folded away, so a fourth line keeps the point of a long sentence. */
   .readout-msg {
@@ -2054,8 +2105,22 @@ td.num {
     gap: 4px;
   }
 
+  /* The readout sticks to the top while the page scrolls with the chip, so the comparison is never lost. */
+  .stage:not(.compact) > .readout {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+  }
+
   .readout-msg {
     -webkit-line-clamp: 2;
     line-clamp: 2;
+  }
+}
+
+/* Sideways on a small phone the scrubber shows where you are; the words would collide with the speeds. */
+@media (max-height: 500px) and (max-width: 799px) {
+  .step-label {
+    display: none;
   }
 }

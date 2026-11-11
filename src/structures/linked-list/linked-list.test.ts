@@ -209,8 +209,9 @@ describe('linked list', () => {
       expect(after.get(k)!.id).toBe(before.get(k)!.id);
       expect(after.get(k)!.x).toBeGreaterThan(before.get(k)!.x);
     }
-    expect(after.get('5')!.title).toBe('head');
-    expect(after.get('30')!.title).toBe('tail');
+    expect(after.get('head')!.shape).toBe('tag');
+    expect(after.get('head')!.x).toBe(after.get('5')!.x);
+    expect(after.get('tail')!.x).toBe(after.get('30')!.x);
   });
 
   it('refuses inserts past the cap while recording, and has no cap otherwise', () => {
