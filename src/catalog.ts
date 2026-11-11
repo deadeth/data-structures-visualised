@@ -271,6 +271,20 @@ export const CATALOG: CatalogEntry[] = [
     cheat: { lookup: 'Read the saga log row', insert: '1 local txn per step', remove: 'Isolation', ordered: 'Steps in order, undone in reverse', pick: 'Multi-service workflows: payments, orders, bookings.' },
   },
   {
+    id: 'idempotency-keys',
+    name: 'Idempotency keys',
+    group: 'Reliability patterns',
+    blurb: 'One key per payment, stored with the payment in one transaction, so a retried request is answered, not repaid.',
+    cheat: { lookup: '1 unique-index probe per request', insert: '1 key row in the same transaction', remove: 'Storage for the window; cannot fix bad keys', ordered: 'Per key: the first commit wins', pick: 'Any retried POST that moves money.' },
+  },
+  {
+    id: 'retries-breaker',
+    name: 'Retries, backoff and circuit breakers',
+    group: 'Reliability patterns',
+    blurb: 'How callers survive a failing service without making it worse: backoff with jitter, breakers, budgets.',
+    cheat: { lookup: 'O(1) per call', insert: 'O(1) per retry', remove: 'Fails some calls fast', ordered: 'No', pick: 'Any call over a network to a service that can fail.' },
+  },
+  {
     id: 'stack',
     name: 'Stack',
     group: 'Foundations',
