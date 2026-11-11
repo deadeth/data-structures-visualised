@@ -10,7 +10,7 @@ export interface CatalogEntry {
   cheat: { lookup: string; insert: string; remove: string; ordered: string; pick: string };
 }
 
-export const GROUPS = ['Storage and indexes', 'Hashing and distribution', 'Caches and queues', 'Foundations'] as const;
+export const GROUPS = ['Storage and indexes', 'Hashing and distribution', 'Caches and queues', 'Transactions', 'Replication and consensus', 'Data processing', 'Foundations'] as const;
 
 /**
  * Every structure the site covers, in display order. A structure's page goes
@@ -54,6 +54,27 @@ export const CATALOG: CatalogEntry[] = [
     cheat: { lookup: 'O(1) by offset', insert: 'O(1) append', remove: 'Oldest segment only', ordered: 'By arrival, per partition', pick: 'Events for many readers, with replay.' },
   },
   {
+    id: 'column-store',
+    name: 'Column-oriented storage',
+    group: 'Storage and indexes',
+    blurb: 'Store each column on its own, Parquet style. Queries read only the columns they need and skip row groups.',
+    cheat: { lookup: 'Reads only needed columns', insert: 'Batched into new files', remove: 'Rewrite or delete marker', ordered: 'By the chosen sort column', pick: 'Analytics over a few columns of many rows.' },
+  },
+  {
+    id: 'inverted-index',
+    name: 'Search indexes',
+    group: 'Storage and indexes',
+    blurb: 'Each word points to a sorted list of the documents that hold it. The index behind Lucene and Elasticsearch.',
+    cheat: { lookup: 'O(log t) per segment + postings', insert: 'Buffered; searchable after refresh', remove: 'Tombstone; space back on merge', ordered: 'Terms sorted; hits by score', pick: 'Full-text search: "contains this word", ranked.' },
+  },
+  {
+    id: 'geo-index',
+    name: 'Geospatial indexes',
+    group: 'Storage and indexes',
+    blurb: 'Geohashes and quadtrees: turn two coordinates into one key, so an index that sorts can find what is nearby.',
+    cheat: { lookup: 'O(log n) per cell, 9 cells', insert: 'O(log n)', remove: 'Exact shapes; filter by distance', ordered: 'Z-order (geohash), Hilbert (S2)', pick: 'Nearby drivers, shops or anything with a location.' },
+  },
+  {
     id: 'hash-table',
     name: 'Hash table',
     group: 'Hashing and distribution',
@@ -66,6 +87,13 @@ export const CATALOG: CatalogEntry[] = [
     group: 'Hashing and distribution',
     blurb: 'Place servers and keys on one ring so that adding a server moves only a slice of the keys.',
     cheat: { lookup: 'O(log N) servers', insert: 'Moves about K/N keys', remove: 'Moves about K/N keys', ordered: 'No', pick: 'Sharding keys across servers that come and go.' },
+  },
+  {
+    id: 'partitioning',
+    name: 'Partitioning and secondary indexes',
+    group: 'Hashing and distribution',
+    blurb: 'Split a table across nodes by key range or hash, and index it locally or globally. Each choice moves the cost.',
+    cheat: { lookup: '1 partition by key', insert: '1 partition, 2 with a global index', remove: 'Range scans (hash) or even load (range)', ordered: 'By key within range partitions', pick: 'Data or writes too big for one node.' },
   },
   {
     id: 'bloom-filter',
@@ -115,6 +143,90 @@ export const CATALOG: CatalogEntry[] = [
     group: 'Caches and queues',
     blurb: 'Priority queues in front, one queue per host behind, and a heap of next allowed times.',
     cheat: { lookup: 'O(1) to see if anything is due', insert: 'O(1)', remove: 'O(log B) for B back queues', ordered: 'By priority, then by host delay', pick: 'Web crawlers.' },
+  },
+  {
+    id: 'cache-strategies',
+    name: 'Cache read and write strategies',
+    group: 'Caches and queues',
+    blurb: 'How a cache and its database stay in step: cache-aside, write-through, write-behind and write-around.',
+    cheat: { lookup: 'Hit: 1 cache read', insert: 'Per strategy: 1 or 2 writes', remove: 'Freshness or durability', ordered: 'No', pick: 'Read-heavy data that can be a little stale.' },
+  },
+  {
+    id: 'mvcc',
+    name: 'Isolation levels and MVCC',
+    group: 'Transactions',
+    blurb: 'Writes add versions, reads pick the newest their snapshot may see. Readers and writers never block each other.',
+    cheat: { lookup: 'O(versions) walk', insert: 'O(1) append, row lock', remove: 'Old versions until vacuum', ordered: 'By transaction id', pick: 'Consistent reads beside writes.' },
+  },
+  {
+    id: 'two-phase-locking',
+    name: 'Serializability: 2PL and SSI',
+    group: 'Transactions',
+    blurb: 'Two ways to make transactions serializable: lock and wait, or run on a snapshot and abort at commit.',
+    cheat: { lookup: '2PL: shared lock; SSI: snapshot, never waits', insert: '2PL: exclusive lock; SSI: private, checked at commit', remove: 'Waits and deadlocks, or aborts and retries', ordered: 'As if one at a time', pick: 'Rules that span rows, such as at least one on call.' },
+  },
+  {
+    id: 'two-phase-commit',
+    name: 'Two-phase commit',
+    group: 'Transactions',
+    blurb: 'Prepare everywhere, then commit everywhere. All or nothing across databases, but a lost coordinator blocks.',
+    cheat: { lookup: '2 round trips', insert: '2n + 1 forced writes', remove: 'Availability: blocks if the coordinator dies', ordered: 'Atomic, not ordered', pick: 'Atomic writes across shards you control.' },
+  },
+  {
+    id: 'leader-replication',
+    name: 'Single-leader replication',
+    group: 'Replication and consensus',
+    blurb: 'One leader takes every write and ships its log to followers. Fast reads, lag, and failover risks.',
+    cheat: { lookup: '1 replica, maybe stale', insert: 'Leader + 0, 1 or all acks', remove: 'Async: writes at failover', ordered: 'One log order', pick: 'Read scaling and failover.' },
+  },
+  {
+    id: 'version-vectors',
+    name: 'Write conflicts and version vectors',
+    group: 'Replication and consensus',
+    blurb: 'Several leaders take writes at once. One counter per replica tells a later write from a concurrent one.',
+    cheat: { lookup: 'O(R) to compare two versions', insert: 'O(R), local to one leader', remove: 'Siblings to merge, or a lost write', ordered: 'Causal only', pick: 'Multi-region or offline writes.' },
+  },
+  {
+    id: 'crdt',
+    name: 'CRDTs',
+    group: 'Replication and consensus',
+    blurb: 'Replicas take writes on their own and always converge: merge keeps the larger of every part.',
+    cheat: { lookup: 'O(R) read, local', insert: 'O(1) local write', remove: 'Invariants; metadata grows', ordered: 'None; converges in any order', pick: 'Multi-region or offline writes.' },
+  },
+  {
+    id: 'quorum',
+    name: 'Quorum reads and writes',
+    group: 'Replication and consensus',
+    blurb: 'Leaderless replication: write to W of N replicas, read from R, and R + W > N makes the two overlap.',
+    cheat: { lookup: 'R replies, newest version wins', insert: 'W acks of N', remove: 'Last write wins drops concurrent writes', ordered: 'No: no single order of writes', pick: 'Writes that must survive replicas being down; tunable per request.' },
+  },
+  {
+    id: 'raft',
+    name: 'Raft consensus',
+    group: 'Replication and consensus',
+    blurb: 'Elect one leader per term, copy its log to the others, and commit once a majority holds an entry.',
+    cheat: { lookup: '1 round trip (read index)', insert: '1 round trip to a majority', remove: 'Availability on the minority side', ordered: 'Total order, one log', pick: 'Small, critical state: config, locks, metadata.' },
+  },
+  {
+    id: 'mapreduce',
+    name: 'MapReduce and batch joins',
+    group: 'Data processing',
+    blurb: 'Map to key and value, shuffle each key to one reducer, sorted, and reduce. Joins work the same way.',
+    cheat: { lookup: 'A full scan of the input', insert: 'Append new input, re-run', remove: 'Latency: minutes, not ms', ordered: 'Sorted by key per reducer', pick: 'Large batch aggregates and joins over immutable input.' },
+  },
+  {
+    id: 'stream-joins',
+    name: 'Stream processing and joins',
+    group: 'Data processing',
+    blurb: 'Join and count events as they arrive, by when they happened. Keyed state, watermarks, late data.',
+    cheat: { lookup: 'O(1) local state per event', insert: 'State: rate × window', remove: 'Matches outside the window', ordered: 'Event time, via watermarks', pick: 'Joins and counts over live events.' },
+  },
+  {
+    id: 'stream-checkpoints',
+    name: 'Exactly-once: Flink checkpoints',
+    group: 'Data processing',
+    blurb: 'Barriers flow with the records; each task saves its state as one passes. Restore, rewind, replay.',
+    cheat: { lookup: 'O(1) per record', insert: 'O(state) per checkpoint', remove: 'Replay since last checkpoint', ordered: 'Per partition', pick: 'Stateful streams that must survive crashes.' },
   },
   {
     id: 'stack',
