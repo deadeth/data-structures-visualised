@@ -1,4 +1,4 @@
-import { PROBE_H, probeWidth } from '../../core/fit';
+import { LABEL_LINE, PROBE_H, probeWidth } from '../../core/fit';
 import { CELL_H, boxWidth } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef } from '../../core/types';
@@ -57,7 +57,7 @@ const CHIP_GAP_Y = 9;
 const CHIP_ROOM_ABOVE = PROBE_H + 16;
 const END_W = boxWidth(['producer']);
 /** Room under the producer and consumer for their captions. */
-const END_BELOW = 18;
+const END_BELOW = 18 + LABEL_LINE;
 
 type Place = NonNullable<Probe['place']>;
 
@@ -234,8 +234,8 @@ export function layout(s: QueueState): Scene {
   nodes.push({ id: HUB, x: f.cx, y: f.cy, cells: [{ text: String(s.size) }], title: 'size', caption: `of ${s.capacity}` });
   // The two ends of the pipe sit in the bottom corners, clear of the tags.
   const endY = f.height - 18 - CELL_H / 2;
-  nodes.push({ id: PRODUCER, x: END_W / 2, y: endY, cells: [{ text: 'producer' }], hue: 5, caption: 'enqueues at tail' });
-  nodes.push({ id: CONSUMER, x: f.width - END_W / 2, y: endY, cells: [{ text: 'consumer' }], hue: 5, caption: 'dequeues at head' });
+  nodes.push({ id: PRODUCER, x: END_W / 2, y: endY, cells: [{ text: 'producer' }], hue: 5, caption: 'enqueues\nat tail' });
+  nodes.push({ id: CONSUMER, x: f.width - END_W / 2, y: endY, cells: [{ text: 'consumer' }], hue: 5, caption: 'dequeues\nat head' });
   return { nodes, edges: [], decor };
 }
 

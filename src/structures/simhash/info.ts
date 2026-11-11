@@ -10,7 +10,7 @@ export const info: Info = {
     'A total of +1 or −1 is a close vote. Change one word and that bit can flip. A total of +5 would need three words to change. Real pages have hundreds of words, so a changed timestamp rarely moves any bit.',
     'A tie counts as 0 here. Page 12 has four words, so ties are possible: three of its eight columns end level.',
     'Compare needs only the two fingerprints. XOR marks the bits that differ and the count of 1s is the distance.',
-    'Store page 1, then try Find near copies on page 10, a phone advert. It lands 1 bit from the storm story, a false positive. Eight bits leave room for only 256 fingerprints, so about 14% of unrelated pairs fall within 2 bits. With 64 bits and a threshold of 3 the chance is about 1 in 400 trillion.',
+    'Page 1 is stored from the start: try Find near copies on page 10, a phone advert. It lands 1 bit from the storm story, a false positive. Eight bits leave room for only 256 fingerprints, so about 14% of unrelated pairs fall within 2 bits. With 64 bits and a threshold of 3 the chance is about 1 in 400 trillion.',
     'Set the threshold to 1, fingerprint pages 2 and 3 and compare them. They are copies of the same story 2 bits apart, so the match is missed. The threshold trades misses against false positives.',
   ],
   complexity: [

@@ -403,10 +403,17 @@ export function trim(s: LogState, partition: number | string, rec: Rec): number 
 
 // ---- layout -----------------------------------------------------------------
 
-/** A slot is wide enough for a group's two tags to sit side by side under it. */
+/**
+ * A group's two tags sit side by side under a slot. The pos tag carries the
+ * group's letter, so each row of tags says whose it is wherever the canvas is
+ * scrolled to (a label at the left edge would not). They are a little wider
+ * than the slot, so each hangs out past its edge: commit is never right of
+ * pos, and a row holds only its own group's tags, so nothing is there.
+ */
 const CELL_W = 114;
 const COMMIT_W = 66;
-const POS_W = 45;
+const POS_W = 62;
+const TAG_HANG = Math.ceil((COMMIT_W + POS_W + 4 - CELL_W) / 2);
 const HEAD_W = 44;
 /** A segment is drawn as a tray behind its records. */
 const TRAY_PAD = 4;
@@ -421,9 +428,8 @@ const TAG_Y: Record<GroupId, number> = {
 const ROW_BOTTOM = TAG_Y.b + TAG_H / 2;
 /** Cells, offsets, two rows of tags, then room for the probe chip above the next partition. */
 export const ROW_H = ROW_BOTTOM + PROBE_H + 12 + CELL_H / 2;
-const LABEL_X = HEAD_W;
-const LEFT = LABEL_X - 62;
-const RIGHT = X0 + MAX_SEGMENTS * SEG_PITCH + TRAY_PAD + CELL_W;
+const LEFT = -4;
+const RIGHT = X0 + MAX_SEGMENTS * SEG_PITCH + TRAY_PAD + CELL_W + TAG_HANG;
 const TOP = -(CELL_H / 2 + PROBE_H + 16);
 
 /** Centre of the slot `index` places after the start of a partition. */
@@ -454,9 +460,8 @@ export function layout(s: LogState): Scene {
       // Never drawn before the start of the log, even in the moment between a trim and the reset that follows it.
       const at = (offset: number) => slotX(Math.max(offset, part.start) - part.start);
       const ty = y + TAG_Y[g];
-      nodes.push({ id: tid(p, g, 'commit'), x: at(grp.committed[p]) - CELL_W / 2 + COMMIT_W / 2, y: ty, cells: [{ text: 'commit', w: COMMIT_W }], shape: 'tag' });
-      nodes.push({ id: tid(p, g, 'pos'), x: at(grp.position[p]) + CELL_W / 2 - POS_W / 2, y: ty, cells: [{ text: 'pos', w: POS_W }], shape: 'tag' });
-      decor.push({ id: `row${p}${g}`, type: 'label', x: LABEL_X, y: ty + 5, text: `group ${name(g)}`, anchor: 'end' });
+      nodes.push({ id: tid(p, g, 'commit'), x: at(grp.committed[p]) - CELL_W / 2 - TAG_HANG + COMMIT_W / 2, y: ty, cells: [{ text: 'commit', w: COMMIT_W }], shape: 'tag' });
+      nodes.push({ id: tid(p, g, 'pos'), x: at(grp.position[p]) + CELL_W / 2 + TAG_HANG - POS_W / 2, y: ty, cells: [{ text: `${name(g)} pos`, w: POS_W }], shape: 'tag' });
     }
   });
   // Two empty labels pin the corners, so the scene keeps its size as partitions fill and empty.
@@ -469,7 +474,30 @@ export function layout(s: LogState): Scene {
 
 const KEY = { name: 'key', label: 'Key', kind: 'int', min: 0, max: 999 } as const;
 const GROUP = { name: 'group', label: 'Group (a or b)', kind: 'word' } as const;
-const PARTITION = { name: 'partition', label: 'Partition', kind: 'int', min: 0, max: 3 } as const;
+const PARTITION = { name: 'partition', label: 'Partition', kind: 'int', min: 0, max: 2 } as const;
+
+/**
+ * The seed for a topic of this many partitions. Three is the page's default
+ * and uses `def.seed` as it is. With two, partition 2 does not exist, so
+ * group A reads partitions 0 and 1 only. With one, every key lands on
+ * partition 0, so the seed is two records, leaving room for the tour.
+ */
+function seedFor(partitions: number): [string, ...(number | string)[]][] {
+  if (partitions >= 3) return def.seed;
+  if (partitions === 2) {
+    return [
+      ...SEED_KEYS.map((k) => ['produce', k] as [string, number]),
+      ['consume', 'a', 0],
+      ['consume', 'a', 0],
+      ['consume', 'a', 1],
+      ['consume', 'a', 1],
+      ['commit', 'a'],
+      ['consume', 'b', 1],
+      ['commit', 'b'],
+    ];
+  }
+  return [['produce', 42], ['produce', 8], ['consume', 'a', 0], ['consume', 'a', 0], ['commit', 'a']];
+}
 
 /** The keys the seed and the tour use. Think of each as the id of a host. */
 export const SEED_KEYS = [42, 6, 16, 8, 21, 7, 6];
@@ -517,10 +545,12 @@ const def: StructureDef<LogState> = {
       id: 'partitions',
       label: 'Partitions',
       default: 3,
-      options: [2, 3, 4].map((v) => ({ value: v, label: String(v) })),
+      options: [1, 2, 3].map((v) => ({ value: v, label: String(v) })),
     },
   ],
   create: (params) => create(params.partitions ?? 3),
+  // Fewer partitions hold the same records in fewer rows: read only partitions that exist, and keep room for the tour.
+  seedFor: (params) => seedFor(params.partitions ?? 3),
   // Group A has read and committed most of the log. Group B has barely started, which is what Trim is there to show.
   seed: [
     ...SEED_KEYS.map((k) => ['produce', k] as [string, number]),

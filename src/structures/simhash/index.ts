@@ -546,11 +546,16 @@ function storedPair(s: SimState): [number, number] {
 }
 
 /** Seed pages, and the pages the tour uses. The test pins the distances between them. */
-export const SEED_PAGES = [4, 5];
 export const TOUR_PAGE = 1;
 export const TOUR_COPY = 2;
 export const TOUR_OTHER = 7;
 export const TOUR_NEW = 3;
+/**
+ * The page the tour compares against and the unrelated one are stored from the
+ * start, so the tour fingerprints word by word only twice (a near copy, then a
+ * new page to look up) and spends the rest of its time on the comparisons.
+ */
+export const SEED_PAGES = [4, 5, TOUR_PAGE, TOUR_OTHER];
 
 const def: StructureDef<SimState> = {
   id: 'simhash',
@@ -604,10 +609,8 @@ const def: StructureDef<SimState> = {
     { label: 'Unrelated pairs that would match', value: `about ${percent(chanceWithin(s.threshold))}` },
   ],
   tour: [
-    ['fingerprint', TOUR_PAGE],
     ['fingerprint', TOUR_COPY],
     ['compare', TOUR_PAGE, TOUR_COPY],
-    ['fingerprint', TOUR_OTHER],
     ['compare', TOUR_PAGE, TOUR_OTHER],
     ['near', TOUR_NEW],
   ],

@@ -210,6 +210,12 @@ export interface StructureDef<S = any> {
   create(params: Record<string, number>): S;
   /** Starting contents, as [opId, ...args]. Applied without animation. */
   seed: [string, ...(number | string)[]][];
+  /**
+   * Optional: the seed for other parameter values, when `seed` would not suit
+   * them (a partition that does not exist, a structure too small to hold it).
+   * The page uses it in place of `seed` when it is there.
+   */
+  seedFor?: (params: Record<string, number>) => [string, ...(number | string)[]][];
   ops: OpDef<S>[];
   layout(state: S): Scene;
   /** Counters to display, in order. `comparisons` should come first when used. */

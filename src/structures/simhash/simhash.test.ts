@@ -416,12 +416,12 @@ describe('SimHash', () => {
       finals.push(rec.frames[rec.frames.length - 1].message);
     }
     // No page is dropped during the tour.
-    expect(s.docs.map((d) => d.page)).toEqual([...SEED_PAGES, TOUR_PAGE, TOUR_COPY, TOUR_OTHER]);
-    expect(finals[2]).toContain('1 of 8 bits differ');
-    expect(finals[2]).toContain('near-duplicates');
-    expect(finals[4]).toContain('6 of 8 bits differ');
-    expect(finals[4]).toContain('not near-duplicates');
-    expect(finals[5]).toContain('near-duplicate of pages 1 and 2');
+    expect(s.docs.map((d) => d.page)).toEqual([...SEED_PAGES, TOUR_COPY]);
+    expect(finals[1]).toContain('1 of 8 bits differ');
+    expect(finals[1]).toContain('near-duplicates');
+    expect(finals[2]).toContain('6 of 8 bits differ');
+    expect(finals[2]).toContain('not near-duplicates');
+    expect(finals[3]).toContain('near-duplicate of pages 1 and 2');
     for (const op of def.ops) {
       for (let i = 0; i < 8; i++) {
         const args = op.suggest!(s);

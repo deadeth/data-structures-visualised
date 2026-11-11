@@ -226,10 +226,10 @@ describe('token bucket', () => {
     const node = (f: Frame) => f.scene.nodes.find((n) => n.id === 'r1')!;
     expect(node(rec.frames[0]).tone).toBe('key');
     expect(node(rec.frames[rec.frames.length - 1]).tone).toBe('ok');
-    // The slot the token left is marked as removed.
+    // The slot the token left is an empty slot again: spending on an allowed request is not drawn as a failure.
     const bucket = rec.frames[rec.frames.length - 1].scene.nodes.find((n) => n.id === 'bucket')!;
     expect(bucket.cells.map((c) => c.text)).toEqual(['●', '●', '●', '●', '']);
-    expect(bucket.cells[4].tone).toBe('bad');
+    expect(bucket.cells[4].tone).not.toBe('bad');
     expect(s).toMatchObject({ tokens: 4, last: 3, now: 3 });
   });
 
@@ -298,7 +298,7 @@ describe('token bucket', () => {
     expect(pointsAt(scene, 'now')).toBe('4');
     expect(pointsAt(scene, 'last')).toBe('0');
     const note = scene.decor!.find((d) => d.id === 'bucket-label')!;
-    expect(note.type === 'label' && note.text).toBe('Bucket: 0 of 5 at tick 0, +4 earned since');
+    expect(note.type === 'label' && note.text).toBe('Bucket: 0 of 5 at tick 0,\n+4 earned since');
     request(s, 1, quiet(s));
     const after = layout(s);
     expect(pointsAt(after, 'now')).toBe('4');

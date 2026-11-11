@@ -60,7 +60,7 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
   };
   const seed = () => {
     state = def.create(params);
-    for (const [opId, ...args] of def.seed) quiet(opId, args);
+    for (const [opId, ...args] of def.seedFor?.(params) ?? def.seed) quiet(opId, args);
   };
   seed();
 
@@ -229,6 +229,7 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
   tools.append(tourBtn);
   // Show the example code with the steps. Remembered across pages.
   if (stage.codeToggle) tools.append(stage.codeToggle);
+  if (stage.codeNote) tools.append(stage.codeNote);
 
   if (def.fill) {
     tools.append(
@@ -244,7 +245,8 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
           }
           rest(`Added up to ${FILL_COUNT} random keys without animating them. Keys that would not fit were skipped.`);
         },
-      }, `Add ${FILL_COUNT} random keys`),
+        // "random" drops on a phone, so the setup tools stay on one row.
+      }, `Add ${FILL_COUNT} `, h('span.wide-only', null, 'random '), 'keys'),
     );
   }
   tools.append(

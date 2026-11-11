@@ -50,11 +50,14 @@ op.run(state, args, rec)
 - `tidyTree({ root, children, width })` for any tree (pass `null` children to keep left and right apart in binary trees)
 - `CELL_H`, `cellWidth` for grids and rows
 
-Leave about 44px of clear space above any node the probe will visit (`PROBE_H + 16`). Node shapes are `box` (default, one or many cells) and `circle`. Edge kinds are `tree`, `side` and `line`. `decor` gives you a ring, lane bands and text labels.
+Leave about 44px of clear space above any node the probe will visit (`PROBE_H + 16`). The resting picture between operations has no chip, so it is fitted without that room, which lets the canvas be shorter at rest; a layout needs no change for this.
+
+On a phone most scenes are wider than the canvas and scroll sideways. The view is nudged so its edges fall between cells and labels rather than across them, so keep notes and captions short (break them with a newline) and no wider than what they label; a long note beside a row can never be shown whole at phone width. Row labels on the left scroll out of view on a phone, so put anything the reader needs to tell rows apart into the row itself (the append-only log puts the group letter in its `pos` tags). Node shapes are `box` (default, one or many cells) and `circle`. Edge kinds are `tree`, `side` and `line`. `decor` gives you a ring, lane bands and text labels.
 
 ## What a definition needs
 
 - `seed`: starting contents so the canvas is never empty
+- `seedFor`: optional, a seed for other parameter values when `seed` would not suit them (a consume on a partition that does not exist with fewer partitions, more records than a smaller structure holds). The page runs `seedFor(params)` in place of `seed` when it is there; `src/structures/append-log/` has an example. Never let a seed operation be a silent no-op
 - `ops`: each with `args`, `run` and, ideally, `suggest` so an empty input box does something interesting
 - `tour`: four to six steps that show the behaviours worth seeing, including the expensive one (a split, a resize, an eviction, a rotation)
 - `status`: two to four live facts (size, height, load factor)

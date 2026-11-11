@@ -100,6 +100,8 @@ export class Renderer {
   /** The frames of the current operation, used to size the canvas once for all of them. */
   private planned: Frame[] = [];
   private span0: { x1: number; x2: number } | null = null;
+  /** False while the planned frames have no probe at all (a resting picture): no room is kept above the nodes for one. */
+  private probeRoom = true;
   private overflowing = false;
   private roRaf = 0;
   /** Sideways scroll tween, driven by the same clock and easing as the nodes and the chip. */
@@ -155,11 +157,42 @@ export class Renderer {
    */
   probeTarget(): { top: number; bottom: number } | null {
     const p = this.probe;
-    if (p.to <= 0) return null;
+    if (p.to <= 0) return this.markedTarget();
     const f = this.fitTo;
-    const y = this.host.getBoundingClientRect().top + f.ty + p.ty * f.s;
+    const top0 = this.host.getBoundingClientRect().top + f.ty;
+    const y = top0 + p.ty * f.s;
     const half = (PROBE_H / 2 + 7) * f.s;
-    return { top: y - half, bottom: y + half };
+    let top = y - half;
+    let bottom = y + half;
+    // The node the chip points at belongs with it: keep both in view.
+    const at = this.last?.probe ? this.last.scene.nodes.find((n) => n.id === this.last!.probe!.at) : undefined;
+    if (at) {
+      const { h } = nodeSize(at);
+      top = Math.min(top, top0 + (at.y - h / 2) * f.s);
+      bottom = Math.max(bottom, top0 + (at.y + h / 2) * f.s);
+    }
+    return { top, bottom };
+  }
+
+  /**
+   * With no chip showing, the nodes the frame marks (the key, the comparison,
+   * the result), in viewport px, so a short screen can still keep them in view.
+   */
+  private markedTarget(): { top: number; bottom: number } | null {
+    const frame = this.last;
+    if (!frame) return null;
+    const marked = (t: string | undefined) => t === 'key' || t === 'compare' || t === 'ok' || t === 'bad';
+    let lo = Infinity, hi = -Infinity;
+    for (const n of frame.scene.nodes) {
+      if (!(marked(n.tone) || n.cells.some((c) => marked(c.tone)))) continue;
+      const { h } = nodeSize(n);
+      lo = Math.min(lo, n.y - h / 2);
+      hi = Math.max(hi, n.y + h / 2);
+    }
+    if (!isFinite(lo)) return null;
+    const f = this.fitTo;
+    const top = this.host.getBoundingClientRect().top + f.ty;
+    return { top: top + lo * f.s, bottom: top + hi * f.s };
   }
 
   destroy(): void {
@@ -209,6 +242,7 @@ export class Renderer {
    */
   plan(frames: Frame[]): void {
     this.planned = frames;
+    this.probeRoom = frames.some((f) => f.probe);
     // Centred on the nodes of the whole operation, so the view holds still between its steps.
     this.span0 = nodeSpan(frames.map((f) => f.scene));
     this.fresh = true;
@@ -228,7 +262,7 @@ export class Renderer {
   private planOverflows(): boolean {
     // Measured without the scrollbar's height, which only exists once it overflows.
     const h = this.host.clientHeight + (this.overflowing ? this.host.offsetHeight - this.host.clientHeight : 0);
-    return this.planned.some((f) => overflowsWidth(sceneBounds(f.scene), this.w, h));
+    return this.planned.some((f) => overflowsWidth(sceneBounds(f.scene, false, this.probeRoom), this.w, h));
   }
 
   /**
@@ -264,11 +298,11 @@ export class Renderer {
       const room = window.innerHeight - (this.opts.reserve?.() ?? 0);
       const maxH = Math.max(MIN_FOLLOW_H, Math.round(Math.min(window.innerHeight * 0.7, room)));
       style.minHeight = '';
-      style.height = `${neededHeight(scenes, w, true, MIN_FOLLOW_H, maxH)}px`;
+      style.height = `${neededHeight(scenes, w, true, MIN_FOLLOW_H, maxH, this.probeRoom)}px`;
     } else {
       // Keep the canvas's own height, but never let it squeeze the scene below the minimum scale.
       style.height = '';
-      const need = neededHeight(scenes, w, false, 0, Infinity);
+      const need = neededHeight(scenes, w, false, 0, Infinity, this.probeRoom);
       style.minHeight = need > 0 ? `${need}px` : '';
     }
     return before !== `${style.height}|${style.minHeight}`;
@@ -347,6 +381,13 @@ export class Renderer {
       }
     }
     if (newX != null) {
+      // The node being compared comes into view with the chip when both fit.
+      const cmp = this.span(frame, (t) => t === 'compare', f);
+      if (cmp && !inView(cmp.lo, cmp.hi, 12)) {
+        const lo = Math.min(cmp.lo, newX - 40);
+        const hi = Math.max(cmp.hi, newX + 40);
+        if (hi - lo <= view - 24) return clamp((lo + hi) / 2 - view / 2);
+      }
       if (inView(newX, newX, margin)) return null;
       if (oldX != null && Math.abs(newX - oldX) <= view - margin * 2) return clamp((oldX + newX) / 2 - view / 2);
       return clamp(newX - view / 2);
@@ -362,6 +403,78 @@ export class Renderer {
     let start = Infinity;
     for (const d of frame.scene.decor ?? []) if (d.type === 'label' && d.text && (d.anchor ?? 'start') === 'start') start = Math.min(start, f.tx + d.x * f.s);
     return clamp(Math.min((f.w - view) / 2, start - 16));
+  }
+
+  /**
+   * Nudge a sideways scroll so no label (a caption, title, note or edge
+   * label) is cut in half by the edge of the view, as long as the chip and
+   * the nodes being compared stay in view. A label is either shown whole or
+   * left wholly beyond the faded edge. Returns null when the view can stay.
+   */
+  private clearLabels(frame: Frame, target: number | null, newX: number | null): number | null {
+    const f = this.fitTo;
+    const view = this.host.clientWidth;
+    const maxLeft = Math.max(0, f.w - view);
+    const base = target ?? this.host.scrollLeft;
+    if (maxLeft <= 0) return target;
+    // Label size in CSS px: 14 scene units, never under 12 px (see the label styles).
+    const charW = Math.max(12, 14 * f.s) * 0.56;
+    const spans: [number, number][] = [];
+    const add = (cx: number, text: string | undefined, anchor: 'start' | 'middle' | 'end' = 'middle') => {
+      if (!text) return;
+      const w = Math.max(...labelLines(text).map((l) => l.length)) * charW;
+      const x = f.tx + cx * f.s;
+      const a = anchor === 'start' ? x : anchor === 'end' ? x - w : x - w / 2;
+      spans.push([a, a + w]);
+    };
+    const at = new Map(frame.scene.nodes.map((n) => [n.id, n]));
+    for (const n of frame.scene.nodes) {
+      add(n.x, n.caption);
+      add(n.x, n.title);
+      // Each cell (and the index or value under it) counts too, so the edge falls between cells, not across one.
+      const { w } = nodeSize(n);
+      if (n.shape === 'circle' || n.cells.length <= 1) {
+        const x = f.tx + (n.x - w / 2) * f.s;
+        spans.push([x, x + w * f.s]);
+      } else {
+        n.cells.forEach((c, i) => {
+          const cx = f.tx + (n.x - w / 2 + cellCentre(n.cells, i)) * f.s;
+          const half = (cellWidth(c) / 2) * f.s;
+          spans.push([cx - half, cx + half]);
+        });
+      }
+    }
+    for (const e of frame.scene.edges) {
+      const a = at.get(e.from);
+      const b = at.get(e.to);
+      if (e.label && a && b) add((a.x + b.x) / 2, e.label);
+    }
+    for (const d of frame.scene.decor ?? []) if (d.type === 'label') add(d.x, d.text, d.anchor ?? 'start');
+    if (!spans.length) return target;
+    // What must stay in view: the chip, and the nodes being compared.
+    const keep: [number, number][] = [];
+    if (newX != null) keep.push([newX - 24, newX + 24]);
+    const hot = this.span(frame, (t) => t === 'compare', f);
+    if (hot) keep.push([hot.lo, hot.hi]);
+    const cuts = (x: number) => spans.filter(([a, b]) => (a < x - 1 && b > x + 1) || (a < x + view - 1 && b > x + view + 1)).length;
+    const keeps = (x: number) => keep.every(([a, b]) => a >= x + 4 && b <= x + view - 4);
+    const clamp = (x: number) => Math.round(Math.max(0, Math.min(maxLeft, x)));
+    let best = clamp(base);
+    let bestCuts = cuts(best);
+    if (bestCuts === 0) return target;
+    const candidates = new Set<number>();
+    for (const [a, b] of spans) {
+      for (const x of [a - 10, b + 2, b + 10 - view, a - 2 - view]) candidates.add(clamp(x));
+    }
+    for (const x of candidates) {
+      if (Math.abs(x - base) > view * 0.5 || !keeps(x)) continue;
+      const c = cuts(x);
+      if (c < bestCuts || (c === bestCuts && Math.abs(x - base) < Math.abs(best - base))) {
+        best = x;
+        bestCuts = c;
+      }
+    }
+    return Math.abs(best - this.host.scrollLeft) < 1 && target == null ? null : best;
   }
 
   /** Show a frame, taking `ms` to get there. Zero jumps straight to it. */
@@ -447,7 +560,7 @@ export class Renderer {
     }
     this.sizeSvg(this.fitTo);
     const newX = p.to > 0 ? this.fitTo.tx + p.tx * this.fitTo.s : null;
-    const target = this.overflowing ? this.scrollTarget(frame, oldX, newX) : null;
+    const target = this.overflowing ? this.clearLabels(frame, this.scrollTarget(frame, oldX, newX), newX) : null;
     this.fresh = false;
     this.scrollFrom = this.host.scrollLeft;
     this.scrollTo = target != null && Math.abs(target - this.scrollFrom) >= 1 ? target : null;
@@ -755,7 +868,7 @@ export class Renderer {
   // ---- fit ----------------------------------------------------------------
 
   private computeFit(frame: Frame): Fit {
-    return fitScene(sceneBounds(frame.scene), this.w, this.h, this.span0, sceneBounds(frame.scene, true));
+    return fitScene(sceneBounds(frame.scene, false, this.probeRoom), this.w, this.h, this.span0, sceneBounds(frame.scene, true, this.probeRoom));
   }
 }
 

@@ -486,7 +486,7 @@ describe('append-only log', () => {
         for (const f of rec.frames) for (const a of f.lines ?? []) set.add(a);
         checkFrames(rec.frames);
       };
-      for (const [id, ...args] of def.seed) run(id, args, false);
+      for (const [id, ...args] of def.seedFor!({ partitions: param.value })) run(id, args, false);
       for (const [id, ...args] of def.tour) run(id, args, true);
       for (let round = 0; round < 40; round++) for (const op of def.ops) run(op.id, op.suggest!(s), true);
       expect(codeProblems(def.source!, def.ops, used)).toEqual([]);
@@ -546,9 +546,17 @@ describe('append-only log', () => {
   });
 
   it('the seed and the tour fit the page for every number of partitions', () => {
-    for (const partitions of [2, 3, 4]) {
+    for (const partitions of [1, 2, 3]) {
       const s = def.create({ partitions });
-      for (const [id, ...args] of [...def.seed, ...def.tour]) {
+      const seed = def.seedFor!({ partitions });
+      // Every consume in the seed reads a partition that exists, and reads a record.
+      for (const [id, , p] of seed) if (id === 'consume') expect(Number(p)).toBeLessThan(partitions);
+      for (const [id, ...args] of seed) {
+        const rec = new Recorder(s, def.layout, false);
+        def.ops.find((o) => o.id === id)!.run(s, args, rec);
+        if (id === 'consume') expect(rec.counters.reads).toBe(1);
+      }
+      for (const [id, ...args] of def.tour) {
         const rec = new Recorder(s, def.layout, true);
         def.ops.find((o) => o.id === id)!.run(s, args, rec);
         expect(rec.frames.some((f) => /Sorry/.test(f.message))).toBe(false);
@@ -557,7 +565,8 @@ describe('append-only log', () => {
       verify(s);
       // Every tour record was stored: the tour key always hashes to partition 0.
       expect(partitionOf(TOUR_KEY, partitions)).toBe(0);
-      expect(s.partitions.reduce((sum, part) => sum + part.records.length, 0)).toBe(SEED_KEYS.length + 4);
+      const produced = seed.filter(([id]) => id === 'produce').length;
+      expect(s.partitions.reduce((sum, part) => sum + part.records.length, 0)).toBe(produced + 4);
     }
   });
 

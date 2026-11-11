@@ -1,3 +1,5 @@
+import { CAPTION_ROOM, LABEL_MAX } from '../../core/fit';
+import { CELL_H, TAG_H } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Rec, Scene, SceneEdge, SceneNode, StructureDef } from '../../core/types';
 import java from './code/SinglyLinkedList.java?raw';
@@ -302,6 +304,8 @@ const BOX_W = 50;
 const PITCH = 74;
 /** How far below the row a node sits while it is not part of the list. */
 const DROP = 84;
+const TAG_GAP = 8;
+const TAG_W = BOX_W;
 
 export function layout(s: ListState): Scene {
   // The row in drawing order: the list itself, plus any node that is half in or half out.
@@ -317,20 +321,22 @@ export function layout(s: ListState): Scene {
 
   const nodes: SceneNode[] = [];
   const edges: SceneEdge[] = [];
+  // Where each pointer points: head, tail and (during a delete) prev are tags under their node.
+  const tags: { name: 'head' | 'tail' | 'prev'; x: number; y: number }[] = [];
   row.forEach((n, i) => {
     const isDraft = draft?.node === n;
     const isGhost = ghost?.node === n;
     const out = isDraft || isGhost;
-    const names: string[] = [];
-    if (n === s.head) names.push('head');
-    if (n === s.tail) names.push('tail');
+    const y = out ? DROP : 0;
+    if (n === s.head) tags.push({ name: 'head', x: i * PITCH, y });
+    if (n === s.tail) tags.push({ name: 'tail', x: i * PITCH, y });
+    if (n === s.prev) tags.push({ name: 'prev', x: i * PITCH, y });
     nodes.push({
       id: nid(n),
       x: i * PITCH,
-      y: out ? DROP : 0,
+      y,
       cells: [{ text: String(n.key), w: BOX_W }],
-      title: names.length ? names.join(', ') : undefined,
-      caption: isDraft ? 'new' : isGhost ? 'unlinked' : n === s.prev ? 'prev' : undefined,
+      caption: isDraft ? 'new' : isGhost ? 'unlinked' : undefined,
     });
     // A new node at the front has no next pointer worth drawing until it is written.
     if (n.next || !(isDraft && draft!.where === 'front' && s.head)) {
@@ -342,10 +348,22 @@ export function layout(s: ListState): Scene {
     x: row.length * PITCH,
     y: 0,
     cells: [{ text: 'null', w: BOX_W, tone: 'dim' }],
-    title: s.head ? undefined : 'head, tail',
   });
-  // An empty label that reserves the space below the row, so the view holds still when a node drops out of line.
-  return { nodes, edges, decor: [{ id: 'reserve', type: 'label', x: 0, y: DROP + 27, text: '' }] };
+  if (!s.head) tags.push({ name: 'head', x: row.length * PITCH, y: 0 });
+  if (!s.tail) tags.push({ name: 'tail', x: row.length * PITCH, y: 0 });
+  // Under a node in the row (several on one node stack, head nearest), or over a node that has dropped below it.
+  const depth = new Map<string, number>();
+  for (const t of tags) {
+    const k = `${t.x},${t.y}`;
+    const d = depth.get(k) ?? 0;
+    depth.set(k, d + 1);
+    const dy = t.y === 0 ? CELL_H / 2 + TAG_GAP + TAG_H / 2 + d * (TAG_H + 8) : -(CELL_H / 2 + 4 + TAG_H / 2) - d * (TAG_H + 8);
+    nodes.push({ id: `ptr-${t.name}`, x: t.x, y: t.y + dy, cells: [{ text: t.name, w: TAG_W }], shape: 'tag' });
+  }
+  // An empty label that reserves the space below the row (a dropped node and its caption, or two stacked tags),
+  // so the view holds still when a node drops out of line.
+  const bottom = Math.max(DROP + CELL_H / 2 + CAPTION_ROOM, CELL_H / 2 + TAG_GAP + 2 * TAG_H + 8);
+  return { nodes, edges, decor: [{ id: 'reserve', type: 'label', x: 0, y: bottom - LABEL_MAX * 0.65, text: '' }] };
 }
 
 // ---- definition ------------------------------------------------------------

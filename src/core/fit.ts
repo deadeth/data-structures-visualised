@@ -57,8 +57,12 @@ export interface Fit {
   h: number;
 }
 
-/** The box a scene occupies, including room for the probe chip, titles, subs and captions. */
-export function sceneBounds(scene: Scene, drawnOnly = false): Bounds | null {
+/**
+ * The box a scene occupies, including room for the probe chip, titles, subs
+ * and captions. Pass `probeRoom` false for a picture no chip will visit (the
+ * resting picture between operations), so it is not kept room it never uses.
+ */
+export function sceneBounds(scene: Scene, drawnOnly = false, probeRoom = true): Bounds | null {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const grow = (x1: number, y1: number, x2: number, y2: number) => {
     if (x1 < minX) minX = x1;
@@ -75,7 +79,7 @@ export function sceneBounds(scene: Scene, drawnOnly = false): Bounds | null {
     // Titles and captions can be wider than their node: keep them inside the view too.
     const half = Math.max(w, labelWidth(n.title), labelWidth(n.caption)) / 2;
     // Always leave room above for the probe chip so the view does not jump when it arrives.
-    grow(n.x - half, n.y - h / 2 - PROBE_H - 16 - (n.title ? TITLE_ROOM : 0), n.x + half, n.y + h / 2 + extraBelow);
+    grow(n.x - half, n.y - h / 2 - (probeRoom ? PROBE_H + 16 : 0) - (n.title ? TITLE_ROOM : 0), n.x + half, n.y + h / 2 + extraBelow);
   }
   for (const e of scene.edges) {
     const a = at.get(e.from);
@@ -156,11 +160,11 @@ export function overflowsWidth(b: Bounds | null, canvasW: number, canvasH: numbe
  * tallest frame needs at MIN_SCALE: when that is more than `maxH` (a phone
  * held sideways) the canvas is that tall anyway and the page scrolls.
  */
-export function neededHeight(scenes: Scene[], canvasW: number, follow: boolean, minH: number, maxH: number): number {
+export function neededHeight(scenes: Scene[], canvasW: number, follow: boolean, minH: number, maxH: number, probeRoom = true): number {
   let need = 0;
   let floor = 0;
   for (const scene of scenes) {
-    const b = sceneBounds(scene);
+    const b = sceneBounds(scene, false, probeRoom);
     if (!b) continue;
     const s = follow ? widthScale(b, canvasW) : MIN_SCALE;
     const overflow = b.bw * s + FIT_PAD * 2 > canvasW ? SCROLLBAR_ALLOWANCE : 0;
