@@ -5,7 +5,7 @@ import { MODES } from '../designs/types';
 import { slug } from './design-page';
 
 interface Doc {
-  kind: 'Term' | 'Component' | 'Connection' | 'Tour step' | 'Decision' | 'Structure';
+  kind: 'Term' | 'Component' | 'Connection' | 'Tour step' | 'Decision' | 'Interview question' | 'Structure';
   title: string;
   /** Other names that should find this entry. */
   also: string[];
@@ -62,6 +62,9 @@ function build(): Promise<Doc[]> {
     }
     d.tour.forEach((t, i) => docs.push({ kind: 'Tour step', title: t.title, also: [], text: t.text, href: `${base}/t/${i + 1}`, where: `${d.name}: tour step ${i + 1}` }));
     for (const dec of d.decisions) docs.push({ kind: 'Decision', title: dec.choice, also: [], text: `${dec.a} ${dec.b} ${dec.call}`, href: base, where: `${d.name}: decisions worth defending` });
+    // Likely pushes from the design's interview extras, when written: each opens its question in the "Likely pushes" section.
+    const ex = await entry.extras?.().catch(() => undefined);
+    ex?.pushes.forEach((p, i) => docs.push({ kind: 'Interview question', title: p.q, also: [], text: p.a.join(' '), href: `${base}/q/${i + 1}`, where: `${d.name}: likely pushes` }));
     }
 
     await Promise.all(
