@@ -154,11 +154,12 @@ main:has(> .design) {
   width: 40px;
 }
 
-.hld-icon:hover:not(:disabled) {
+.hld-icon:hover:not(:disabled):not([aria-disabled='true']) {
   background: #e4eaf4;
 }
 
-.hld-icon:disabled {
+.hld-icon:disabled,
+.hld-icon[aria-disabled='true'] {
   color: #a9b4c3;
   cursor: default;
 }
@@ -231,7 +232,7 @@ main:has(> .design) {
 /* The speeds are words like the other controls, in the text face with even figures. */
 .hld-speed button,
 .hld-speed-cycle {
-  height: 30px;
+  height: 32px;
   min-width: 44px;
   border: 0;
   border-radius: 7px;
@@ -291,6 +292,22 @@ main:has(> .design) {
 .hld-pan.more-left::before,
 .hld-pan.more-right::after {
   opacity: 1;
+}
+
+/* On a phone the fades are a hint, not a band: lighter and narrower, so the diagram's edge stays readable under them. */
+@media (max-width: 599px), (max-height: 500px) {
+  .hld-pan::before,
+  .hld-pan::after {
+    width: 14px;
+  }
+
+  .hld-pan::before {
+    background: linear-gradient(to right, rgb(15 27 45 / 0.1), rgb(15 27 45 / 0));
+  }
+
+  .hld-pan::after {
+    background: linear-gradient(to left, rgb(15 27 45 / 0.1), rgb(15 27 45 / 0));
+  }
 }
 
 .hld-panbar {
@@ -485,8 +502,9 @@ main:has(> .design) {
  * 16.5 units) is drawn between 13px and 15.8px: the diagram grows with the
  * stage up to 0.96px a unit, and past that the extra width is margin. Below
  * 0.788px a unit it pans sideways instead of shrinking, unless the reader asks
- * for the overview. Box names (18 units) stay at least 1px larger than their
- * subtitles.
+ * for the overview. Fitting the whole diagram at 768px would draw its smallest
+ * text at 9.9px, so the fit starts at about 1010px, where the stage reaches
+ * 0.788px a unit. Box names (18 units) stay at least 1px larger than their subtitles.
  */
 .hld-svg {
   display: block;
@@ -500,6 +518,13 @@ main:has(> .design) {
 
 .hld-svg.fit {
   min-width: 0;
+}
+
+/* From here the whole diagram fits with readable text and no sideways scroll. Matches FIT_FROM in design-page.ts. */
+@media (min-width: 1010px) {
+  .hld-svg {
+    min-width: 0;
+  }
 }
 
 .hld-frame {
@@ -971,9 +996,11 @@ main:has(> .design) {
   opacity: 1;
 }
 
-/* A paper plate behind a purpose label, so it reads where it crosses a line or the node's frame. */
+/* A white plate behind a purpose label, with a faint square-cornered edge so it reads as a label laid on the drawing, never as a chip, a line or the frame. */
 .hld-label-bg {
   fill: var(--surface);
+  stroke: var(--rule);
+  stroke-width: 1.2;
   opacity: 0;
   pointer-events: none;
 }
@@ -1207,7 +1234,7 @@ main:has(> .design) {
   border-color: var(--ink);
 }
 
-.hld-index button[aria-pressed='true'] {
+.hld-index button[aria-current='true'] {
   background: var(--ink);
   border-color: var(--ink);
   color: #fff;
@@ -2127,9 +2154,9 @@ main:has(> .design) {
     fill: CanvasText !important;
   }
 
-  /* A pressed button shows it by more than a fill the system colours would take away. */
+  /* A pressed button, or the current one in the index, shows it by more than a fill the system colours would take away. */
   .hld-speed button[aria-pressed='true'],
-  .hld-index button[aria-pressed='true'],
+  .hld-index button[aria-current='true'],
   .hld-fit[aria-pressed='true'] {
     forced-color-adjust: none;
     background: Highlight;
@@ -2141,6 +2168,11 @@ main:has(> .design) {
 
   .hld-tether {
     stroke: Highlight !important;
+  }
+
+  /* Previous and Next where they do nothing: greyed as a disabled button would be, though they keep focus. */
+  .hld-icon[aria-disabled='true'] {
+    color: GrayText;
   }
 
   .hld-node .hld-box,
@@ -2292,11 +2324,12 @@ main:has(> .design) {
     color: #fff;
   }
 
-  .hld-transport .hld-icon:disabled {
+  .hld-transport .hld-icon:disabled,
+  .hld-transport .hld-icon[aria-disabled='true'] {
     color: #7d8ca2;
   }
 
-  .hld-transport .hld-icon:hover:not(:disabled) {
+  .hld-transport .hld-icon:hover:not(:disabled):not([aria-disabled='true']) {
     background: #26354d;
   }
 

@@ -34,6 +34,19 @@ const LABEL_CLEAR = 7;
 /** ...and further from lines (their white halo eats into the gap) and from chips. */
 const LABEL_LINE_CLEAR = 8;
 const LABEL_CHIP_CLEAR = 9;
+/** ...and further still from the node's dashed frame and its words, so a label never reads as part of the frame: 8px at the reading scale. */
+const LABEL_FRAME_CLEAR = 10.5;
+/** A plate keeps this far from a box's outline (its words are then 9 units from it). */
+const LABEL_BOX_CLEAR = 5;
+/** A purpose label's paper plate: this much wider and taller than its words on each side. */
+const PLATE_X = 4;
+const PLATE_Y = 3;
+/** How far a purpose label's plate may sit from its line or its chip, in units: never more than about 40px. */
+const LABEL_NEAR = 44;
+/** ...and, where nowhere that near is clear, at most this far, so the label still shows. */
+const LABEL_FAR = 66;
+/** The steps out from the line tried for a label: the far ones reach past the end of a wide chip on a short line. */
+const LABEL_DIST = [8, 14, 20, 26, 32, 38, 44, 52, 60, 72, 88, 104];
 /** From this width the opened detail shares the screen with the diagram. */
 const WIDE = '(min-width: 1366px)';
 /**
@@ -43,6 +56,8 @@ const WIDE = '(min-width: 1366px)';
  * this on the tour; it pans.
  */
 const BASE_SCALE = 0.788;
+/** From this width the whole diagram always fits its stage: it pans sideways only on a narrower screen. Matches design.css. */
+const FIT_FROM = '(min-width: 1010px)';
 /** The largest scale: its smallest text is then 15.8px. Wider than that, the extra width is margin. Matches design.css. */
 const MAX_SCALE = 0.96;
 /** The sticky readout may take at most this share of the screen's height. */
@@ -192,7 +207,7 @@ function boxSample(kind: string): SVGSVGElement {
  */
 type Who = 'main' | 'branch';
 /** A leg along a connection, with the one place its pill keeps for the whole leg (`off`, from the dot). */
-type PathSeg = { kind: 'path'; el: SVGPathElement; back: boolean; full: number; from: number; len: number; label: string; who: Who; vertical: boolean; off: Pt };
+type PathSeg = { kind: 'path'; el: SVGPathElement; back: boolean; full: number; from: number; len: number; label: string; who: Who; vertical: boolean; off: Pt; clearAt?: number };
 type Seg =
   | PathSeg
   | { kind: 'hop'; a: Pt; b: Pt; label: string; next: string; offA: Pt; offB: Pt; noPillB?: boolean }
@@ -207,6 +222,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   const W = design.size.w;
   const H = design.size.h;
   const base = `#/d/${design.id}`;
+  /** The page's title as the router set it: what is open on the diagram goes in front of it, and comes off when it closes. */
+  const baseTitle = document.title;
   const byId = new Map(design.components.map((c) => [c.id, c]));
   const flowById = new Map(design.flows.map((f) => [f.id, f]));
   /** A reply's id names its line travelled backwards. */
@@ -306,7 +323,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     chipLayer.append(chip);
     items.push(chip);
     const leader = el('line', {}, 'hld-leader');
-    const labelBg = el('rect', { rx: 5 }, 'hld-label-bg');
+    const labelBg = el('rect', { rx: 4 }, 'hld-label-bg');
     const label = el('text', {}, 'hld-flow-label');
     label.textContent = fl.reply ? `${fl.label} / ${fl.reply.label}` : fl.label ?? fl.via;
     label.dataset.flow = fl.id;
@@ -362,10 +379,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     name.textContent = c.short ?? c.name;
     const tech = el('text', { x: w / 2, y: top + 19, 'text-anchor': 'middle' }, 'hld-tech');
     tech.textContent = c.tech;
-    // A space between the box's words in its text, drawn too small to see, so its words read as the box's name does (label in name).
+    // A comma between the box's lines in its text, drawn too small to see, so its name reads as a list of its lines and
+    // still starts with the words on show (label in name).
     const spaced = (t: SVGTextElement) => {
       const sp = el('tspan', { 'font-size': 0.01 }, 'hld-gap');
-      sp.textContent = ' ';
+      sp.textContent = ', ';
       t.append(sp);
     };
     spaced(name);
@@ -397,10 +415,15 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const rect = el('rect', { y: -PILL_H / 2, height: PILL_H, rx: PILL_H / 2 });
     const text = el('text', { y: 4.5, 'text-anchor': 'middle' });
     pill.append(rect, text);
-    g.append(tether, dot, pill);
+    // The pill's tie is drawn under the chips, in a group of its own that moves with the token: where it must pass a
+    // chip it goes behind it, never through its words. The dot and the pill stay above the chips.
+    const tie = el('g', { 'aria-hidden': 'true' }, `hld-token hld-tie ${cls}`);
+    tie.append(tether);
+    tie.style.display = 'none';
+    g.append(dot, pill);
     g.style.display = 'none';
     return {
-      g, dot, pill, rect, text, tether,
+      g, tie, dot, pill, rect, text, tether,
       at: null as { x: number; y: number; label: string } | null,
       /** Where the pill sits against the dot (fixed for a leg), and where a cross-fade at rest is taking it. */
       off: null as Pt | null,
@@ -415,7 +438,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   const token = makeToken('main');
   const branchTok = makeToken('branch');
   // The token is drawn last, above the chips, so a chip never hides the dot or its words, moving or at rest.
-  svg.append(labelLayer, chipLayer, token.g, branchTok.g);
+  svg.append(labelLayer, token.tie, branchTok.tie, chipLayer, token.g, branchTok.g);
 
   const canvas = h('div.hld-canvas', null);
   canvas.append(svg);
@@ -438,8 +461,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   const readout = h('div.hld-readout', null, h('div.hld-title-row', null, stepTitle, moreBtn), stepText, stepVia);
 
   const playLabel = h('span.hld-play-text', null, 'Play the tour');
-  const btn = (name: keyof typeof ICON, label: string, keys: string, fn: () => void, cls = '') =>
-    h(`button.hld-icon${cls}`, { type: 'button', 'aria-label': label, title: keys ? `${label} (${keys})` : label, 'data-keys': keys, onclick: fn }, icon(name)) as HTMLButtonElement;
+  const btn = (name: keyof typeof ICON, label: string, keys: string, fn: () => void, cls = '') => {
+    // A button marked aria-disabled does nothing, but keeps focus: see disable.
+    const b: HTMLButtonElement = h(`button.hld-icon${cls}`, { type: 'button', 'aria-label': label, title: keys ? `${label} (${keys})` : label, 'data-keys': keys, onclick: () => b.getAttribute('aria-disabled') !== 'true' && fn() }, icon(name)) as HTMLButtonElement;
+    return b;
+  };
   const restartBtn = btn('restart', 'Back to the start', '', () => go(0, true), '.hld-restart');
   const backBtn = btn('back', 'Previous step', 'Left arrow', () => go(step - 1, true));
   /** The step Next goes to: off the tour, the step the reader left at (as Play resumes there), else the first. */
@@ -485,7 +511,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   const index = h('div.hld-index', { role: 'group', 'aria-label': 'All components' });
   const indexBtns = new Map<string, HTMLButtonElement>();
   for (const c of design.components) {
-    const b = h('button', { type: 'button', 'aria-pressed': 'false', onclick: () => select(c.id, 'text', b) }, c.name) as HTMLButtonElement;
+    const b = h('button', { type: 'button', onclick: () => select(c.id, 'text', b) }, c.name) as HTMLButtonElement;
     indexBtns.set(c.id, b);
     index.append(b);
   }
@@ -776,9 +802,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const hitC = labelCache.get(key);
     if (hitC) return hitC;
     const out = new Map<string, { x: number; y: number; box: Box; leader: [Pt, Pt] | null }>();
-    const obstacles: Box[] = [...nodeBoxes, ...frameTexts];
+    const obstacles: Box[] = [...nodeBoxes];
     const chipObs: Box[] = [...chips].map((id) => chipBox.get(id)!);
-    const pts: Pt[] = [...frameSamples];
+    const pts: Pt[] = [];
     for (const id of lines) pts.push(...samples.get(id)!);
     // The shortest lines have the fewest places to put a label: place them first.
     const order = [...ids].sort((a, b) => samples.get(a)!.length - samples.get(b)!.length);
@@ -789,15 +815,25 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       t0.setAttribute('y', '0');
       t0.setAttribute('text-anchor', 'middle');
       const tb = t0.getBBox();
-      const lw = tb.width;
-      const lh = tb.height;
+      // The label sits on a paper plate: the plate is what keeps clear of everything else.
+      const lw = tb.width + 2 * PLATE_X;
+      const lh = tb.height + 2 * PLATE_Y;
       const asc = -tb.y;
       const L = fe.path.getTotalLength();
+      // A label hangs near its own chip, so it reads as that chip's words, not a neighbour's.
+      const ct = fe.fl.chip ?? 0.5;
       let best: { x: number; y: number; box: Box; leader: [Pt, Pt] | null; score: number } | null = null;
-      // A label on its own (the open line, or the one pointed at) must show: if nowhere is clear of every line, it may
-      // cross a line or the frame, on its paper plate, and sit a little nearer the chips.
+      // If nowhere near its chip is clear of every line, a label may cross another line on its plate, and sit a little
+      // nearer the chips. The boxes, its own line and the frame's words are always kept clear, and the frame's outline too
+      // unless the label is the only one showing: the open line, or the one pointed at, always shows its words.
       const own = new Set(samples.get(id)!);
-      for (const strict of ids.length === 1 ? [true, false] : [true]) {
+      const ownChip = chipBox.get(id)!;
+      // Passes, each tried only if the one before found nowhere: clear of every line; then across lines on the plate; then,
+      // for a label on its own, across the frame's outline; last, clear of every line again but across the outline if need be,
+      // and up to about 60px from its line or chip, rather than not at all. The frame's words are kept clear in every pass.
+      for (const pass of ids.length === 1 ? [0, 1, 2, 3] : [0, 1, 3]) {
+      // The far pass keeps clear of other lines again: a label far from its own line, on another, would read as that one's.
+      const strict = pass === 0 || pass === 3;
       if (best) break;
       for (const t of ANCHORS) {
         const a = fe.path.getPointAtLength(L * t);
@@ -811,23 +847,34 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
         const tx = n.y;
         const ty = -n.x;
         const along = Math.abs(tx) * (lw / 2 - 6) + Math.abs(ty) * (lh / 2 - 3);
-        for (const d of [8, 14, 20, 26, 32, 38, 44, 52, 60, 72, 88]) {
+        for (const d of LABEL_DIST) {
           for (const side of [1, -1])
           for (const slide of [0, along, -along]) {
             const cx = a.x + side * n.x * (d + ext) + tx * slide;
             const cy = a.y + side * n.y * (d + ext) + ty * slide;
             const box = { x: cx - lw / 2, y: cy - lh / 2, w: lw, h: lh };
-            const score = d + Math.abs(t - 0.5) * 50 + (side === 1 ? 0 : 0.5) + (slide ? 6 : 0);
+            // Scored by how far it is from its chip along the line, and (below) how far from its line or chip.
+            const score = Math.abs(t - ct) * L * 0.25 + (side === 1 ? 0 : 0.5) + (slide ? 6 : 0);
             if (best && score >= best.score) continue;
             if (box.x < 2 || box.y < 2 || box.x + box.w > W - 2 || box.y + box.h > H - 2) continue;
-            if (obstacles.some((o) => gapOf(o, box) < LABEL_CLEAR)) continue;
+            if (obstacles.some((o) => gapOf(o, box) < LABEL_BOX_CLEAR)) continue;
+            if (frameTexts.some((o) => gapOf(o, box) < LABEL_FRAME_CLEAR)) continue;
+            if (pass < 2 && frameSamples.some((p) => ptGap(p, box) < LABEL_FRAME_CLEAR)) continue;
             if (chipObs.some((o) => gapOf(o, box) < (strict ? LABEL_CHIP_CLEAR : 5))) continue;
             if ([...out.values()].some((o) => gapOf(o.box, box) < LABEL_CLEAR)) continue;
             if (strict ? pts.some((p) => ptGap(p, box) < LABEL_LINE_CLEAR) : [...own].some((p) => ptGap(p, box) < 4)) continue;
-            const edge = { x: a.x + side * n.x * d + tx * slide, y: a.y + side * n.y * d + ty * slide };
-            // Close to its line a label needs no leader (a short stub would read as a dash in front of the words); further out, a leader with a gap at each end.
-            const lead: [Pt, Pt] | null = d >= 20 ? [{ x: a.x + side * n.x * 4, y: a.y + side * n.y * 4 }, { x: edge.x - side * n.x * 3, y: edge.y - side * n.y * 3 }] : null;
-            best = { x: cx, y: cy - lh / 2 + asc, box, leader: lead, score };
+            // How far the plate really is from its line or its chip: off a bend the step out is not square to the plate.
+            const near = Math.min(gapOf(ownChip, box), ...[...own].map((p) => ptGap(p, box)));
+            if (near > (pass === 3 ? LABEL_FAR : LABEL_NEAR)) continue;
+            const sc = score + near;
+            if (best && sc >= best.score) continue;
+            // Close to its line a label needs no leader (a short stub would read as a dash in front of the words); further out, a
+            // leader with a gap at each end, from the line to the nearest point of the plate.
+            const q = { x: Math.max(box.x, Math.min(a.x, box.x + box.w)), y: Math.max(box.y, Math.min(a.y, box.y + box.h)) };
+            const ql = Math.hypot(q.x - a.x, q.y - a.y) || 1;
+            const u = { x: (q.x - a.x) / ql, y: (q.y - a.y) / ql };
+            const lead: [Pt, Pt] | null = near >= 20 ? [{ x: a.x + u.x * 4, y: a.y + u.y * 4 }, { x: q.x - u.x * 3, y: q.y - u.y * 3 }] : null;
+            best = { x: cx, y: cy - lh / 2 + asc, box, leader: lead, score: sc };
           }
         }
       }
@@ -857,7 +904,26 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       g.setAttribute('tabindex', '0');
       rove = g;
     }
-    if (focus) g.focus();
+    if (focus) {
+      g.focus({ preventScroll: true });
+      showWhole(g);
+    }
+  }
+  /** A part moved to by the arrow keys comes wholly into view, its focus ring and 24px round it: the canvas pans, and the page scrolls. */
+  function showWhole(g: SVGGElement): void {
+    const M = 24;
+    const r = g.getBoundingClientRect();
+    const c = canvas.getBoundingClientRect();
+    const fit = (lo: number, hi: number, a: number, b: number) => (b - a + 2 * M > hi - lo ? a - M - lo : a - M < lo ? a - M - lo : b + M > hi ? b + M - hi : 0);
+    const dx = fit(c.left, Math.min(c.right, innerWidth), r.left, r.right);
+    const dy = canvas.scrollHeight > canvas.clientHeight + 1 ? fit(c.top, c.bottom, r.top, r.bottom) : 0;
+    if (dx) canvas.scrollLeft += dx;
+    if (dy) canvas.scrollTop += dy;
+    // Then the page, below the readout where it sticks.
+    const r2 = g.getBoundingClientRect();
+    const v = viewport();
+    const py = fit(v.top, v.bottom, r2.top, r2.bottom);
+    if (py) window.scrollBy(0, py);
   }
   function nearest(from: SVGGElement, key: string): SVGGElement | null {
     const a = centreOf(from);
@@ -1011,6 +1077,10 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     if (!alive) return;
     const want = selected ? `${base}/c/${selected}` : picked ? `${base}/f/${picked}` : step >= 0 ? `${base}/t/${step + 1}` : base;
     if (location.hash !== want) history.replaceState(history.state, '', want);
+    const fl = picked ? flowById.get(picked) : null;
+    const what = selected ? nameOf(selected) : fl ? lineName(fl) : step >= 0 ? `Step ${step + 1}: ${design.tour[step].title}` : '';
+    const title = what ? `${what} | ${baseTitle}` : baseTitle;
+    if (document.title !== title) document.title = title;
   }
 
   const smooth = (): ScrollBehavior => (reducedMotion() ? 'auto' : 'smooth');
@@ -1047,7 +1117,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       g.classList.toggle('selected', nid === selected);
       g.setAttribute('aria-expanded', String(nid === selected));
     }
-    for (const [nid, b] of indexBtns) b.setAttribute('aria-pressed', String(nid === selected));
+    // One of a set is open: the index marks it as the current one, not as a pressed toggle.
+    for (const [nid, b] of indexBtns) {
+      if (nid === selected) b.setAttribute('aria-current', 'true');
+      else b.removeAttribute('aria-current');
+    }
     paintFlows(lastLight);
     stage.classList.toggle('reading', !!(selected || picked));
     setUrl();
@@ -1185,7 +1259,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       leader.classList.toggle('on', !!sp?.leader);
       if (!sp) continue;
       labelSpot.set(fl.id, sp);
-      for (const [a, v] of [['x', sp.box.x - 3], ['y', sp.box.y - 1], ['width', sp.box.w + 6], ['height', sp.box.h + 2]] as const) labelBg.setAttribute(a, v.toFixed(1));
+      for (const [a, v] of [['x', sp.box.x], ['y', sp.box.y], ['width', sp.box.w], ['height', sp.box.h]] as const) labelBg.setAttribute(a, v.toFixed(1));
       label.setAttribute('x', sp.x.toFixed(1));
       label.setAttribute('y', sp.y.toFixed(1));
       label.setAttribute('text-anchor', 'middle');
@@ -1210,8 +1284,15 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
 
   /** A control that is about to be disabled hands focus to Play first, so focus is never dropped on the page. */
   function disable(b: HTMLButtonElement, off: boolean): void {
-    if (off && document.activeElement === b) playBtn.focus({ preventScroll: true });
-    b.disabled = off;
+    // Back to the start is hidden where it means nothing, so it is truly disabled and focus moves on to Play.
+    if (b === restartBtn) {
+      if (off && document.activeElement === b) playBtn.focus({ preventScroll: true });
+      b.disabled = off;
+      return;
+    }
+    // Previous and Next stay in place and focusable, so pressing Next onto the last step leaves focus on it.
+    if (off) b.setAttribute('aria-disabled', 'true');
+    else b.removeAttribute('aria-disabled');
   }
 
   function sync(light = true): void {
@@ -1268,8 +1349,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const inTour = step >= 0;
     const limit = innerHeight * HEAD_SHARE;
     const tH = transport.offsetHeight;
-    // A phone held upright: the readout shows only the step's title until More is pressed, so the diagram keeps most of the screen.
-    const tiny = inTour && small() && innerWidth < 600;
+    // A phone held upright, or one on its side (under 420px tall): the readout shows only the step's title until More is
+    // pressed, so the diagram keeps most of the screen and the canvas and the transport fit on it together.
+    const tiny = inTour && small() && (innerWidth < 600 || innerHeight < 420);
     const brief = inTour && (tiny || reserve + tH > limit);
     stage.classList.toggle('brief', brief);
     stage.classList.toggle('tiny', tiny);
@@ -1733,6 +1815,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     tk.g.setAttribute('transform', `translate(${x.toFixed(1)},${y.toFixed(1)})`);
     tk.g.style.opacity = opacity >= 1 ? '' : Math.max(0, opacity).toFixed(2);
     tk.g.style.display = '';
+    tk.tie.setAttribute('transform', tk.g.getAttribute('transform')!);
+    tk.tie.style.opacity = tk.g.style.opacity;
+    tk.tie.style.display = '';
     tk.at = { x, y, label };
     if (off) {
       tk.off = off;
@@ -1745,6 +1830,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   }
   function hideToken(tk: Tok = token): void {
     tk.g.style.display = 'none';
+    tk.tie.style.display = 'none';
     tk.at = null;
     tk.pillOp = 1;
     tk.pill.style.opacity = '';
@@ -1903,7 +1989,13 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       const pt = sg.el.getPointAtLength(sg.back ? sg.full - d : d);
       const tk = sg.who === 'main' ? token : branchTok;
       tk.vertical = sg.vertical;
-      place(tk, pt.x, pt.y, sg.label, 1, sg.off);
+      // A leg whose place for the pill sits on a box where it sets off: the pill comes in as the token moves off, once it is
+      // clear of the box's words, over the next 24 units. After that it stays, whatever it passes.
+      const onBox = (p: Pt) => covered(grid('boxes'), pillAt(p, sg.off, pillWidth(sg.label))) > 0;
+      if (sg.clearAt == null) sg.clearAt = onBox(sg.el.getPointAtLength(sg.back ? sg.full - sg.from : sg.from)) ? NaN : -Infinity;
+      if (Number.isNaN(sg.clearAt) && !onBox(pt)) sg.clearAt = d;
+      const op = Number.isNaN(sg.clearAt) ? 0 : Math.min(1, (d - sg.clearAt) / 24);
+      place(tk, pt.x, pt.y, sg.label, 1, sg.off, op);
     } else if (sg.kind === 'hold') {
       // A turn: the token is still. If its words or its side change, the pill fades out, moves unseen and fades in.
       const change = sg.label !== sg.next || !sameOff(sg.offA, sg.offB);
@@ -1928,7 +2020,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       const p = u < 0.5 ? sg.a : sg.b;
       place(token, p.x, p.y, u < 0.5 ? sg.label : sg.next, o, u < 0.5 ? sg.offA : sg.offB, u >= 0.5 && sg.noPillB ? 0 : 1);
       // Fully faded, it is not drawn at all, so the step across is never seen as movement.
-      if (o <= 0) token.g.style.display = 'none';
+      if (o <= 0) token.g.style.display = token.tie.style.display = 'none';
     } else {
       const tk = sg.who === 'main' ? token : branchTok;
       place(tk, sg.at.x, sg.at.y, sg.label, u, sg.off, sg.noPill ? 0 : 1);
@@ -1961,6 +2053,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       return;
     }
     drawSeg(trip.segs[trip.i], trip.u);
+    // On a phone the signs keep out of the moving token's way, a few times a second.
+    if (cam && now - marksAt > 200) updateMarks();
     raf = requestAnimationFrame(tick);
   }
 
@@ -2015,17 +2109,19 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   const small = () => innerWidth < 600 || innerHeight < 500;
   /**
    * The smallest scale the tour zooms to on a small screen: the diagram's
-   * smallest text (16.5 units) is then 11px. A step that does not fit at it is
-   * not shrunk further; the view pans with the token instead.
+   * smallest text (16.5 units) is then 13.2px. With the cap at 1 the zoom moves
+   * in a narrow band from step to step, so it never pumps. A step that does not
+   * fit at it is not shrunk further: the view rests on where the step ends, with
+   * edge signs for the rest, and pans with the token on the way.
    */
-  const FLOOR_SCALE = 0.67;
+  const FLOOR_SCALE = 0.8;
   /** The scale the tour has zoomed to for this step on a small screen (null: the reading scale), and whether the step fits at it. */
   let tourK: number | null = null;
   let stepFits = true;
   /** The reading scale: the diagram's scale when the tour is not zooming it. */
   function baseK(): number {
     const cw = canvas.clientWidth;
-    return fitted ? Math.min(cw / W, MAX_SCALE) : Math.min(MAX_SCALE, Math.max(cw / W, BASE_SCALE));
+    return fitted || matchMedia(FIT_FROM).matches ? Math.min(cw / W, MAX_SCALE) : Math.min(MAX_SCALE, Math.max(cw / W, BASE_SCALE));
   }
   /** Size the diagram for its scale, in pixels per unit: the reading scale, the overview, or the tour's zoom on a small screen. */
   function zoomFor(): number {
@@ -2238,8 +2334,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     return { k, rest, start, whole: whole && !start };
   }
   /** Glide the zoom and the view centre together, and the page to y, in about 280ms (at once with reduced motion). Returns how long it takes. */
+  /** Whether the camera is gliding to a new view: the edge signs wait until it stops. */
+  let camGliding = false;
   function camGlide(k1: number, c1: Pt, y1: number): number {
     cancelAnimationFrame(followRaf);
+    camGliding = false;
     const k0 = tourK ?? k1;
     const v = camView();
     const c0 = tourK == null ? c1 : { x: v.x + v.w / 2, y: v.y + v.h / 2 };
@@ -2247,17 +2346,28 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     if (tourK == null || reducedMotion() || (Math.abs(k1 - k0) < 0.002 && Math.hypot(c1.x - c0.x, c1.y - c0.y) * k1 < 1 && Math.abs(y1 - y0) < 1)) {
       camApply(k1, c1.x, c1.y);
       if (Math.abs(y1 - window.scrollY) > 0.5) window.scrollTo(0, y1);
+      requestAnimationFrame(() => alive && updateMarks());
       return 0;
     }
     const t0 = performance.now();
     const ms = 280;
+    camGliding = true;
+    if (marks.firstChild) marks.replaceChildren();
     const step2 = (now: number) => {
-      if (!alive || !cam) return;
+      if (!alive || !cam) {
+        camGliding = false;
+        return;
+      }
       const t = Math.min(1, (now - t0) / ms);
       const e = ease(t);
       camApply(k0 + (k1 - k0) * e, c0.x + (c1.x - c0.x) * e, c0.y + (c1.y - c0.y) * e);
       window.scrollTo(0, y0 + (y1 - y0) * e);
       if (t < 1) followRaf = requestAnimationFrame(step2);
+      else {
+        // The view has come to a stop: the signs are worked out for where it stopped.
+        camGliding = false;
+        updateMarks();
+      }
     };
     followRaf = requestAnimationFrame(step2);
     return ms;
@@ -2285,13 +2395,20 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     return camGlide(camPlan.k, camCentre(camPlan.rest), window.scrollY);
   }
   /**
-   * The edge signs: at rest on a small screen, each lit box not wholly in view
-   * gets a sign at the edge of the canvas it lies beyond, saying its name with
-   * an arrow towards it. They are for the eye and the finger: the readout
-   * already names both ends of the step, so they are hidden from screen readers.
+   * The edge signs: on a small screen, whenever the camera is not gliding to a
+   * new view (at rest, at a step's opening view, and while the token travels),
+   * each lit box
+   * not wholly in view gets a sign at the edge of the canvas it lies beyond,
+   * saying its name with an arrow towards it. A sign never covers a box's words,
+   * a chip, the token or another sign: it slides along its edge to the nearest
+   * clear place, or round the corner onto the next edge. They are for the eye
+   * and the finger: the readout already names both ends of the step, so they
+   * are hidden from screen readers.
    */
+  let marksAt = 0;
   function updateMarks(): void {
-    if (!cam || step < 0 || fitted || tourK == null || stage.dataset.phase !== 'rest') {
+    marksAt = performance.now();
+    if (!cam || step < 0 || fitted || tourK == null || camGliding) {
       if (marks.firstChild) marks.replaceChildren();
       return;
     }
@@ -2299,18 +2416,24 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const v = camView();
     const cw = canvas.clientWidth;
     const ch = canvas.clientHeight;
-    const taken: { side: string; at: number }[] = [];
-    const out: HTMLElement[] = [];
-    // What a sign must not cover: the lit boxes in view, the live chips, and the token.
-    const px = (b: Box): Box => ({ x: (b.x - v.x) * k, y: (b.y - v.y) * k, w: b.w * k, h: b.h * k });
-    const avoid: Box[] = [];
-    for (const id of design.tour[step].focus) avoid.push(px(boxOf(id)));
-    for (const l of liveLegs()) if (chipShown(l.fl, needed(true), new Set(liveLegs().map((x) => x.fl.id)))) avoid.push(px(chipBox.get(l.fl.id)!));
+    const cr = canvas.getBoundingClientRect();
+    const rel = (r: DOMRect): Box => ({ x: r.left - cr.left, y: r.top - cr.top, w: r.width, h: r.height });
+    const inView = (b: Box) => b.w > 1 && b.x < cw && b.x + b.w > 0 && b.y < ch && b.y + b.h > 0;
+    // What a sign must never cover: every box's words, every chip on show, the token and its label. Less badly, a lit box's outline.
+    const hard: Box[] = [];
+    for (const g of nodeEls.values()) for (const t of g.querySelectorAll('text')) hard.push(rel(t.getBoundingClientRect()));
+    for (const fe of flowEls.values()) if (fe.chip.classList.contains('show') && fe.chip.classList.contains('need')) hard.push(rel(fe.chipRect.getBoundingClientRect()));
     for (const tk of [token, branchTok]) {
       if (tk.g.style.display === 'none' || !tk.at) continue;
-      avoid.push(px(dotBox(tk.at)));
-      if (tk.pillBox) avoid.push(px(tk.pillBox));
+      hard.push(rel(tk.dot.getBoundingClientRect()));
+      if (tk.pill.style.opacity !== '0') hard.push(rel(tk.rect.getBoundingClientRect()));
     }
+    const soft: Box[] = design.tour[step].focus.map((id) => rel(nodeEls.get(id)!.querySelector('.hld-box')!.getBoundingClientRect()));
+    const hardIn = hard.filter(inView);
+    const softIn = soft.filter(inView);
+    type Edge = 'left' | 'right' | 'top' | 'bottom';
+    const arrows: Record<Edge, string> = { left: '←', right: '→', top: '↑', bottom: '↓' };
+    const want: { id: string; side: Edge; at: number; cx: number; cy: number }[] = [];
     for (const id of design.tour[step].focus) {
       const b = boxOf(id);
       if (within(b, v, 0.5)) continue;
@@ -2318,7 +2441,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       const cy = b.y + b.h / 2;
       const dx = (cx - (v.x + v.w / 2)) / v.w;
       const dy = (cy - (v.y + v.h / 2)) / v.h;
-      const side = Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : dy < 0 ? 'top' : 'bottom';
+      const side: Edge = Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : dy < 0 ? 'top' : 'bottom';
       const across = side === 'left' || side === 'right';
       // A box partly in view: its sign sits beside it along the edge, not on the part that shows.
       const partY = b.y + b.h > v.y && b.y < v.y + v.h;
@@ -2326,41 +2449,57 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       let at = across ? (cy - v.y) * k : (cx - v.x) * k;
       if (across && partX && partY) at = (b.y + b.h - v.y) * k + 20 <= ch - 18 ? (b.y + b.h - v.y) * k + 20 : (b.y - v.y) * k - 20;
       else if (!across && partX && partY) at = (b.x + b.w - v.x) * k + 74 <= cw - 70 ? (b.x + b.w - v.x) * k + 74 : (b.x - v.x) * k - 74;
-      at = across ? Math.max(20, Math.min(ch - 20, at)) : Math.max(70, Math.min(cw - 70, at));
-      // Two signs on one edge never sit on each other.
-      while (taken.some((t) => t.side === side && Math.abs(t.at - at) < (across ? 34 : 120))) at += across ? 34 : 120;
-      taken.push({ side, at });
-      const c = byId.get(id)!;
-      const name = c.short ?? c.name;
-      const arrow = { left: '←', right: '→', top: '↑', bottom: '↓' }[side];
-      const m = h(`div.hld-mark.${side}`, { onclick: () => camGlide(k, { x: cx, y: cy }, window.scrollY) }, side === 'right' ? `${name} ${arrow}` : `${arrow} ${name}`);
-      m.style.setProperty('--at', `${at.toFixed(0)}px`);
-      out.push(m);
+      want.push({ id, side, at, cx, cy });
     }
+    // Each sign laid out once to learn its size, then placed.
+    const out = want.map((w0) => {
+      const c = byId.get(w0.id)!;
+      const name = c.short ?? c.name;
+      const arrow = arrows[w0.side];
+      const m = h(`div.hld-mark.${w0.side}`, { onclick: () => camGlide(k, { x: w0.cx, y: w0.cy }, window.scrollY) }, w0.side === 'right' ? `${name} ${arrow}` : `${arrow} ${name}`);
+      m.style.setProperty('--at', '0px');
+      return m;
+    });
     marks.replaceChildren(...out);
-    // Laid out: a sign that covers a lit box, a live chip or the token slides along its edge to the nearest clear place.
-    const cr = canvas.getBoundingClientRect();
     const placed: Box[] = [];
-    for (const m of out) {
+    const overlap = (a: Box, o: Box, pad: number) => Math.max(0, Math.min(a.x + a.w, o.x + o.w + pad) - Math.max(a.x, o.x - pad)) * Math.max(0, Math.min(a.y + a.h, o.y + o.h + pad) - Math.max(a.y, o.y - pad));
+    const E = 4;
+    out.forEach((m, n) => {
+      const w0 = want[n];
       const r = m.getBoundingClientRect();
-      const box0 = { x: r.left - cr.left, y: r.top - cr.top, w: r.width, h: r.height };
-      const across = m.classList.contains('left') || m.classList.contains('right');
-      const at0 = parseFloat(m.style.getPropertyValue('--at'));
-      const lo = across ? 18 : r.width / 2 + 4;
-      const hi = across ? ch - 18 : cw - r.width / 2 - 4;
-      // Nearest first along the whole edge; where nowhere is clear, the place that covers least.
-      let best = { at: at0, cost: Infinity };
-      const overlap = (a: Box, o: Box) => Math.max(0, Math.min(a.x + a.w, o.x + o.w + 2) - Math.max(a.x, o.x - 2)) * Math.max(0, Math.min(a.y + a.h, o.y + o.h + 2) - Math.max(a.y, o.y - 2));
-      for (let at = lo; at <= hi; at += 4) {
-        const d = at - at0;
-        const b = across ? { ...box0, y: box0.y + d } : { ...box0, x: box0.x + d };
-        const cost = [...avoid, ...placed].reduce((t, o) => t + overlap(b, o), 0) * 10 + Math.abs(d);
-        if (cost < best.cost) best = { at, cost };
+      const mw = r.width;
+      const mh = r.height;
+      const boxAt = (edge: Edge, at: number): Box =>
+        edge === 'left' ? { x: E, y: at - mh / 2, w: mw, h: mh }
+          : edge === 'right' ? { x: cw - E - mw, y: at - mh / 2, w: mw, h: mh }
+            : edge === 'top' ? { x: at - mw / 2, y: E, w: mw, h: mh }
+              : { x: at - mw / 2, y: ch - E - mh, w: mw, h: mh };
+      // Its own edge first, nearest its natural place; then round either corner onto the next edge, at a cost.
+      const across = w0.side === 'left' || w0.side === 'right';
+      const others: Edge[] = across ? ['top', 'bottom'] : ['left', 'right'];
+      const tries: { edge: Edge; at: number; extra: number }[] = [];
+      const range = (edge: Edge) => (edge === 'left' || edge === 'right' ? [mh / 2 + E, ch - mh / 2 - E] : [mw / 2 + E, cw - mw / 2 - E]);
+      const [lo, hi] = range(w0.side);
+      for (let at = lo; at <= hi; at += 3) tries.push({ edge: w0.side, at, extra: Math.abs(at - Math.max(lo, Math.min(hi, w0.at))) });
+      for (const edge of others) {
+        const [lo2, hi2] = range(edge);
+        // On the next edge, the end nearer the box.
+        const near = w0.side === 'left' || w0.side === 'top' ? lo2 : hi2;
+        for (let at = lo2; at <= hi2; at += 3) tries.push({ edge, at, extra: 400 + Math.abs(at - near) });
+      }
+      let best = { edge: w0.side, at: Math.max(lo, Math.min(hi, w0.at)), cost: Infinity };
+      for (const t of tries) {
+        const b = boxAt(t.edge, t.at);
+        const cost = [...hardIn, ...placed].reduce((a, o) => a + overlap(b, o, 3), 0) * 1000 + softIn.reduce((a, o) => a + overlap(b, o, 2), 0) * 2 + t.extra;
+        if (cost < best.cost) best = { edge: t.edge, at: t.at, cost };
+      }
+      if (best.edge !== w0.side) {
+        m.classList.remove(w0.side);
+        m.classList.add(best.edge);
       }
       m.style.setProperty('--at', `${best.at.toFixed(0)}px`);
-      const r2 = m.getBoundingClientRect();
-      placed.push({ x: r2.left - cr.left, y: r2.top - cr.top, w: r2.width, h: r2.height });
-    }
+      placed.push(boxAt(best.edge, best.at));
+    });
   }
   let marksRaf = 0;
   canvas.addEventListener('scroll', () => {
@@ -2803,9 +2942,12 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
         trip.i++;
       }
       drawSeg(segs[trip.i], 0);
+      // Still, waiting for Play: the signs show what is out of view.
+      updateMarks();
     } else {
       drawSeg(segs[0], 0);
       raf = requestAnimationFrame(tick);
+      updateMarks();
     }
   }
 
@@ -2877,6 +3019,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       cancelAnimationFrame(raf);
       raf = 0;
       if (trip) trip.last = null;
+      updateMarks();
     }
     if (starting) holdTrip = true;
     sync(!starting);
@@ -2907,6 +3050,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     else if (trip) {
       trip.last = null;
       if (!raf) raf = requestAnimationFrame(tick);
+      updateMarks();
     } else dwell(step, dwellLeft > 0 ? dwellLeft : undefined);
   }
 
@@ -3134,6 +3278,15 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   window.addEventListener('resize', onResize);
   syncKeys();
   measureReserve();
+  // The readout's tallest step is measured again once the web fonts are in: measured in a fallback face, the reserve
+  // can come out a few pixels short, and the one step taller than it would nudge the canvas down.
+  const remeasure = () => {
+    if (!alive) return;
+    measuredAt = '';
+    measureReserve();
+  };
+  document.fonts?.ready.then(remeasure);
+  document.fonts?.addEventListener?.('loadingdone', remeasure);
   renderDetail(null);
   sync();
   syncPan();
@@ -3152,6 +3305,22 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     e.addEventListener('keydown', off);
   }
 
+  /**
+   * The component a link names: by its id, or by its name or short name as a slug, singular or plural
+   * (so /c/fetchers and /c/url-frontier both work). The address is then rewritten to the id.
+   */
+  function componentFor(want: string): string | null {
+    if (byId.has(want)) return want;
+    const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const one = (t: string) => t.replace(/ies$/, 'y').replace(/s$/, '');
+    const w = slug(decodeURIComponent(want));
+    for (const c of design.components) {
+      const keys = [c.id, slug(c.name), ...(c.short ? [slug(c.short)] : [])];
+      if (keys.some((k) => k === w || one(k) === one(w))) return c.id;
+    }
+    return null;
+  }
+
   // A link can open a box, a connection, a glossary term or a tour step. Focus goes to what opened.
   if (open) {
     requestAnimationFrame(() => {
@@ -3160,7 +3329,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
         // The address goes back to the page itself, so it never names something that is not there.
         history.replaceState(history.state, '', base);
         renderDetail(null, `There is no ${what} called "${open.id}" on this diagram. Pick one below.`);
-        detailBody.scrollIntoView({ block: 'start' });
+        // 16px clear of the top of the screen, so its outline shows whole.
+        window.scrollTo({ top: Math.max(0, detailBody.getBoundingClientRect().top + window.scrollY - 16) });
         (detailBody.querySelector('.hld-missing') as HTMLElement).focus({ preventScroll: true });
         // Said after a moment: a status region filled in the same moment it is added to the page is often not read out.
         status.textContent = '';
@@ -3170,8 +3340,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       };
       const h3 = () => detailBody.querySelector('h3') as HTMLElement | null;
       if (open.kind === 'c') {
-        if (byId.has(open.id)) {
-          select(open.id, 'text');
+        const cid = componentFor(open.id);
+        if (cid) {
+          select(cid, 'text');
           if (h3()) quietFocus(h3()!);
         } else missing('component');
       } else if (open.kind === 'f') {
@@ -3216,6 +3387,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     document.removeEventListener('keydown', onTabKey, true);
     document.removeEventListener('change', onKeysSwitch);
     window.removeEventListener('resize', onResize);
+    document.fonts?.removeEventListener?.('loadingdone', remeasure);
     document.documentElement.style.scrollPaddingTop = '';
     page.remove();
   };
