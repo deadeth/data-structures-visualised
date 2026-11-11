@@ -1,3 +1,4 @@
+import { DESIGNS } from '../designs';
 import { CATALOG, isReady, loadStructure } from '../catalog';
 import { h } from '../core/dom';
 import { MODES } from '../designs/types';
@@ -20,8 +21,9 @@ let index: Promise<Doc[]> | null = null;
 function build(): Promise<Doc[]> {
   index ??= (async () => {
     const docs: Doc[] = [];
-    const { webCrawler: d } = await import('../designs/web-crawler');
-    const base = '#/d/web-crawler';
+    for (const entry of DESIGNS) {
+    const d = await entry.load();
+    const base = `#/d/${d.id}`;
     const name = (id: string) => d.components.find((c) => c.id === id)!.name;
     for (const g of d.glossary) {
       docs.push({ kind: 'Term', title: g.term, also: g.also ?? [], text: g.text, href: `${base}/g/${slug(g.term)}`, where: g.where ? `Glossary. Used in ${name(g.where)}.` : 'Glossary' });
@@ -60,6 +62,7 @@ function build(): Promise<Doc[]> {
     }
     d.tour.forEach((t, i) => docs.push({ kind: 'Tour step', title: t.title, also: [], text: t.text, href: `${base}/t/${i + 1}`, where: `${d.name}: tour step ${i + 1}` }));
     for (const dec of d.decisions) docs.push({ kind: 'Decision', title: dec.choice, also: [], text: `${dec.a} ${dec.b} ${dec.call}`, href: base, where: `${d.name}: decisions worth defending` });
+    }
 
     await Promise.all(
       CATALOG.filter((c) => isReady(c.id)).map(async (c) => {
@@ -105,37 +108,61 @@ function score(doc: Doc, words: string[]): number {
   return total;
 }
 
-/** A stretch of the text around the first match, with every match marked. */
+/** The four-word runs in a stretch of text, folded, for spotting a phrase said twice. */
+const grams = (t: string) => {
+  const w = fold(t).replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
+  const out = new Set<string>();
+  for (let i = 0; i + 4 <= w.length; i++) out.add(w.slice(i, i + 4).join(' '));
+  return out;
+};
+
+/**
+ * A stretch of the text with every match marked. It starts at the sentence
+ * that holds the first match and runs on a sentence at a time to about 260
+ * characters, leaving out any sentence that repeats a phrase already shown.
+ */
 function excerpt(text: string, words: string[], whole: boolean): (string | HTMLElement)[] {
-  const lower = fold(text);
-  let at = -1;
-  for (const w of words) {
-    const i = lower.indexOf(w);
-    if (i >= 0 && (at < 0 || i < at)) at = i;
-  }
-  let from = 0;
-  let to = text.length;
+  let piece = text;
+  let before = false;
+  let after = false;
   if (!whole) {
-    from = Math.max(0, (at < 0 ? 0 : at) - 90);
-    to = Math.min(text.length, from + 260);
-    while (from > 0 && text[from - 1] !== ' ') from--;
-    while (to < text.length && text[to] !== ' ') to++;
+    const sentences = text.match(/[^.!?]+(?:[.!?]+|$)\s*/g) ?? [text];
+    let first = sentences.findIndex((x) => words.some((w) => fold(x).includes(w)));
+    if (first < 0) first = 0;
+    const kept: string[] = [];
+    const seen = new Set<string>();
+    let length = 0;
+    for (let i = first; i < sentences.length && length < 260; i++) {
+      const g = grams(sentences[i]);
+      if ([...g].some((x) => seen.has(x))) continue;
+      g.forEach((x) => seen.add(x));
+      kept.push(sentences[i]);
+      length += sentences[i].length;
+    }
+    piece = kept.join('').trim();
+    // One long sentence is cut at a word near 300 characters.
+    if (piece.length > 300) {
+      let to = 280;
+      while (to < piece.length && piece[to] !== ' ') to++;
+      piece = piece.slice(0, to);
+      after = true;
+    } else after = kept.length > 0 && text.trim().endsWith(kept[kept.length - 1].trim()) === false;
+    before = first > 0;
   }
-  const piece = text.slice(from, to);
   const low = fold(piece);
   const marks: [number, number][] = [];
   for (const w of words) {
     for (let i = low.indexOf(w); i >= 0; i = low.indexOf(w, i + w.length)) marks.push([i, i + w.length]);
   }
   marks.sort((a, b) => a[0] - b[0]);
-  const out: (string | HTMLElement)[] = [from > 0 ? '… ' : ''];
+  const out: (string | HTMLElement)[] = [before ? '… ' : ''];
   let pos = 0;
   for (const [a, b] of marks) {
     if (a < pos) continue;
     out.push(piece.slice(pos, a), h('mark', null, piece.slice(a, b)));
     pos = b;
   }
-  out.push(piece.slice(pos), to < text.length ? ' …' : '');
+  out.push(piece.slice(pos), after ? ' …' : '');
   return out;
 }
 
@@ -212,10 +239,13 @@ export async function mountSearch(host: HTMLElement, query: string, returning = 
     heading.textContent = `Search: ${shown}`;
     document.title = `Search: ${shown} | Data structures, visualised`;
     // Results are grouped by where they live, best match first within each group, and the groups in the order of their best match.
-    const groupOf = (k: Doc['kind']) => (k === 'Term' ? 'Glossary' : k === 'Structure' ? 'Data structures' : 'System design');
+    // An entry whose title is exactly the search comes first, whatever kind it is: the SimHash page above MinHash and near-duplicates.
+    const exact = (d: Doc) => fold(d.title) === words.join(' ');
+    const groupOf = (d: Doc) => (exact(d) ? 'Exact matches' : d.kind === 'Term' ? 'Glossary' : d.kind === 'Structure' ? 'Data structures' : 'System design');
     const groups = new Map<string, Doc[]>();
+    if (hits.some((x) => exact(x.d))) groups.set('Exact matches', []);
     for (const { d } of hits) {
-      const g = groupOf(d.kind);
+      const g = groupOf(d);
       if (!groups.has(g)) groups.set(g, []);
       groups.get(g)!.push(d);
     }
