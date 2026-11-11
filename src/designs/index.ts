@@ -43,6 +43,7 @@ export const DESIGNS: DesignEntry[] = [
     hint: 'Follow one card purchase from tap to settlement',
     question: 'Design a credit card processing system.',
     load: () => import('./card-processing').then((m) => m.cardProcessing),
+    extras: () => import('./extras/card-processing').then((m) => m.extras),
   },
 ];
 
