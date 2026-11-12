@@ -104,7 +104,17 @@ Live and verified:
 - A structure page opens with `info.summary` under its title. The catalogue `blurb` is only for the home page, sidebar and search.
 
 In progress:
-- Crawler design page blind review. Round 4 scores were 9 in half the categories and 8 in most of the rest. Round 4 fixes are live; round 5 has not run. Known shortfall: tour steps 6, 7 and 12 cannot fit at 320px.
+- Crawler design page blind review. Rounds 5 to 11 ran on 11 and 12 November. Round 11 scores were 9 in fourteen of eighteen cells and 8 in four (visual design once, layout twice, accessibility once). Reports, briefs and the standing decisions are in `/tmp/council/b<n>/` on the session machine, not in the repo; the decisions that must not be reopened are listed below.
+- The crawler tour has 14 steps: the node failure is two steps, "The lease runs out" and "A new owner takes over".
+
+Design-page decisions settled during review (reviewers flip on these; do not reopen without a reason):
+- Phone tour: one fixed canvas height, camera scale between 0.8 and 1.0 so diagram text is 13px or more, no zooming out to fit a step. The camera follows the token; the destination box and resting label always sit inside the canvas; other lit boxes out of view get an edge sign.
+- The whole-diagram fit starts at about 1010px wide. Fitting at 768px draws 9.9px text, so tablets pan.
+- Bottom-row chips are staggered on their own lines, not on one baseline.
+- Parts off the current step dim with solid colours (text 4.5:1 or better, strokes 3:1 or better), never opacity.
+- The token is painted above chips, its dot never rests on words, and moving labels keep off box names.
+- Labels on a selected box need a visible owner (plate, leader, near their line) or are dropped; the detail panel lists them all.
+- Every overlap or contrast check runs on every tour step at every size: 1920x1080, 1440x900, 1366x768, 1024x768, 768x1024, 640x400, 390x844, 844x390, 320x640. Fixes measured on phones only caused desktop regressions twice.
 
 Not started:
 - Written "concept" pages for the playlist's comparison videos (SQL vs NoSQL, MySQL vs PostgreSQL, Spanner, VoltDB, MongoDB vs Cassandra, HBase, Kafka vs RabbitMQ, Elasticsearch, time-series and graph databases, Redis vs Memcached, CDNs, object stores, ZooKeeper, monolith vs microservices). They need a small notes page type.
