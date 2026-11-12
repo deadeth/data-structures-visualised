@@ -215,7 +215,7 @@ export const webCrawler: Design = {
       what: 'Answers "have we met this URL before?" for every link. Only new URLs go on to the frontier. Each URL is kept as a 64-bit fingerprint in an on-disk store, with a small in-memory cache of popular URLs in front.',
       why: 'About 20,000 checks a second against about 10 billion URLs. Partitioned by host, each node holds about 500 million and answers about 1,000 a second, so a local disk store is fast enough and all but exact.',
       numbers: ['Fingerprints: 8 bytes each, about 80 GB in total, about three collisions in 10 billion.', 'Bloom filter at 1 per cent false positives: 9.6 bits each, about 12 GB.', 'Links to home pages and menus repeat constantly, so a small cache answers most checks.'],
-      fails: 'A false "seen" is silent: the page is never crawled and nothing reports it. That is the case against a Bloom filter here, because the same URL hits the same bits every time.',
+      fails: 'A false "seen" is silent: the page is never crawled and nothing reports it. That is the case against a Bloom filter here, because the same URL hits the same bits every time. It is also why the fingerprint and the frontier entry go in one write batch: a fingerprint written alone, then a crash, would mark a URL seen that was never queued.',
       alternatives: [
         { name: '64-bit fingerprints on local disk', chosen: true, good: 'Near-exact: about three collisions in 10 billion, against 100 million misses for a 1 per cent Bloom filter. Supports deletes, cheap on SSD.', cost: 'About 80 GB of disk, and a disk read on a cache miss.' },
         { name: 'Bloom filter', good: 'Tiny and in memory. Fine where losing 1 per cent of the long tail does not matter, such as a training corpus.', cost: 'At 1 per cent, up to 100 million pages are skipped for good. No deletes, and it cannot grow.' },
@@ -457,7 +457,7 @@ export const webCrawler: Design = {
       id: 'new', from: 'seen', to: 'frontier', d: 'M334,300 V230', label: 'new only',
       mode: 'local', via: 'in-process', chip: 0.4286,
       how: 'Enqueue(urls) inside the node, for URLs that have never been met before.',
-      delivery: 'The fingerprint is written before the URL is queued, so a crash between the two cannot queue it twice.',
+      delivery: 'The fingerprint and the frontier entry are written to the same RocksDB in one write batch, so a crash cannot leave a URL marked seen but never queued, or queued twice.',
       alts: ['Marking the URL seen when it is fetched, not when it is queued, which lets duplicates pile up in the frontier.'],
     },
     {
