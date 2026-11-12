@@ -655,6 +655,45 @@ export const webCrawler: Design = {
         { name: 'A file in the object store', what: 'Drop a file of URLs in a known bucket; a job reads it, makes each URL canonical and enqueues them. Good for large one-off loads.', pros: ['Handles millions of URLs with no API limits.', 'The file itself is the record of what was added.'], cons: ['No answer to the caller about bad URLs.', 'Audit depends on who could write to the bucket.', 'Picked up on the job\'s schedule, not at once.'] },
         { name: 'Straight onto discovered-urls', what: 'Produce seeds to the discovered-urls topic, keyed by host, as if another node had found them. The owning node consumes them like any link.', pros: ['No new service: routing by host is already done.', 'Replayable like any other link.'], cons: ['Skips the audit and the priority a seed carries.', 'Anyone who can produce to the topic can seed the crawl.'] },
       ],
+      examples: [
+        {
+          title: 'Request',
+          lang: 'http',
+          code: `POST /v1/seeds HTTP/1.1
+Host: seeds.crawler.internal
+Authorization: Bearer <operator token>
+Content-Type: application/json
+
+{
+  "seeds": [
+    {
+      "url": "HTTPS://Example.org:443/news#top",
+      "priority": 1,
+      "reason": "news sites list, reviewed"
+    }
+  ]
+}`,
+        },
+        {
+          title: 'Response',
+          lang: 'http',
+          code: `HTTP/1.1 202 Accepted
+Content-Type: application/json
+
+{
+  "audit_id": "seed-2026-11-12-0042",
+  "results": [
+    {
+      "url": "https://example.org/news",
+      "slot": 417,
+      "owner": "crawler-07",
+      "status": "queued"
+    }
+  ]
+}`,
+          note: 'The canonical URL is the key: posting the same seed again returns "already_known" and queues nothing.',
+        },
+      ],
     },
     {
       id: 'due', from: 'recrawl', to: 'frontier', d: 'M135,214 H244', label: 'due again',
@@ -668,6 +707,52 @@ export const webCrawler: Design = {
         { name: 'A delay queue with a timer per URL', what: 'Put each URL on a queue that delivers it at its next fetch time. The queue does the waiting.', pros: ['Simple to explain: each URL comes back when due.', 'No range reads on the metadata store.'], cons: ['Does not scale to billions of URLs, each with a timer.', 'Queues are built to hold messages for minutes or days, not for a monthly interval.'] },
         { name: 'Through the discovered-urls topic', what: 'The scheduler produces due URLs to the topic keyed by host, and owners consume them like new links.', pros: ['Routing by host is already done.', 'Buffered and replayable if an owner is down.'], cons: ['Due URLs and new links mix, so a recrawl burst delays discovery.', 'One more producer on the busiest topic.'] },
       ],
+      examples: [
+        {
+          title: 'Service definition',
+          lang: 'proto',
+          code: `syntax = "proto3";
+
+service Frontier {
+  // The same call for new links and for URLs due again.
+  rpc Enqueue(EnqueueRequest) returns (EnqueueReply);
+}
+
+message EnqueueRequest {
+  repeated QueuedUrl urls = 1;
+}
+
+message QueuedUrl {
+  string url = 1;
+  int32 priority = 2;
+  string etag = 3;           // sent back as If-None-Match
+  string last_modified = 4;  // sent back as If-Modified-Since
+}
+
+message EnqueueReply {
+  int32 queued = 1;
+  int32 already_queued = 2;  // ignored, so a retry is safe
+}`,
+        },
+        {
+          title: 'Example call',
+          lang: 'text',
+          code: `// recrawl scheduler -> crawler-07, owner of slot 417
+Enqueue {
+  urls: [
+    { url: "https://example.org/news", priority: 1,
+      etag: '"6731-a91c"',
+      last_modified: "Thu, 12 Nov 2026 10:12:00 GMT" },
+    ... 311 more URLs due in crawler-07's slots
+  ]
+}
+-> EnqueueReply { queued: 312, already_queued: 0 }
+
+// the same call retried after a timeout
+-> EnqueueReply { queued: 0, already_queued: 312 }`,
+          note: 'The ETag and date from the last fetch ride with the URL, so the fetcher can ask "only if changed".',
+        },
+      ],
     },
     {
       id: 'lease', from: 'frontier', to: 'fetcher', d: 'M424,176 H565', label: 'lease',
@@ -680,6 +765,41 @@ export const webCrawler: Design = {
         { name: 'gRPC to a separate fetcher pool', what: 'Fetchers run as their own fleet and call Lease and Complete on the owning node over gRPC.', pros: ['Fetchers scale on their own.', 'A fetcher crash never touches frontier state.'], cons: ['A network hop on every lease and completion.', 'Fetchers must know the slot map to find the right frontier.'] },
         { name: 'A queue the fetchers poll (SQS)', what: 'Due URLs go onto a queue; receiving a message hides it for a visibility timeout, which plays the part of the lease.', pros: ['The lease comes free with the queue.', 'Fetchers are fully stateless.'], cons: ['The queue cannot tell when a host is next allowed, so politeness moves to locks.', 'A hop to the queue for every URL.'] },
         { name: 'Delete as the acknowledgement', what: 'In a queue-based design the fetcher deletes the message when the page is stored; until then it reappears after the timeout.', pros: ['No separate Complete call or lease table.', 'At-least-once with no code of your own.'], cons: ['Carries no outcome or next fetch time; those need their own write.', 'A fetch slower than the timeout is handed out twice.'] },
+      ],
+      examples: [
+        {
+          title: 'Lease',
+          lang: 'text',
+          code: `lease(worker: str, max: int) -> list[Lease]
+Lease = (lease_id, url, slot, epoch, deadline)
+
+frontier.lease(worker="fetch-03", max=8)
+-> [Lease(lease_id="L417-55120",
+          url="https://example.org/news",
+          slot=417, epoch=7,
+          deadline="2026-11-12T10:21:00Z")]
+
+# Only hosts whose heap time has passed are offered,
+# and one URL per host is out at a time.`,
+        },
+        {
+          title: 'Complete (the reply)',
+          lang: 'text',
+          code: `complete(lease_id: str, outcome: Outcome,
+         next_fetch_at: datetime) -> None
+
+frontier.complete("L417-55120",
+    outcome=Fetched(status=200, bytes=101872, took_ms=840),
+    next_fetch_at="2026-11-12T10:50:01Z")
+
+# example.org may be fetched again after
+# max(1 s, Crawl-delay 2 s, 10 x 0.84 s) = 8.4 s.
+
+# If fetch-03 dies, nothing calls complete. At 10:21:00
+# the lease expires and the URL is queued again.
+# A second or late complete("L417-55120", ...) is ignored.`,
+          note: 'The lease id is what makes a repeated or late Complete harmless.',
+        },
       ],
       reply: {
         id: 'result', label: 'complete',
@@ -698,6 +818,47 @@ export const webCrawler: Design = {
         { name: 'ZooKeeper sessions with ephemeral nodes', what: 'Each node registers an ephemeral node for each slot it owns; when its session ends, ZooKeeper deletes them and others are told.', pros: ['The same guarantee, from a long-proven tool.', 'Ownership vanishes by itself when a node dies.'], cons: ['Another cluster with its own operations.', 'Session timeouts need tuning against pauses, as leases do.'] },
         { name: 'Gossip between nodes', what: 'Nodes tell each other who is alive and work out slot owners from that. No central view exists.', pros: ['Nothing central to fail.', 'Scales to many nodes.'], cons: ['No single agreed view, so two nodes can briefly own one host.', 'That breaks politeness, the one thing this line protects.'] },
       ],
+      examples: [
+        {
+          title: 'Service definition',
+          lang: 'proto',
+          code: `syntax = "proto3";
+
+service Coordinator {
+  rpc KeepAlive(stream Renew) returns (stream Renewed);
+  rpc WatchSlots(WatchRequest) returns (stream SlotChange);
+}
+
+message Renew   { string node = 1; int64 lease_id = 2; }
+message Renewed { int64 lease_id = 1; int32 ttl_seconds = 2; }
+
+message WatchRequest { int64 from_revision = 1; }
+
+message SlotChange {
+  int32 slot = 1;
+  string owner = 2;
+  int64 epoch = 3;   // goes up by one on every move
+}`,
+        },
+        {
+          title: 'Example call, and the failure',
+          lang: 'text',
+          code: `// crawler-07 every 10 s; one lease covers its 51 slots
+Renew   { node: "crawler-07", lease_id: 7041 }
+Renewed { lease_id: 7041, ttl_seconds: 30 }
+
+// 10:56:30 the last Renew. crawler-07 dies just after.
+// 10:57:00 lease 7041 runs out and its slots move:
+SlotChange { slot: 417, owner: "crawler-12", epoch: 8 }
+
+// if crawler-07 was only paused and wakes up:
+Renew { node: "crawler-07", lease_id: 7041 }
+-> error NOT_FOUND: lease 7041 has expired
+// It stops handing out leases at once. Anything it
+// still sends carries epoch 7 and is refused.`,
+          note: 'The epoch, 7 then 8, is what lets everyone tell the old owner from the new one.',
+        },
+      ],
     },
     {
       id: 'dns', from: 'fetcher', to: 'dns', d: 'M598,146 V63', label: 'resolve', travels: 'hostname, then IP addresses',
@@ -711,6 +872,35 @@ export const webCrawler: Design = {
         { name: 'The blocking standard library resolver', what: 'Each fetch calls the operating system lookup and waits.', pros: ['Nothing to build.', 'Fine for a single-site crawl.'], cons: ['Holds a thread per lookup, the bottleneck Mercator measured.', 'One cache per process at best.'] },
         { name: 'Resolve once in the frontier', what: 'Resolve each host when its back queue is created and store the address with it, refreshing on expiry. Fetchers get the address with the lease.', pros: ['No lookup on the fetch path at all.', 'The address is known before the fetch, so the private-range check can happen early.'], cons: ['Addresses go stale between refreshes.', 'Moves the resolver call, it does not remove it.'] },
       ],
+      examples: [
+        {
+          title: 'Query and answer',
+          lang: 'text',
+          code: `; fetch-03 -> rack resolver 10.4.0.53, UDP port 53
+;; QUESTION
+example.org.          IN  A
+
+;; ANSWER (from the cache; a miss takes tens of ms)
+example.org.   300    IN  A   203.0.113.27
+
+; no answer within the timeout: one retry. Repeated
+; failures open the breaker and the host is skipped.`,
+        },
+        {
+          title: 'Then the address check',
+          lang: 'text',
+          code: `check 203.0.113.27
+  not loopback      127.0.0.0/8
+  not private       10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+  not link-local    169.254.0.0/16 (cloud metadata lives here)
+  -> allowed
+
+connect to 203.0.113.27:443, TLS name example.org
+# never a second lookup: that is the rebinding gap
+# every redirect target is resolved and checked again`,
+          note: 'Addresses on this page are from the documentation range 203.0.113.0/24.',
+        },
+      ],
     },
     {
       id: 'robots', from: 'fetcher', to: 'robots', d: 'M715,192 H862', label: 'allowed?',
@@ -722,6 +912,39 @@ export const webCrawler: Design = {
         { name: 'cache read', chosen: true, what: 'A lookup in memory of the host\'s parsed rules on the node that owns it. On a miss, or after 24 hours, the fetcher requests /robots.txt through the same rate limit.', pros: ['No network hop on the fetch path.', 'Only one node ever needs a host\'s rules, so one copy is enough.', 'Fail closed is easy: no usable rules, no fetch.'], cons: ['A failover empties the cache for the moved hosts.', 'Memory on each node for its hosts\' rules.'] },
         { name: 'A shared cache', what: 'All nodes read rules from one shared cache, such as Redis, filled by whichever node fetched them first.', pros: ['Survives a node restart or failover.', 'One copy to inspect or purge.'], cons: ['A network hop on every fetch, about 400 a second.', 'Partitioning by host means no other node needs the copy.'] },
         { name: 'Read from the metadata database', what: 'Rules are stored with the host\'s row and read before each fetch.', pros: ['Durable and auditable.', 'No separate cache service.'], cons: ['A database read on the hot path.', 'Load on the store every result depends on.'] },
+      ],
+      examples: [
+        {
+          title: 'Cache read',
+          lang: 'text',
+          code: `allowed(host: str, path: str) -> Decision
+
+robots.allowed("example.org", "/news")
+-> Allowed(rule=None)         # no rule matches: allowed
+robots.allowed("example.org", "/news/drafts/q4")
+-> Disallowed(rule="Disallow: /news/drafts/")
+robots.allowed("example.org", "/news/drafts/public/a")
+-> Allowed(rule="Allow: /news/drafts/public/")  # longer
+
+# cached rules for example.org, fetched 09:41 today
+User-agent: *
+Disallow: /search
+Disallow: /news/drafts/
+Allow: /news/drafts/public/
+Crawl-delay: 2`,
+          note: 'The longest matching rule wins, which is why the public drafts folder is allowed.',
+        },
+        {
+          title: 'On a miss, or after 24 hours',
+          lang: 'http',
+          code: `GET /robots.txt HTTP/1.1
+Host: example.org
+User-Agent: ExampleBot/1.0 (+https://crawler.example.net/bot)
+
+HTTP/1.1 200 OK            -> parse, cache for 24 h
+HTTP/1.1 404 Not Found     -> no restrictions
+HTTP/1.1 503, or no answer -> disallow everything`,
+        },
       ],
     },
     {
@@ -736,6 +959,26 @@ export const webCrawler: Design = {
         { name: 'Gossip per-address counts', what: 'Nodes share how often they hit each busy address, and each slows down when the total is high.', pros: ['No central service.', 'Nothing on the fetch path.'], cons: ['Counts are always a little old, so bursts slip through.', 'Each node can only guess its share of the limit.'] },
         { name: 'Route busy addresses to one owner', what: 'Assign each busy address to one slot, so all its hosts land on one node and the local limit covers them.', pros: ['No limiter service at all.', 'Politeness stays local and lock-free.'], cons: ['Addresses are only known after a lookup, and hosts move between them.', 'One node carries every host on a big platform.'] },
       ],
+      examples: [
+        {
+          title: 'Commands',
+          lang: 'text',
+          code: `# 203.0.113.27 is on the busy list: many hosts share it.
+# A script takes one token, atomically.
+# args: rate a second, burst, now in ms, cost
+EVALSHA <take_token> 1 tb:ip:203.0.113.27 4 8 1794478800120 1
+# -> 1   token taken
+
+# and from the registrable domain's bucket
+EVALSHA <take_token> 1 tb:dom:example.org 1 2 1794478800121 1
+# -> 1   token taken: fetch now
+
+# an empty bucket returns 0: the host goes back on the
+# heap and waits. Redis unreachable: use the slow fixed
+# rate for this address instead.`,
+          note: 'The rates here (4 a second per address, 1 per domain) are illustrations; the page sets none.',
+        },
+      ],
     },
     {
       id: 'get', from: 'fetcher', to: 'web', d: 'M715,160 H735 Q745,160 745,150 V146 Q745,136 755,136 H1180 Q1190,136 1190,126 V63', label: 'GET',
@@ -749,6 +992,51 @@ export const webCrawler: Design = {
         { name: 'A HEAD request first', what: 'Ask for headers only, check type and size, then GET if worth it.', pros: ['Skips very large files and non-HTML before downloading them.', 'A HEAD reply is tiny, so the check itself costs the server little.'], cons: ['Two requests per page, which doubles the politeness cost.', 'Servers often omit or misstate the size; the 10 MB cap does the job anyway.'] },
         { name: 'A headless browser', what: 'Load the page in a browser so scripts run before the content is read.', pros: ['Sees script-built pages.', 'Finds links that scripts add.'], cons: ['Ten to a hundred times the cost of a fetch.', 'The design keeps it in a separate render pool for the few pages that need it.'] },
         { name: 'Stream the body into the archive file', what: 'Write bytes into the WARC batch as they arrive instead of holding the whole body in memory.', pros: ['Memory per fetch stays small, even near the 10 MB cap.', 'No second copy of the body before upload.'], cons: ['The parser then cannot be handed the page from memory.', 'A failed fetch leaves a partial record to clean up.'] },
+      ],
+      examples: [
+        {
+          title: 'Request',
+          lang: 'http',
+          code: `GET /news HTTP/1.1
+Host: example.org
+User-Agent: ExampleBot/1.0 (+https://crawler.example.net/bot)
+Accept: text/html
+
+# over TLS to 203.0.113.27:443, the checked address
+# deadlines on connect, handshake and read
+# caps: 10 MB of body, at most 5 redirects`,
+        },
+        {
+          title: 'Response',
+          lang: 'http',
+          code: `HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Content-Length: 101872
+ETag: "6731-a91c"
+Last-Modified: Thu, 12 Nov 2026 10:12:00 GMT
+
+<!doctype html>
+<html lang="en"><head><title>News</title>
+# 101,872 bytes in all; reading stops at 10 MB`,
+        },
+        {
+          title: 'Recrawl, and a busy site',
+          lang: 'http',
+          code: `# 10:50:01, the same URL due again
+GET /news HTTP/1.1
+Host: example.org
+If-None-Match: "6731-a91c"
+If-Modified-Since: Thu, 12 Nov 2026 10:12:00 GMT
+
+HTTP/1.1 304 Not Modified
+ETag: "6731-a91c"
+# headers only: nothing changed, nothing to store
+
+# or, if the site is struggling:
+HTTP/1.1 429 Too Many Requests
+Retry-After: 120`,
+          note: 'Retry-After is obeyed; without it the host\'s delay doubles.',
+        },
       ],
       reply: {
         id: 'resp', label: 'response',
@@ -767,6 +1055,51 @@ export const webCrawler: Design = {
         { name: 'One PUT per page', what: 'Each page is compressed and uploaded on its own as soon as it is fetched.', pros: ['Nothing buffered, so nothing lost after the PUT.', 'Reading a page back is a plain GET.'], cons: ['About 400 PUTs a second, 1 billion a month, each with a request charge.', 'Billions of small objects to list and manage.'] },
         { name: 'Append to a log, archive later', what: 'Write each page to a durable log such as Kafka first; a separate job batches the log into WARC files.', pros: ['Durable within milliseconds, with no local buffer to lose.', 'Archiving can be retried without refetching.'], cons: ['About 320 Mbit/s of pages through the log, a much bigger cluster.', 'Two copies of every page for a while.'] },
       ],
+      examples: [
+        {
+          title: 'Upload one batch',
+          lang: 'http',
+          code: `PUT /crawl-raw/warc/2026/11/12/crawler-07/000183.warc.gz HTTP/1.1
+Host: <object store endpoint>
+Content-Type: application/gzip
+Content-Length: 10391522
+Content-MD5: <base64 MD5 of the body>
+
+<500 WARC records, each gzipped on its own>
+
+HTTP/1.1 200 OK
+# a retry writes the same bytes to the same key`,
+          note: 'Each record is its own gzip member, so one page can be read back by byte range.',
+        },
+        {
+          title: 'One record in the file',
+          lang: 'text',
+          code: `WARC/1.1
+WARC-Type: response
+WARC-Target-URI: https://example.org/news
+WARC-Date: 2026-11-12T10:20:01Z
+WARC-IP-Address: 203.0.113.27
+WARC-Record-ID: <urn:uuid:1b0e6c2a-5f43-4c1e-9d7a-2a61f0c8e915>
+Content-Type: application/http; msgtype=response
+Content-Length: 102118
+
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+ETag: "6731-a91c"
+
+<!doctype html>`,
+        },
+        {
+          title: 'Then the byte range, in the metadata store (CQL)',
+          lang: 'sql',
+          code: `UPDATE crawl.urls
+SET warc_file = 'warc/2026/11/12/crawler-07/000183.warc.gz',
+    warc_offset = 4812330,
+    warc_length = 20517
+WHERE url = 'https://example.org/news';`,
+          note: 'About 100 KB of HTML is about 20 KB compressed, so the record spans 20,517 bytes.',
+        },
+      ],
     },
     {
       id: 'page', from: 'fetcher', to: 'parser', d: 'M600,206 V268 Q600,278 610,278 H910 Q920,278 920,288 V300', label: 'page',
@@ -778,6 +1111,24 @@ export const webCrawler: Design = {
         { name: 'pipe', chosen: true, what: 'The fetched bytes go over a pipe, in memory, to a sandboxed parser process on the same node. No network hop and no read from storage on the hot path.', pros: ['Fast and cheap: the page is already in memory.', 'A parser crash cannot take the fetcher down.', 'A failed parse is retried from the stored raw page.'], cons: ['Parsing scales with the node, not on its own.', 'A full pipe must slow the fetcher, so back-pressure is designed in.'] },
         { name: 'A pages-fetched topic', what: 'Fetchers publish each page, or a pointer to it, on a topic that a pool of parser workers consumes.', pros: ['Parsing scales and fails apart from fetching.', 'Lag on the topic shows when parsing falls behind.'], cons: ['Pages through a broker are about 320 Mbit/s; pointers mean a read back instead.', 'Another topic to run and watch.'] },
         { name: 'A queue of page ids, bytes from the object store', what: 'Fetchers queue the id and byte range of each stored page; parsers read it back with a ranged GET.', pros: ['Small messages, and the parser always reads the stored copy.', 'One path for live pages and reprocessing.'], cons: ['Every page is read back, about 400 GETs a second.', 'The parser waits for the batch upload, up to 500 pages later.'] },
+      ],
+      examples: [
+        {
+          title: 'One frame on the pipe',
+          lang: 'text',
+          code: `# fetcher -> sandboxed parser on crawler-07
+# a JSON header line, then exactly body_bytes of body
+{"url": "https://example.org/news", "status": 200,
+ "content_type": "text/html; charset=utf-8",
+ "fetched_at": "2026-11-12T10:20:01Z",
+ "lease_id": "L417-55120", "body_bytes": 101872}
+<!doctype html>
+<html lang="en"><head><title>News</title>
+
+# parser exits on this page: failure 1 of 3. The page
+# is retried later from its stored WARC record, and
+# quarantined after the third failure.`,
+        },
       ],
     },
     {
@@ -791,6 +1142,32 @@ export const webCrawler: Design = {
         { name: 'Fetch the pages again', what: 'Treat a parser fix as a recrawl: put the affected URLs back in the frontier.', pros: ['No archive needed at all.', 'Gets the current page, not an old one.'], cons: ['Costs every site a second visit.', 'At 1 request a second per host, a large site takes days.'] },
         { name: 'Keep only extracted text', what: 'Reprocess the stored text instead of the raw page.', pros: ['A fraction of the storage and the read.', 'Fine for changes that only touch text.'], cons: ['A parser bug is permanent: what it dropped is gone.', 'New extractors, such as for links or metadata, cannot run.'] },
       ],
+      examples: [
+        {
+          title: 'Find the record (CQL)',
+          lang: 'sql',
+          code: `SELECT warc_file, warc_offset, warc_length
+FROM crawl.urls
+WHERE url = 'https://example.org/news';
+
+-- warc/2026/11/12/crawler-07/000183.warc.gz
+--   | 4812330 | 20517`,
+        },
+        {
+          title: 'Ranged GET',
+          lang: 'http',
+          code: `GET /crawl-raw/warc/2026/11/12/crawler-07/000183.warc.gz HTTP/1.1
+Host: <object store endpoint>
+Range: bytes=4812330-4832846
+
+HTTP/1.1 206 Partial Content
+Content-Range: bytes 4812330-4832846/10391522
+Content-Length: 20517
+
+<one gzip member: the WARC record for /news>`,
+          note: 'The range ends at offset plus length minus one: 4,812,330 + 20,517 - 1.',
+        },
+      ],
     },
     {
       id: 'snapshot', from: 'frontier', to: 'blob', d: 'M424,216 H490 Q500,216 500,226 V412 Q500,422 510,422 H1130 Q1140,422 1140,412 V359', label: 'snapshot',
@@ -802,6 +1179,48 @@ export const webCrawler: Design = {
         { name: 'S3 PUT, GET', chosen: true, what: 'Every few minutes the node writes its frontier, about 15 GB, as a new object with the topic offsets it had read to. A new owner reads the newest complete one and replays the topic from those offsets.', pros: ['Cheap: no standby machines.', 'Snapshot and offsets always agree, so replay starts at the right place.', 'Losing one snapshot only means replaying more.'], cons: ['Recovery takes a download and a replay, minutes not seconds.', 'Leases and back-offs are a few minutes old after restore, so some URLs are fetched again.', 'A full 15 GB copy every 5 minutes would be about 50 MB/s a node, ten times its page traffic, so snapshots need to be incremental.'] },
         { name: 'Replicate to a standby node', what: 'Stream every frontier change to a standby that can take over the slots at once.', pros: ['Fastest failover, with almost nothing to replay.', 'No object store on the recovery path.'], cons: ['Doubles the disks and the machines.', 'The standby must be fenced too, or there are two owners.'] },
         { name: 'Rebuild from the metadata store', what: 'Range-read every URL in the moved slots that is pending or due, and rebuild the queues from that.', pros: ['No snapshot to write.', 'The store is the record of truth anyway.'], cons: ['The slow last resort: a node\'s share is about 500 million URLs to read.', 'Heavy read load on the store while the crawl runs.'] },
+      ],
+      examples: [
+        {
+          title: 'Write the snapshot',
+          lang: 'http',
+          code: `# crawler-07 at 10:55:00, one set of objects per slot
+PUT /crawl-frontier/slot-0417/20261112T105500Z/queues.sst
+PUT /crawl-frontier/slot-0417/20261112T105500Z/heap.bin
+PUT /crawl-frontier/slot-0417/20261112T105500Z/leases.bin
+# the manifest goes last; a set without one is incomplete
+PUT /crawl-frontier/slot-0417/20261112T105500Z/manifest.json`,
+        },
+        {
+          title: 'The manifest',
+          lang: 'json',
+          code: `{
+  "slot": 417,
+  "node": "crawler-07",
+  "epoch": 7,
+  "taken_at": "2026-11-12T10:55:00Z",
+  "discovered_urls": {
+    "partition": 417,
+    "next_offset": 88214305
+  },
+  "files": ["queues.sst", "heap.bin", "leases.bin"]
+}`,
+          note: 'The topic offset is saved in the same object as the frontier, so the two always agree.',
+        },
+        {
+          title: 'Restore (the reply)',
+          lang: 'http',
+          code: `# crawler-12, owner of slot 417 since epoch 8
+GET /crawl-frontier?list-type=2&prefix=slot-0417/
+# newest set with a manifest: 20261112T105500Z
+GET /crawl-frontier/slot-0417/20261112T105500Z/manifest.json
+GET /crawl-frontier/slot-0417/20261112T105500Z/queues.sst
+GET /crawl-frontier/slot-0417/20261112T105500Z/heap.bin
+GET /crawl-frontier/slot-0417/20261112T105500Z/leases.bin
+# URLs leased at 10:55 go back in the queue
+# then replay discovered-urls partition 417 from 88214305
+# an unreadable manifest: use the set before it`,
+        },
       ],
       reply: {
         id: 'restore', label: 'restore', via: 'S3 GET', mode: 'call', chip: 'S3 GET, restore',
@@ -820,6 +1239,30 @@ export const webCrawler: Design = {
         { name: 'A direct call with a tight timeout', what: 'The parser calls the render pool and waits for the rendered page, giving up after a few seconds.', pros: ['Simplest: no topic.', 'The parser gets the result at once.'], cons: ['Rendering costs ten to a hundred times a fetch, so the parser waits on the slowest part.', 'A busy pool turns into timeouts and lost requests.'] },
         { name: 'A managed queue with a dead-letter queue', what: 'Render requests go on a managed queue; pages that crash the browser three times go to a dead-letter queue.', pros: ['No brokers to run for a small, bursty stream.', 'Poison pages are set aside by the queue itself.'], cons: ['A second messaging system beside Kafka.', 'No replay once a message is deleted.'] },
       ],
+      examples: [
+        {
+          title: 'Topic and key',
+          lang: 'text',
+          code: `topic:      render-requests
+key:        host ("example.org")
+partitions: a few; the pool is small
+the key:    a host's requests reach one consumer, so the
+            pool can pace its own visit to that host`,
+        },
+        {
+          title: 'Message value',
+          lang: 'json',
+          code: `{
+  "url": "https://example.org/live",
+  "host": "example.org",
+  "reason": "almost_empty_body",
+  "text_bytes": 212,
+  "requested_at": "2026-11-12T10:20:02Z",
+  "attempt": 1
+}`,
+          note: 'Not the page the tour follows, which is plain HTML: /live is a page on the same site whose text appears only after scripts run.',
+        },
+      ],
     },
     {
       id: 'rendered', from: 'render', to: 'blob', d: 'M1214,507 V359', label: 'rendered',
@@ -831,6 +1274,35 @@ export const webCrawler: Design = {
         { name: 'S3 PUT', chosen: true, what: 'The rendered page goes into a WARC batch in the object store, like any fetched page. The parser picks it up on the reprocessing path.', pros: ['Stored before it is parsed, like every page.', 'The browser never calls the parser, so the pool cannot slow the crawl.', 'One archive for fetched and rendered pages.'], cons: ['The parser reads it back later, so rendered pages arrive with a delay.', 'Rendering twice stores two copies; the content hash makes the second a pointer.'] },
         { name: 'A results topic the parser consumes', what: 'The pool publishes rendered HTML on a topic, and parsers consume it like a pipe from a fetcher.', pros: ['Lower delay than going through the object store.', 'Back-pressure is lag, not errors.'], cons: ['Large messages on a topic.', 'The page must still be stored, so it is written twice.'] },
         { name: 'A direct call back to the parser', what: 'The pool calls a parser endpoint with the rendered page.', pros: ['Fastest path to the parser.', 'No topic or extra storage step.'], cons: ['Couples the pool to the crawl.', 'The rendered page is not stored first, which breaks the store-first rule.'] },
+      ],
+      examples: [
+        {
+          title: 'Upload',
+          lang: 'http',
+          code: `PUT /crawl-raw/warc/2026/11/12/render-02/000041.warc.gz HTTP/1.1
+Host: <object store endpoint>
+Content-Type: application/gzip
+Content-MD5: <base64 MD5 of the body>
+
+<WARC records for the pages this browser rendered>
+
+HTTP/1.1 200 OK`,
+        },
+        {
+          title: 'One record in the file',
+          lang: 'text',
+          code: `WARC/1.1
+WARC-Type: conversion
+WARC-Target-URI: https://example.org/live
+WARC-Date: 2026-11-12T10:20:09Z
+WARC-Record-ID: <urn:uuid:7c2d9e41-0b6a-4f8e-a3d5-6e19b2c47f08>
+Content-Type: text/html; charset=utf-8
+Content-Length: 88410
+
+<!doctype html>
+# the page as the browser left it, after scripts ran`,
+          note: 'Its byte range goes to the metadata store as for a fetched page, and the parser reads it from there.',
+        },
       ],
     },
     {
@@ -844,6 +1316,45 @@ export const webCrawler: Design = {
         { name: 'Notifications from the object store', what: 'The object store sends a notice for each new WARC batch, and consumers read the batch.', pros: ['Nothing for the crawler to publish.', 'Consumers always get the stored page.'], cons: ['One notice per batch of 500 pages, with no per-page outcome or links.', 'No replay beyond what the notice system keeps.'] },
         { name: 'Consumers poll the metadata store', what: 'Consumers range-read rows changed since their last read.', pros: ['Nothing new to build.', 'Always the current state.'], cons: ['Their reads compete with the crawl.', 'The crawler\'s schema becomes their interface.'] },
       ],
+      examples: [
+        {
+          title: 'Topic and key',
+          lang: 'text',
+          code: `topic:   crawl.pages
+key:     URL ("https://example.org/news")
+rate:    about 400 events a second
+the key: every event for a URL lands on one partition,
+         in order, so a consumer drops repeats by URL
+         and content hash`,
+        },
+        {
+          title: 'Message value',
+          lang: 'json',
+          code: `{
+  "url": "https://example.org/news",
+  "fetched_at": "2026-11-12T10:20:01Z",
+  "status": 200,
+  "content_hash": "sha256:4be1c0f29d7a5e3b",
+  "simhash": "5d21c8a4f00e9b37",
+  "changed": true,
+  "links_out": 52,
+  "next_fetch_at": "2026-11-12T10:50:01Z"
+}`,
+          note: 'The hashes are shortened here; a SHA-256 is 64 hex digits.',
+        },
+        {
+          title: 'Link table (Parquet)',
+          lang: 'text',
+          code: `file:    links/date=2026-11-12/crawler-07-0031.parquet
+columns: from_url, to_url, anchor_text, found_at
+
+one row:
+  from_url     https://example.org/news
+  to_url       https://example.org/news/2026/11/rates
+  anchor_text  "Rates held this month"
+  found_at     2026-11-12T10:20:02Z`,
+        },
+      ],
     },
     {
       id: 'links', from: 'parser', to: 'filter', d: 'M832,328 H684', label: 'links',
@@ -855,6 +1366,22 @@ export const webCrawler: Design = {
         { name: 'in-process', chosen: true, what: 'A function call inside the node: the parser passes each batch of extracted links to the filter. About 50 links a page.', pros: ['Cannot be slow or lost short of the process dying.', 'No serialising of about 2,500 links a second a node.', 'If the process dies, the page is parsed again from storage.'], cons: ['Filter rules ship with the parser.', 'Both scale together.'] },
         { name: 'A topic of extracted links', what: 'The parser publishes links, and a separate filter service consumes them, canonicalises and routes.', pros: ['Filtering scales and deploys on its own.', 'One filter service could serve several parsers.'], cons: ['20,000 links a second through a broker for work that takes microseconds.', 'Another hop before a link reaches its owner.'] },
       ],
+      examples: [
+        {
+          title: 'The call',
+          lang: 'text',
+          code: `route(page: str, links: list[str]) -> None
+
+filter.route(page="https://example.org/news", links=[
+  "/news/2026/11/rates",
+  "HTTPS://Example.org:443/about#team",
+  "https://blog.example.net/p/12",
+  "/calendar/2099/01/",
+  ... 48 more, 52 in all
+])`,
+          note: 'Links arrive as written in the page: relative, mixed case, with fragments.',
+        },
+      ],
     },
     {
       id: 'local', from: 'filter', to: 'seen', d: 'M541,328 H413', label: 'mine',
@@ -865,6 +1392,31 @@ export const webCrawler: Design = {
       ways: [
         { name: 'in-process', chosen: true, what: 'A function call for links whose host this node owns, which is most of them. They go straight to the seen check.', pros: ['Most links never leave the node.', 'No broker load for the bulk of 20,000 links a second.', 'Repeats are harmless, because the seen check drops them.'], cons: ['Two code paths, local and remote, to test.', 'Local links are not in the log; after a failover they come back only when pages fetched since the snapshot are fetched again.'] },
         { name: 'Every link through the topic', what: 'Produce every link to discovered-urls, local ones included, and let each node consume only its own.', pros: ['One code path for every link.', 'Every link is in the log, so replay covers them all.'], cons: ['A broker round trip for links that never needed to leave the node.', 'Topic traffic rises to all 20,000 links a second.'] },
+      ],
+      examples: [
+        {
+          title: 'What the filter does with them',
+          lang: 'text',
+          code: `# canonical form, rules, then slot = hash(host) mod 1,024
+/news/2026/11/rates
+  -> https://example.org/news/2026/11/rates   slot 417, mine
+HTTPS://Example.org:443/about#team
+  -> https://example.org/about                slot 417, mine
+https://blog.example.net/p/12
+  -> slot 88, owner crawler-03: to discovered-urls
+/calendar/2099/01/
+  -> dropped: a date far in the future (trap rule)`,
+        },
+        {
+          title: 'The call',
+          lang: 'text',
+          code: `check(slot: int, urls: list[str]) -> None
+
+seen.check(slot=417, urls=[
+  "https://example.org/news/2026/11/rates",
+  "https://example.org/about",
+])`,
+        },
       ],
     },
     {
@@ -878,6 +1430,31 @@ export const webCrawler: Design = {
         { name: 'Mark seen when fetched', what: 'Queue every link that is not yet fetched, and record the fingerprint only after the fetch.', pros: ['The seen set records only pages truly crawled.', 'A URL dropped from the frontier can be found again.'], cons: ['Duplicates pile up in the frontier: a menu link is queued once per page that shows it.', 'The frontier grows far past 2 billion pending URLs.'] },
         { name: 'Two separate writes', what: 'Write the fingerprint, then enqueue, as two steps in two stores.', pros: ['The seen set and the frontier can live in different systems.', 'Each can be scaled or replaced alone.'], cons: ['A crash between the two marks a URL seen that was never queued: a page never crawled.', 'Needs a repair job to find such URLs.'] },
       ],
+      examples: [
+        {
+          title: 'Seen check',
+          lang: 'text',
+          code: `# 64-bit fingerprint of each canonical URL
+fp("https://example.org/news/2026/11/rates")
+  = 9f3c51e07a2b4d18   not in the set: new
+fp("https://example.org/about")
+  = 41d7a0c95e6b2f03   in the set: dropped
+
+frontier.enqueue(slot=417, urls=[
+  "https://example.org/news/2026/11/rates",
+])`,
+        },
+        {
+          title: 'One write batch (RocksDB)',
+          lang: 'text',
+          code: `batch = WriteBatch()
+batch.put("seen/9f3c51e07a2b4d18", "")
+batch.put("queue/417/example.org/000918273",
+          "https://example.org/news/2026/11/rates p=2")
+db.write(batch)   # both keys, or neither`,
+          note: 'Fingerprint and queue entry land together, so a crash cannot mark a URL seen that was never queued.',
+        },
+      ],
     },
     {
       id: 'cross', from: 'filter', to: 'kafka', d: 'M558,356 V503', label: 'not mine', travels: 'URLs whose host another node owns',
@@ -889,6 +1466,32 @@ export const webCrawler: Design = {
         { name: 'Kafka produce', chosen: true, what: 'Links whose host belongs to another node are produced to discovered-urls, keyed by host and sent in batches. There is one partition per slot, 1,024 in all.', pros: ['In order per host, and replayable.', 'Batched, so cost per link is small.', 'The partition moves with its slot when an owner fails.'], cons: ['At-least-once: repeats rely on the seen check at the far end.', 'If the topic is down, links buffer on local disk.'] },
         { name: 'Direct calls between nodes', what: 'The filter calls Enqueue on the owner over gRPC, batched, buffering locally and retrying when the owner is down.', pros: ['No broker.', 'Lowest delay to the far frontier.'], cons: ['Retries, buffering and back-pressure are your code.', 'No replay for a new owner after a failover.'] },
         { name: 'A queue per node', what: 'Each node has its own inbound queue, and senders look up the owner and send there.', pros: ['Simple routing once the owner is known.', 'Each node reads one queue.'], cons: ['Cannot move with a slot when its owner fails: messages for moved slots are stranded.', 'Senders must re-route during every ownership change.'] },
+      ],
+      examples: [
+        {
+          title: 'Topic and key',
+          lang: 'text',
+          code: `topic:      discovered-urls
+partitions: 1,024, one per slot
+key:        host ("blog.example.net")
+partition:  88, set to the slot, hash(host) mod 1,024
+the key:    a host's links reach one node, in order, and
+            the partition moves with the slot on failover
+producer:   acks=all, batched per partition`,
+        },
+        {
+          title: 'Message value',
+          lang: 'json',
+          code: `{
+  "url": "https://blog.example.net/p/12",
+  "host": "blog.example.net",
+  "slot": 88,
+  "found_on": "https://example.org/news",
+  "found_at": "2026-11-12T10:20:02Z",
+  "priority": 2
+}`,
+          note: 'Sending it twice is harmless: the seen check on crawler-03 drops the repeat.',
+        },
       ],
     },
     {
@@ -902,6 +1505,37 @@ export const webCrawler: Design = {
         { name: 'Consumer groups', what: 'All nodes join one consumer group, and the broker shares out the partitions and moves them when a node leaves.', pros: ['Simpler: membership and assignment are built in.', 'No slot map to read for consuming.'], cons: ['Two consumers can briefly hold one partition during a rebalance.', 'The broker\'s assignment can disagree with the coordinator\'s slot map.'] },
         { name: 'Offsets committed to the broker', what: 'Keep the explicit assignment, but commit offsets to Kafka instead of saving them with the snapshot.', pros: ['Standard tooling shows lag and position.', 'Nothing extra in the snapshot.'], cons: ['Offsets and snapshot can disagree after a crash, so replay starts too late or too early.', 'Too late loses links for good.'] },
       ],
+      examples: [
+        {
+          title: 'Assignment',
+          lang: 'text',
+          code: `# partitions come from the slot map, not a consumer group
+# crawler-07, before the failure: its 51 slots
+assign("discovered-urls", partitions=[..., 417, ...])
+
+# crawler-12, after taking slot 417 at epoch 8
+assign("discovered-urls", partitions=[417, ...])
+seek(partition=417, offset=88214305)  # from the manifest
+poll()`,
+        },
+        {
+          title: 'One message replayed',
+          lang: 'text',
+          code: `partition 417  offset 88214311  key "example.org"
+{
+  "url": "https://example.org/news/2026/11/jobs",
+  "host": "example.org",
+  "slot": 417,
+  "found_on": "https://blog.example.net/p/12",
+  "found_at": "2026-11-12T10:56:10Z",
+  "priority": 2
+}
+# seen check: new, so it goes to the frontier.
+# If it was already queued before the snapshot, the
+# seen check drops it.`,
+          note: 'The same fields the producing node sent on the cross-node line.',
+        },
+      ],
     },
     {
       id: 'state', from: 'parser', to: 'meta', d: 'M842,356 V500', label: 'status, next fetch',
@@ -914,6 +1548,46 @@ export const webCrawler: Design = {
         { name: 'A topic and a sink', what: 'The parser publishes each outcome to a topic, and a sink job writes them to the store.', pros: ['A store outage becomes lag, not stopped fetching.', 'Other consumers can read the same outcomes.'], cons: ['The recrawl scheduler sees outcomes late.', 'One more topic and job between the crawl and its record.'] },
         { name: 'Conditional writes', what: 'Each write carries the fetch time and is rejected if the stored row is newer.', pros: ['An old retry can never overwrite a newer outcome.', 'Clear rule, easy to test.'], cons: ['A read or a lightweight transaction per write, far dearer than a blind upsert.', 'Timestamps from one node per host already order its writes.'] },
       ],
+      examples: [
+        {
+          title: 'One page, both tables (CQL)',
+          lang: 'sql',
+          code: `BEGIN BATCH USING TIMESTAMP 1794478801000000
+  UPDATE crawl.urls
+  SET status = 200,
+      etag = '"6731-a91c"',
+      last_modified = '2026-11-12 10:12:00+0000',
+      content_hash = 'sha256:4be1c0f29d7a5e3b',
+      simhash = 0x5d21c8a4f00e9b37,
+      fetched_at = '2026-11-12 10:20:01+0000',
+      next_fetch_at = '2026-11-12 10:50:01+0000'
+  WHERE url = 'https://example.org/news';
+  INSERT INTO crawl.urls_due
+    (bucket, next_fetch_at, url, etag, last_modified)
+  VALUES ('2026-11-12T10', '2026-11-12 10:50:01+0000',
+    'https://example.org/news', '"6731-a91c"',
+    '2026-11-12 10:12:00+0000');
+APPLY BATCH;`,
+          note: 'The write timestamp is the fetch time, so a late retry of an older outcome loses to a newer one.',
+        },
+        {
+          title: 'The URL table',
+          lang: 'sql',
+          code: `CREATE TABLE crawl.urls (
+  url           text PRIMARY KEY,
+  status        int,
+  etag          text,
+  last_modified timestamp,
+  content_hash  text,
+  simhash       blob,
+  fetched_at    timestamp,
+  next_fetch_at timestamp,
+  warc_file     text,
+  warc_offset   bigint,
+  warc_length   int
+);`,
+        },
+      ],
     },
     {
       id: 'again', from: 'meta', to: 'recrawl', d: 'M790,570 V574 Q790,584 780,584 H80 Q70,584 70,574 V242', label: 'due URLs',
@@ -925,6 +1599,34 @@ export const webCrawler: Design = {
         { name: 'range read', chosen: true, what: 'The scheduler reads every URL whose next fetch time falls in the current window, from a table keyed by time bucket. A range read, not a full scan.', pros: ['Read-only and repeatable.', 'The store stays the one record of what is due.', 'Works for any window size.'], cons: ['Needs a second table keyed by time, kept in step with the URL table.', 'A bucket of popular times can be hot.'] },
         { name: 'A time-ordered queue on each node', what: 'Each node keeps its own URLs ordered by next fetch time on local disk and takes the due ones itself.', pros: ['No reads on the shared store.', 'Moves with the slot.'], cons: ['Each node holds all its URLs, about 500 million, not only pending ones.', 'Must be restored after a failover like the frontier.'] },
         { name: 'A change feed from the store', what: 'The scheduler reads the store\'s stream of changes and sets a timer for each URL\'s next fetch.', pros: ['No polling of time buckets.', 'Sees each new next fetch time at once.'], cons: ['Still needs somewhere to hold billions of timers until due.', 'Change feeds keep only recent history.'] },
+      ],
+      examples: [
+        {
+          title: 'Range read (CQL)',
+          lang: 'sql',
+          code: `SELECT url, etag, last_modified, next_fetch_at
+FROM crawl.urls_due
+WHERE bucket = '2026-11-12T10'
+  AND next_fetch_at >= '2026-11-12 10:50:00+0000'
+  AND next_fetch_at <  '2026-11-12 11:00:00+0000';
+
+-- https://example.org/news | "6731-a91c"
+--   | 2026-11-12 10:12:00+0000 | 2026-11-12 10:50:01+0000
+-- and the rest of the window, grouped by owning node`,
+          note: 'The hour is the partition key, so a window is one partition read; it is also why a busy hour can be hot.',
+        },
+        {
+          title: 'The due table',
+          lang: 'sql',
+          code: `CREATE TABLE crawl.urls_due (
+  bucket        text,       -- the hour, '2026-11-12T10'
+  next_fetch_at timestamp,
+  url           text,
+  etag          text,
+  last_modified timestamp,
+  PRIMARY KEY ((bucket), next_fetch_at, url)
+);`,
+        },
       ],
     },
   ],

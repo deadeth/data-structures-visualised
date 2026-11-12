@@ -62,6 +62,11 @@ export interface Component {
   lines?: string[];
   what: string;
   why: string;
+  /**
+   * Each product or technology named in `tech`, in the box's sub-lines or on the box itself:
+   * what it is in a sentence or two, and why this design uses it here and not the obvious alternative.
+   */
+  built?: { name: string; what: string; why: string }[];
   /** Figures for this box. A plain string is shown as it is; a `Figure` also shows where the number comes from. */
   numbers?: (string | Figure)[];
   fails: string;
@@ -172,6 +177,11 @@ export interface TourStep {
    * what a term means, which box does the thing, who is told. Shown under the stage as "Step n explained".
    */
   explain?: { q: string; a: string }[];
+  /**
+   * The step told in full, for someone meeting it for the first time: where we are, what the problem is,
+   * what happens if nothing is done about it, and what this design does. One to three sentences each.
+   */
+  story?: { context: string; problem: string; consequence: string; fix: string };
 }
 
 export interface Design {

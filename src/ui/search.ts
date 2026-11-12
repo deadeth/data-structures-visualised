@@ -35,7 +35,7 @@ function build(): Promise<Doc[]> {
         kind: 'Component',
         title: c.name,
         also: [c.tech, ...c.alternatives.map((a) => a.name)],
-        text: [c.what, c.why, c.fails, ...(c.numbers ?? []).flatMap((n) => (typeof n === 'string' ? [n] : [n.text, n.from])), ...c.alternatives.map((a) => [a.name + '.', a.what ?? '', a.good, a.cost, ...(a.pros ?? []), ...(a.cons ?? [])].join(' ')), c.say].join(' '),
+        text: [c.what, c.why, c.fails, ...(c.built ?? []).flatMap((b) => [b.name, b.what, b.why]), ...(c.numbers ?? []).flatMap((n) => (typeof n === 'string' ? [n] : [n.text, n.from])), ...c.alternatives.map((a) => [a.name + '.', a.what ?? '', a.good, a.cost, ...(a.pros ?? []), ...(a.cons ?? [])].join(' ')), c.say].join(' '),
         href: `${base}/c/${c.id}`,
         where: `${d.name}: component`,
         from: d.name,
@@ -65,7 +65,7 @@ function build(): Promise<Doc[]> {
         });
       }
     }
-    d.tour.forEach((t, i) => docs.push({ kind: 'Tour step', title: t.title, also: [], text: [t.text, ...(t.explain ?? []).flatMap((e) => [e.q, e.a])].join(' '), href: `${base}/t/${i + 1}`, where: `${d.name}: tour step ${i + 1}`, from: d.name }));
+    d.tour.forEach((t, i) => docs.push({ kind: 'Tour step', title: t.title, also: [], text: [t.text, ...(t.story ? [t.story.context, t.story.problem, t.story.consequence, t.story.fix] : []), ...(t.explain ?? []).flatMap((e) => [e.q, e.a])].join(' '), href: `${base}/t/${i + 1}`, where: `${d.name}: tour step ${i + 1}`, from: d.name }));
     for (const dec of d.decisions) docs.push({ kind: 'Decision', title: dec.choice, also: [], text: `${dec.a} ${dec.b} ${dec.call}`, href: base, where: `${d.name}: decisions worth defending`, from: d.name });
     // Likely pushes from the design's interview extras, when written: each opens its question in the "Likely pushes" section.
     const ex = await entry.extras?.().catch(() => undefined);
