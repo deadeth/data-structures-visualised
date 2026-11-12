@@ -237,6 +237,24 @@ type Seg =
  * A system design as an interactive diagram: a guided tour that follows one
  * URL round the loop, and boxes that open to explain themselves.
  */
+/**
+ * One option in an "Alternatives" or "Ways to connect them" list, laid out as three columns:
+ * the name and what it is on the left, pros in the middle, cons on the right. On a narrow panel
+ * the three stack in that order. An entry without the lists shows its one-line For and Against there.
+ */
+function altItem(a: { name: string; chosen?: boolean; what?: string; pros?: string[]; cons?: string[]; good?: string; cost?: string }): HTMLElement {
+  const points = (label: string, cls: string, items: string[]) =>
+    h(`div.hld-pc.${cls}`, null, h('p.hld-pc-k', null, label), items.length ? h('ul', null, items.map((t) => h('li', null, t))) : h('p.hld-pc-none', null, 'None worth naming.'));
+  const pros = a.pros?.length ? a.pros : a.good ? [a.good] : [];
+  const cons = a.cons?.length ? a.cons : a.cost ? [a.cost] : [];
+  return h(
+    `li${a.chosen ? '.chosen' : ''}`, null,
+    h('div.hld-alt-about', null, h('p.hld-alt-name', null, a.name, a.chosen ? h('span.hld-used', null, 'used here') : null), a.what ? h('p.hld-alt-what', null, a.what) : null),
+    points('Pros', 'pro', pros),
+    points('Cons', 'con', cons),
+  );
+}
+
 export async function mountDesign(host: HTMLElement, design: Design, open?: { kind: string; id: string }, extras?: Extras): Promise<() => void> {
   const W = design.size.w;
   const H = design.size.h;
@@ -1097,13 +1115,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       );
       return;
     }
-    const alt = (a: Component['alternatives'][number]) =>
-      h(
-        `li${a.chosen ? '.chosen' : ''}`, null,
-        h('p.hld-alt-name', null, a.name, a.chosen ? h('span.hld-used', null, 'used here') : null),
-        h('p', null, h('span.hld-k', null, 'For: '), a.good),
-        h('p', null, h('span.hld-k', null, 'Against: '), a.cost),
-      );
+    const alt = altItem;
     // Every line this box has, with what travels on it: the picture shows only these labels while the box is open.
     const talks = design.flows.filter((f) => f.from === c.id || f.to === c.id);
     const talkItem = (f: Flow) => {
@@ -1122,14 +1134,17 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
           h('h4', null, 'What it does'), h('p.hld-first', null, c.what),
           h('h4', null, 'Why it is its own box'), h('p', null, c.why),
           c.numbers?.length ? h('h4', null, 'Numbers') : null,
-          c.numbers?.length ? list(c.numbers) : null,
+          c.numbers?.length
+            ? h('ul.hld-figures', null, c.numbers.map((n) => (typeof n === 'string' ? h('li', null, n) : h('li', null, n.text, h('p.hld-from', null, h('span.hld-k', null, 'Where it comes from: '), n.from)))))
+            : null,
           h('h4', null, 'When it fails'), h('p', null, c.fails),
         ),
         h(
           'div', null,
           h('h4', null, 'Talks to'), h('ul.hld-talks', null, talks.map(talkItem)),
-          h('h4', null, 'Alternatives'), h('ul.hld-alts', null, c.alternatives.map(alt)),
         ),
+        // The options take the panel's full width: what each is, then its pros, then its cons.
+        h('div.hld-alt-block', null, h('h4', null, 'Alternatives'), h('ul.hld-alts', null, c.alternatives.map(alt))),
       ),
       h('p.hld-say', null, h('span.hld-k', null, 'Say: '), c.say),
       ...(c.see?.length
@@ -1169,15 +1184,17 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
               ]),
           h('h4', null, mode.about), h('p', null, mode.note),
         ),
-        h(
-          'div', null,
-          h('h4', null, 'Ways to connect them'),
-          h(
-            'ul.hld-alts', null,
-            h('li.chosen', null, h('p.hld-alt-name', null, method, h('span.hld-used', null, 'used here'))),
-            fl.alts.map((a) => h('li', null, h('p', null, a))),
-          ),
-        ),
+        fl.ways?.length
+          ? h('div.hld-alt-block', null, h('h4', null, 'Ways to connect them'), h('ul.hld-alts', null, fl.ways.map(altItem)))
+          : h(
+              'div', null,
+              h('h4', null, 'Ways to connect them'),
+              h(
+                'ul.hld-alts.plain', null,
+                h('li.chosen', null, h('p.hld-alt-name', null, method, h('span.hld-used', null, 'used here'))),
+                fl.alts.map((a) => h('li', null, h('p', null, a))),
+              ),
+            ),
       ),
     );
   }

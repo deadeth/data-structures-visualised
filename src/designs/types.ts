@@ -8,6 +8,28 @@ export interface Alternative {
   good: string;
   /** What it costs, or why this design passes on it. */
   cost: string;
+  /** Two or three sentences: what the option is and how it would work in this design. Shown above the pros and cons. */
+  what?: string;
+  /** Two to four short points each. When both are present the page shows them in place of the one-line `good` and `cost`. */
+  pros?: string[];
+  cons?: string[];
+}
+
+/** A number and its working: the sum that gives it, and the source or assumption behind each input. */
+export interface Figure {
+  text: string;
+  /** For example "1 billion pages a month x 100 KB a page = 100 TB. HTML is text and compresses about 5 to 1 (assumption)." */
+  from: string;
+}
+
+/** One way two boxes could talk, on a connection's detail panel. Exactly one in a list is `chosen`: the one the diagram draws. */
+export interface Way {
+  name: string;
+  chosen?: boolean;
+  /** Two or three sentences: what it is and how it would carry this call. */
+  what: string;
+  pros: string[];
+  cons: string[];
 }
 
 export interface Component {
@@ -28,7 +50,8 @@ export interface Component {
   lines?: string[];
   what: string;
   why: string;
-  numbers?: string[];
+  /** Figures for this box. A plain string is shown as it is; a `Figure` also shows where the number comes from. */
+  numbers?: (string | Figure)[];
   fails: string;
   alternatives: Alternative[];
   say: string;
@@ -102,8 +125,10 @@ export interface Flow {
   how: string;
   /** What is promised about delivery, and what makes that safe. */
   delivery: string;
-  /** Other ways these two could talk. */
+  /** Other ways these two could talk, one line each. Kept for search and as the fallback when `ways` is absent. */
   alts: string[];
+  /** The same choice in full, the chosen way first. When present the page shows these instead of `alts`. */
+  ways?: Way[];
 }
 
 /** Which side of its line the token's label sits on, for a leg where the place worked out from the diagram reads poorly. */
