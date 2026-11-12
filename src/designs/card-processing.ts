@@ -29,6 +29,10 @@ export const cardProcessing: Design = {
       x: 70, y: 96, w: 124, h: 64, kind: 'outside',
       what: 'The card reader at the till and the merchant\'s bank, the acquirer, which connects it to the card network. The chip or phone adds a one-time cryptogram to each purchase, and the acquirer turns it into an authorisation request.',
       why: 'We do not run it, but its habits shape our design. Terminals time out, retry and send reversals when they lose their link. Some purchases are approved offline by the card itself, so we first hear of them in clearing.',
+      built: [
+        { name: "Merchant", what: "The business selling the goods, here a restaurant in Dublin, with its card terminal at the till. The terminal reads the chip or phone and sends the purchase to the merchant's bank.", why: "We do not run it, but its habits shape the design: terminals time out, retry, and send reversals when they lose the link. So every request must be safe to receive twice, and every hold needs an expiry as a backstop." },
+        { name: "Acquirer", what: "The merchant's bank. It connects the merchant's terminals to the card networks, adds the merchant's details to each purchase and sends the authorisation request on.", why: "Each bank connects once, to the network, not to every other bank. We never talk to the acquirer directly: we see its requests as 0100 messages from Mastercard, and its final amounts in the clearing files." },
+      ],
       numbers: [
         {
           text: 'Acquirers and terminals wait longer than the issuer is allowed: 25 seconds or more at a till (Visa patent background).',
@@ -94,6 +98,9 @@ export const cardProcessing: Design = {
       x: 70, y: 226, w: 124, h: 64, kind: 'outside',
       what: 'Routes each authorisation from the acquirer to the issuer by the card\'s number range, carries clearing files between them in batches, and works out every bank\'s net position for settlement. If the issuer does not answer in time, it answers on the issuer\'s behalf: stand-in processing.',
       why: 'Each bank connects once, to the network, rather than to every other bank. The network sets the rules: message formats (dialects of ISO 8583), time limits, dispute rules and fees.',
+      built: [
+        { name: "Mastercard", what: "A card network: the company between issuers and acquirers. It routes each authorisation by the card's number range, carries clearing files between banks, works out each bank's net position for settlement, and answers for an issuer that is down (stand-in processing).", why: "The baseline is a UK business-card issuer on Mastercard, connected directly from two data centres. The page keeps to one network as a simplification; a second would bring its own message dialect, rules and files." },
+      ],
       numbers: [
         {
           text: 'Visa gives VisaNet a capacity of over 65,000 transaction messages a second (Visa, 2019).',
@@ -163,6 +170,10 @@ export const cardProcessing: Design = {
       x: 335, y: 226, w: 140, h: 72, kind: 'node',
       what: 'Holds long-lived TCP connections to the network from both data centres, frames and parses ISO 8583 messages, checks them, catches repeats, and turns each into an internal request. It is inside the PCI zone: it swaps the card number for a token at the vault and has the cryptogram or PIN checked by the HSM before anything else sees the request.',
       why: 'The network speaks one dialect over persistent sockets and matches each answer to its request by reference number. Keeping that protocol, the card number and the clock in one small service keeps PCI scope small, and everything behind it speaks plain internal calls.',
+      built: [
+        { name: "ISO 8583", what: "The international standard for card authorisation messages. A four-digit type says what a message is (0100 request, 0110 answer, 0120 advice, 0400 reversal), and a bitmap says which numbered fields follow. Each network speaks its own dialect of it.", why: "It is what Mastercard speaks, so connecting directly means parsing it. Keeping it inside one small gateway means everything behind it uses plain internal calls. ISO 20022, the newer standard CHAPS moved to in 2023, is not used for card authorisations on this link." },
+        { name: "TCP, long-lived connections", what: "TCP is the internet's standard way to carry an ordered, reliable stream of bytes between two machines. Here the connections are opened once and kept open, and each message starts with its length so the receiver knows where it ends.", why: "The network keeps connections open to both our data centres and an answer may go back on any live one, matched by field 37. Opening a connection for each purchase would add set-up time to every request inside a budget of about 100 ms." },
+      ],
       numbers: [
         {
           text: 'On Visa, each message has a length prefix on a long-lived TCP connection, and an answer may return on any live connection, matched by field 37 (Increase).',
@@ -245,6 +256,10 @@ export const cardProcessing: Design = {
       x: 335, y: 96, w: 140, h: 70, kind: 'store',
       what: 'The only place card numbers are kept, encrypted, each mapped to a random token. Everything outside the PCI zone, from the authoriser and the ledger to events and the app, knows a card only by its token.',
       why: 'PCI DSS applies to every system that stores, processes or transmits card data, and to anything that can affect their security. A vault and tokens shrink that to three parts: the gateway, the vault and the HSM.',
+      built: [
+        { name: "PAN (primary account number)", what: "The long number on the card. It is what a thief needs, so the card industry's security standard, PCI DSS, governs every system that stores, processes or transmits it.", why: "The vault is the only place it is stored, encrypted under keys held in the HSM. That keeps PCI scope to three parts: the gateway, the vault and the HSM." },
+        { name: "Random tokens", what: "A token is a random string, such as tok_8f3a91e2, that stands in for a card number. It is not worked out from the number, so it cannot be turned back into it without the vault's table.", why: "Logs, events, the ledger and the app can carry tokens without coming into PCI scope. A plain hash of the number was passed over: card numbers are short and partly predictable, so a hash can be reversed by trying them. At about 1.2 million cards the table is a few hundred megabytes, small enough to cache on every gateway and meet the 5 ms target." },
+      ],
       numbers: [
         {
           text: 'About 1.2 million cards (assumption): at most a few hundred megabytes, small enough to cache on every gateway.',
@@ -309,6 +324,12 @@ export const cardProcessing: Design = {
       x: 335, y: 350, w: 150, h: 56, kind: 'shared',
       what: 'Tamper-resistant devices that hold the issuer\'s keys and do the cryptography: check the chip\'s authorisation request cryptogram (ARQC), produce the response cryptogram (ARPC), check PINs and card security codes, and protect the vault\'s keys. Keys never leave them in the clear.',
       why: 'Checking the cryptogram is what makes a chip or phone payment hard to copy: each purchase carries a fresh code that only the real card or device could compute. The check needs the issuer\'s keys, and those must never sit in application memory.',
+      built: [
+        { name: "Hardware security module (HSM)", what: "A tamper-resistant device that holds secret keys and does cryptography for other systems. Keys never leave it in the clear. A payment HSM, such as the Thales payShield cited on this page, has commands for card checks.", why: "Checking cryptograms needs the issuer's keys, and those must never sit in application memory, where anyone who can read memory or a backup could take them. At least two per site, because cryptography must not cross sites on the hot path. A cloud service was passed over as another hop against the 5 ms target." },
+        { name: "PIN", what: "The personal identification number a cardholder types at a terminal. It travels encrypted, as a PIN block, and is checked inside the HSM.", why: "The tap in the tour needs no PIN, but chip-and-PIN purchases do. Checking it inside the HSM means no service ever sees a customer's PIN in the clear." },
+        { name: "CVV (card security code)", what: "The three digits printed on the card, typed in for purchases where the card is not present, such as online. They are worked out from the card's details with the issuer's keys, so the HSM checks them by working them out again.", why: "Only the HSM holds the keys to check them. They prove only that someone has seen the card, which is weaker than a chip cryptogram, so online purchases lean more on 3-D Secure and the fraud score." },
+        { name: "ARQC and ARPC", what: "The authorisation request cryptogram is a code the chip or phone computes for one purchase from its details (amount, country, date, the terminal's random number, the chip's counter) with a secret key. The authorisation response cryptogram is the issuer's reply code, which the card or phone can check.", why: "A fresh ARQC on every purchase is what makes a chip or phone payment hard to copy. Verifying it needs our keys, so the gateway asks the HSM: one or two commands a purchase, at most about 270 a second at the yearly peak." },
+      ],
       numbers: [
         {
           text: 'One or two operations per authorisation, a few milliseconds each (design target).',
@@ -386,6 +407,10 @@ export const cardProcessing: Design = {
       x: 585, y: 226, w: 150, h: 72, kind: 'node',
       what: 'Runs the checks in a fixed order and stops at the first that fails: card active, not frozen, not expired; the cryptogram, PIN or 3-D Secure result from the gateway; the owner\'s controls (blocked merchant categories, contactless limit, per-purchase limit, countries); the fraud score; then funds. It approves by asking the ledger to place a hold, and answers approve or decline with a reason code.',
       why: 'Cheap, certain checks go first, so most declines cost almost nothing. Funds go last because the hold is the only step that changes anything, and nothing after it may fail without undoing it.',
+      built: [
+        { name: "Ordered checks", what: "A technique, not a product: run the checks in a fixed order and stop at the first that fails. Here the order is card state, the gateway's verification results, the owner's controls, the fraud score, then funds.", why: "Cheap, certain checks go first, so most declines cost almost nothing. Funds go last because placing the hold is the only step that changes anything. Running the checks in parallel would save only a few milliseconds, against about 106 ms in a target of under a second." },
+        { name: "Stateless service", what: "A service that keeps nothing between requests: everything it needs arrives in the request or is read from the stores behind it.", why: "Any copy in either data centre can serve any request, which is what lets both sites be live. A retry that lands in the other site is still caught, because the decision is stored under the network's identifiers." },
+      ],
       numbers: [
         {
           text: 'Reason codes: 00 approved, 05 do not honour, 51 not sufficient funds (ISO 8583).',
@@ -452,6 +477,11 @@ export const cardProcessing: Design = {
       x: 585, y: 96, w: 160, h: 70, kind: 'store',
       what: 'Each card\'s state by token: status (active, frozen, lost), expiry, the account it draws on, and the controls the business owner set: limits, blocked categories, contactless on or off.',
       why: 'Read on every authorisation and written when someone freezes a card in the app. A freeze must work on the very next tap, so reads go to the primary or to a cache cleared on every write, never to a lagging replica.',
+      built: [
+        { name: "Card status", what: "Each card's state, by token: active, frozen or lost, with its expiry and the account it draws on.", why: "A freeze must work on the very next tap, so status is read from the primary database or from a cache cleared on every write, never from a copy that may lag." },
+        { name: "Controls", what: "Limits and switches the business owner sets in the app for each card: blocked merchant categories, a contactless limit, a per-purchase limit, foreign purchases and contactless on or off.", why: "They are rows in the card store, not code, so the owner's changes take effect without a deploy." },
+        { name: "Relational database with a synchronous replica", what: "A database of tables queried with SQL, here about 1.2 million card rows keyed by token. The synchronous replica is a copy in the other data centre that must have each write before it is confirmed.", why: "At about 600 MB the whole table fits in memory, so scale is not the problem; freshness is. A key-value store such as DynamoDB or Cassandra would scale further, but a read from a lagging copy could miss a freeze. Waiting for the replica means a failover cannot lose a freeze." },
+      ],
       numbers: [
         {
           text: 'About 1.2 million cards (assumption): small enough to cache in full.',
@@ -518,6 +548,11 @@ export const cardProcessing: Design = {
       x: 585, y: 350, w: 150, h: 56, kind: 'shared',
       what: 'Scores each authorisation against the card\'s recent history: how fast it is being used, a new merchant or country, the amount against normal, the channel. Returns a score and its reasons inside a fixed budget.',
       why: 'A decline at authorisation stops the money leaving. After approval the best you can do is alert and dispute. A score that arrives late is worth nothing, so keeping the budget matters more than squeezing the model.',
+      built: [
+        { name: "Scoring model", what: "A model trained on past purchases that turns a purchase and the card's recent history into a risk score with its reasons. It runs as its own service.", why: "Card state and controls cannot tell a thief from the owner; a model catches patterns that fixed rules miss. Scoring before the hold stops fraud before the money leaves, where scoring after approval could only alert and dispute." },
+        { name: "50 ms hard timeout", what: "A fixed limit on how long the authoriser waits for the score, after which it stops waiting whatever happens.", why: "Fraud has 50 of the 106 ms typical budget, the largest share, because a model call takes longest. A late score is worth nothing, so past 50 ms the authoriser decides on rules alone and records that the model did not answer." },
+        { name: "Features from the event stream", what: "The card's recent counts and amounts, such as purchases in the last hour or a new country, kept up to date by a reader of the card events log.", why: "Nothing is worked out from history while the purchase waits, so scoring is a lookup and a model call, which is what makes 50 ms reachable." },
+      ],
       numbers: [
         {
           text: '50 ms at the 99th percentile, of about 300 ms for the whole answer (design targets).',
@@ -595,6 +630,12 @@ export const cardProcessing: Design = {
       x: 810, y: 226, w: 140, h: 72, kind: 'store',
       what: 'The double-entry record of money. An approval writes a pending entry, the hold, which lowers the available balance. Clearing writes the posted entry and releases the hold. Available balance is the posted balance less open holds. For a credit card it is the credit limit less what is posted and held. The Ledger service design on this site goes inside it.',
       why: 'The hold must be exact under concurrency: two taps at once against the last £10 must not both succeed. So the funds check and the hold are one transaction on the account, keyed by the network\'s identifiers so a retry finds the first result. Daily limits are checked against the same account\'s totals in that transaction.',
+      built: [
+        { name: "Holds", what: "A hold is a pending ledger entry that lowers the available balance without moving money. It ends when clearing posts the purchase, a reversal cancels it, or it lapses at the end of the network's window.", why: "The approval must reserve the money at once, or two taps could spend the same pounds. The funds check and the hold are one transaction on the account, keyed by the network's identifiers, so a retry finds the first hold." },
+        { name: "Postings", what: "A posting is a final ledger entry, written by clearing with the amount the network actually charges. Statements, interest and reconciliation are worked out from postings.", why: "Kept apart from holds because the final amount can differ (£36.55 against £36.40 in the tour), and some purchases arrive with no hold at all." },
+        { name: "Double-entry", what: "A book-keeping method: every movement is recorded as equal debits and credits across accounts, so the entries always sum to zero.", why: "Money cannot appear or vanish, which makes the ledger easy to audit and gives reconciliation a sound record to check. The posting in the tour debits acc_7731 and credits the Mastercard settlement account." },
+        { name: "Relational database, partitioned by account", what: "A database of tables queried with SQL, with transactions and row locks; the examples use PostgreSQL syntax. Data is split by account, and the primary copies each commit to a replica in the other data centre before confirming it.", why: "A lock on the account row makes the funds check exact: two taps on the last £10 cannot both pass. At about 100 holds a second at the yearly peak, one primary is plenty. Distributed SQL such as Spanner or CockroachDB would remove the failover step, but a majority needs three locations and this design has two sites." },
+      ],
       numbers: [
         {
           text: 'About 1.2 million holds and 1.2 million postings a day (assumption); holds peak near 100 a second, postings come in bursts.',
@@ -683,6 +724,11 @@ export const cardProcessing: Design = {
       x: 810, y: 350, w: 140, h: 56, kind: 'node',
       what: 'Reads the network\'s clearing files several times a day. For each record it finds the hold it belongs to, posts the final amount (which may differ), releases the hold, and applies fees and currency conversion as the record states. Records with no hold, such as offline taps, forced posts and refunds, are posted anyway. A dispute is a later event on the same purchase: raised through the network, with the money moving back through clearing and settlement.',
       why: 'Clearing, not authorisation, moves the money. The issuer must honour clearing records: the network does not stop forced posts, and the remedy for a wrong one is a dispute.',
+      built: [
+        { name: "Clearing files", what: "Batches of final purchase records that Mastercard delivers several times a day: one record per purchase or refund, with the final amount, conversion and fees. Each file has an id and record counts.", why: "Clearing, not authorisation, moves the money, and the issuer must honour every record. Taking each file as one job lets it be checked against its own counts and run again safely." },
+        { name: "Matching", what: "Finding the hold a clearing record belongs to. With no single linking field, it uses the authorisation code (field 38), card, merchant and original amount.", why: "The amount in pounds can change between hold and bill, so the original currency amount is used. Records that match nothing are still posted and go to a queue for people." },
+        { name: "Idempotent per record", what: "A technique: each posting is unique on its file id and record number, so handling a record a second time writes nothing.", why: "A file delivered twice, or a job rerun after a failure, must post nothing twice. With 200,000 to 300,000 records a file, a safe rerun is the simplest recovery." },
+      ],
       numbers: [
         {
           text: 'No single field links a clearing record to its authorisation: match on authorisation code (field 38), card, merchant and amount (Paymentology).',
@@ -752,6 +798,10 @@ export const cardProcessing: Design = {
       x: 820, y: 474, w: 150, h: 64, kind: 'shared',
       what: 'Each day compares three records: our ledger postings, the totals in the clearing files, and the money that actually moved in the settlement account. Every difference is a break that someone must explain.',
       why: 'Each system can be right by its own lights and still disagree with the others. Reconciliation is the last line of defence, and it catches the bugs tests miss.',
+      built: [
+        { name: "Three-way reconciliation", what: "Comparing three records that should agree: our ledger postings, the clearing file totals and the settlement bank's statement. Each difference is a break with an owner.", why: "Each system can be right by its own lights and still disagree with the others. A two-way check of ledger against files would miss money that moved but was never in a file." },
+        { name: "Daily batch", what: "A job that runs once a day over a complete day's data. It reads the ledger from a replica, so it adds no load to the primary.", why: "Settlement happens once a working day, so a daily comparison lines up with it. Monzo, cited on the page, runs daily reconciliation plus checks on each payment's state, as this design does. If the job stops nothing fails at once, so it has its own alert when a day is not reconciled by a fixed hour." },
+      ],
       numbers: [
         {
           text: 'Monzo compares ledger and settlement account daily; each break alerts an engineer, who must record evidence to close it.',
@@ -811,6 +861,9 @@ export const cardProcessing: Design = {
       x: 575, y: 474, w: 150, h: 64, kind: 'outside',
       what: 'Our account at a settlement bank. Once a working day the network collects our net position from it: what our cardholders spent, less refunds, less the interchange owed to us.',
       why: 'Settlement is one net movement a day per currency, not one per purchase. The account must hold enough on each settlement day, so it is forecast from open holds and cleared totals.',
+      built: [
+        { name: "Settlement account", what: "Our account in pounds at a settlement bank. Once a working day Mastercard collects our net position from it: what our cards spent, less refunds, less the interchange owed to us.", why: "Settlement is one net movement a day per currency, not one per purchase. One account at one UK bank gives one figure to forecast and reconcile; the cost is that foreign purchases are converted by the network at its rate." },
+      ],
       numbers: [
         {
           text: 'Settlement is typically one to three days after the purchase (Marqeta).',
@@ -873,6 +926,10 @@ export const cardProcessing: Design = {
       x: 1060, y: 226, w: 130, h: 64, kind: 'queue',
       what: 'Every change in a card transaction (authorised, declined, reversed, cleared, refunded, disputed) as an event, keyed by card. Each is written to an outbox table in the same transaction as the ledger change, then relayed to the log.',
       why: 'The money and the event must never disagree. Writing both in one database transaction, then relaying, gives at-least-once delivery without a distributed transaction.',
+      built: [
+        { name: "Kafka", what: "An open-source distributed log: services append messages to named topics, and many readers can each read them in order, at their own pace, and read them again. Order is kept within a partition, and one key always goes to the same partition.", why: "Several services need every event, must not slow an authorisation, and must be able to replay after a bug. Keying by card token keeps each card's events in order. A queue per consumer was passed over because it removes a message once handled, so there is no replay." },
+        { name: "Transactional outbox", what: "A technique: write the event to an outbox table in the same database transaction as the change it describes, then let a separate relay publish it to the log.", why: "The money and the event must never disagree. Publishing after the commit can lose an event in a crash, and one distributed transaction over database and log would let a log outage stop authorisations. The cost is an extra insert in every hold and a relay to run." },
+      ],
       numbers: [
         {
           text: 'About four events per purchase (assumption), so about 5 million a day.',
@@ -950,6 +1007,11 @@ export const cardProcessing: Design = {
       x: 1060, y: 474, w: 150, h: 64, kind: 'shared',
       what: 'Independent readers of card events: push notifications and receipts, the suspicious-transaction alerts service (the Suspicious transaction alerts design on this site), cashback and rewards, accounting integrations, analytics.',
       why: 'None of them may slow an authorisation, and each reads at its own pace and can replay. A notification a second late is fine. A purchase a second late is a decline.',
+      built: [
+        { name: "Consumer groups", what: "Kafka's way of letting several services read one topic independently. Each group keeps its own offset, its place in the log.", why: "Notifications, alerts, rewards, accounting and analytics each read at their own pace, and each scales or fails alone. About 5 million events a day is under 60 a second on average, so load is light; independence is the point." },
+        { name: "Alerts", what: "The suspicious-transaction alerts service, a design of its own on this site. It reads every card event to look for suspicious patterns.", why: "It needs every purchase but must never delay one, so it reads the log rather than being called by the authoriser." },
+        { name: "Rewards", what: "Cashback and rewards worked out from card purchases.", why: "A cashback a second late costs nothing; a purchase a second late is a decline. Reading the log keeps it off the authorisation path." },
+      ],
       numbers: [
         {
           text: 'Monzo (then Mondo) showed a notification in under 3 seconds in 2015.',
@@ -1024,6 +1086,10 @@ export const cardProcessing: Design = {
       x: 1200, y: 96, w: 120, h: 64, kind: 'outside',
       what: 'The business owner\'s phone. Shows the notification and the pending purchase, and is where cards are frozen and limits set.',
       why: 'A pending purchase is shown from the hold, with the merchant name from the authorisation. The final amount replaces it when clearing posts.',
+      built: [
+        { name: "Cardholder app on a phone", what: "The business owner's mobile app. It shows each purchase, pending from the hold and then final after clearing, and is where cards are frozen and limits set.", why: "It reads the ledger when opened, so the balance shown never depends on a notification arriving." },
+        { name: "Push through Apple and Google (APNs, FCM)", what: "Apple Push Notification service and Firebase Cloud Messaging: Apple's and Google's services for delivering a message to an app on a phone. Our notification service sends to them, and they deliver it.", why: "Free and within seconds, which helps an owner spot a purchase they did not make. Delivery is best effort, so the notification is a prompt, never the record. SMS was passed over: it costs per message at about 1.2 million purchases a day and can be spoofed." },
+      ],
       fails: 'Push is best effort. The app reads the ledger when opened, so a lost notification never means a wrong balance.',
       alternatives: [
         {
@@ -2092,91 +2158,269 @@ break                                £5.00  -> an owner and evidence`,
   tour: [
     {
       title: 'A tap at the till',
-      text: 'The owner of a small design studio taps a company card for a client lunch in Dublin: €42.00. The phone makes a one-time cryptogram for it. The acquirer sends an authorisation request to Mastercard, which routes it by the card\'s number range to the issuer: us.',
+      text: "The owner of a small design studio taps the company card, held in a phone, to pay for a client lunch in Dublin: €42.00. The phone makes a one-time code for this purchase only (a cryptogram). The restaurant's bank (the acquirer) asks Mastercard whether the card's bank will pay: an authorisation request. Mastercard reads the card number's range and sends the question to the bank that issued the card: us.",
+      story: {
+        context: "Nothing has happened in our systems yet. A cardholder is at a restaurant till in Dublin with a phone that holds one of our business cards, and the bill is €42.00.",
+        problem: "We do not run the till, the restaurant's bank or Mastercard, yet we must decide whether to pay. The till and the acquirer have their own habits: they time out, retry, and send cancellations (reversals) when they lose the link.",
+        consequence: "If we treated each request as coming from one reliable caller, a retry could hold the money twice, and a lost answer could leave money held for a purchase that never went through.",
+        fix: "The design takes each request as Mastercard delivers it, treats every one as possibly repeated, and relies on the one-time cryptogram to prove the card is real. The cost is that we must answer every request in time, from either of our two data centres, at any hour.",
+      },
+      explain: [
+        { q: "Who are the four parties?", a: "The cardholder; the merchant and its bank, the acquirer; the card network, here Mastercard; and the issuer, the bank that gave out the card. We are the issuer. The network routes messages and money between banks; it does not hold anyone's account." },
+        { q: "What is the cryptogram?", a: "A short code the chip or phone computes for this one purchase from its details, such as the amount, the date and a random number from the terminal, using a secret key inside the card. Here it is ARQC 1A2B3C4D5E6F7081. A copied card number cannot make it, which is what makes a tap hard to fake." },
+        { q: "What is an authorisation?", a: "The real-time question \"will you pay this?\". An approval places a hold on the money, but no money moves yet. The money moves later, through clearing and settlement (steps 10 to 12)." },
+        { q: "How does Mastercard know the request is for us?", a: "Card numbers are issued in ranges, and each range belongs to one issuer. Mastercard looks at the start of the card number and sends the request to the bank that owns that range." },
+        { q: "Why is the amount in euros?", a: "The restaurant is in Ireland and charges in euros. The owner's account is in pounds, so the hold will be for the amount in pounds (step 4)." },
+      ],
       focus: ['merchant', 'network'],
       path: ['tap'],
       labels: ['€42.00'],
     },
     {
       title: 'The request reaches our gateway',
-      text: 'An 0100 message arrives on a TCP connection the network holds open to each of our data centres. The network will wait only a few seconds before it answers for us, so the gateway stamps a deadline on the request now, and every step behind it gets only what is left.',
+      text: "Mastercard sends the request as a message of type 0100 over a connection it keeps open to each of our two data centres. Our network gateway, the one service that speaks the network's message format, receives it. Mastercard waits only a few seconds and then answers on our behalf, so the gateway stamps a deadline on the request as it arrives. Every step behind it gets only the time that is left.",
+      story: {
+        context: "Mastercard has the restaurant's request for €42.00 and has routed it to us. It reaches the network gateway in one of our two data centres.",
+        problem: "Mastercard will not wait for ever. If we have not answered within a few seconds it decides for us (stand-in processing), on limits we set in advance. The terminal at the till may wait 25 seconds or more, but the limit that matters is Mastercard's.",
+        consequence: "A slow answer is as bad as none: the network decides without us, and our late approval is ignored. Each slow step behind the gateway would eat into a budget nobody was watching.",
+        fix: "The gateway stamps a deadline on the request the moment it arrives: never later than about 1 second, against our targets of about 100 ms typically and 300 ms at the 99th percentile. Every call behind it is given only what is left, and past the deadline the gateway answers decline itself. The cost is that every service must honour the time it is given.",
+      },
+      explain: [
+        { q: "What is an 0100?", a: "A message in ISO 8583, the standard format for card authorisations. Its four-digit type says what it is: 0100 a request, 0110 the answer, 0120 an advice, 0400 a reversal. Numbered fields follow, such as field 11 (the trace number) and field 37 (the reference number)." },
+        { q: "What is the network gateway?", a: "Our small service at the edge, running in both data centres. It holds the connections to Mastercard, reads and checks each message, catches repeats, and turns each into a plain internal request for the services behind it." },
+        { q: "What does a connection kept open mean?", a: "Mastercard and the gateway use long-lived TCP connections rather than opening a new one per purchase. Each message starts with its length, so the receiver knows where it ends. An answer may go back on any live connection and is matched to its request by field 37." },
+        { q: "What happens if we do not answer in time?", a: "Mastercard answers for us, by stand-in processing, on limits we set in advance, and tells us afterwards with an advice message. Step 13 shows it." },
+        { q: "What is the deadline, and who checks it?", a: "A time by which the answer must leave, stamped by the gateway when the request arrives. Each call behind the gateway carries the time left, so a slow call cannot take more than its share, and the gateway declines rather than miss it." },
+        { q: "Why two data centres?", a: "Mastercard sends to both, and either can answer any request. If one site fails, only the requests in flight there are lost; the network retries them or stands in." },
+      ],
       focus: ['network', 'gateway'],
       path: ['auth'],
       labels: ['0100 €42.00'],
     },
     {
       title: 'Card number out, token in; check the cryptogram',
-      text: 'Inside the PCI zone the gateway swaps the card number for a token at the vault, so nothing behind it ever sees the number. The HSM checks the cryptogram with keys that never leave it: only the real card or phone could have made it.',
+      text: "The gateway is in the PCI zone: the few systems allowed to see card numbers. It asks the card vault for the card's token, a random stand-in, so nothing behind it ever sees the number. Then it asks the HSM, locked hardware that holds our secret keys, to check the cryptogram. The keys never leave it, and only the real card or phone could have made that code. A failed check is a decline.",
+      story: {
+        context: "The gateway holds the 0100 for €42.00, with the full card number and the code the phone made for this purchase (ARQC 1A2B3C4D5E6F7081). Nothing else has seen the request yet.",
+        problem: "The card industry's security standard, PCI DSS, covers every system that stores, processes or transmits card numbers, and anything that can affect them. If the number travelled on, the authoriser, the ledger, the event log and the app would all fall under it. Separately, a request could come from a copied card number rather than the real card.",
+        consequence: "Every service, log and backup holding a card number would need PCI controls and audits, and a leak from any of them would expose cards. Without the cryptogram check, a stolen card number could make purchases that look genuine.",
+        fix: "The gateway looks up the token at the vault, usually in its own cache, within 5 ms: from here on the card is tok_8f3a91e2. It sends the HSM a command to verify the ARQC and make a reply code (the ARPC), within another 5 ms. PCI scope shrinks to three parts, gateway, vault and HSM, at the cost of running them to PCI standard with at least two HSMs per site.",
+      },
+      explain: [
+        { q: "What is the PCI zone?", a: "The small set of systems allowed to handle full card numbers, kept to the card industry's security standard, PCI DSS. Here it is three parts: the gateway, the card vault and the HSM. Everything else sees only tokens." },
+        { q: "What is a token, and where is the card number kept?", a: "A random string, here tok_8f3a91e2, that stands in for the card number and means nothing on its own. The card vault is the only place the number is stored, encrypted, next to its token. The gateway caches the pairs, because a card's token never changes." },
+        { q: "What is an HSM?", a: "A hardware security module: a tamper-resistant device that holds secret keys and does cryptography for other systems. Keys never leave it in the clear, so not even our engineers can read them. Each data centre has at least two." },
+        { q: "What does checking the cryptogram prove?", a: "The phone computed ARQC 1A2B3C4D5E6F7081 from this purchase's details with a secret key the issuer put on the card. The HSM recomputes it with our keys. A match proves the request came from the real card or phone, for this purchase." },
+        { q: "What is the ARPC?", a: "The issuer's response cryptogram, here 9F8E7D6C5B4A3928, made by the HSM to go back with the answer. The phone uses it to check that the answer really came from us." },
+        { q: "What if the check fails?", a: "The gateway declines. A failed cryptogram is never retried, because a mismatch means the request did not come from the real card." },
+      ],
       focus: ['gateway', 'vault', 'hsm'],
       path: ['vault', 'token', 'hsm', 'verified'],
       labels: ['card number', 'token', 'ARQC', 'valid'],
     },
     {
       title: 'Card status and controls',
-      text: 'The authoriser runs the cheap checks first. The card is active, not frozen, not expired. The owner\'s controls allow restaurants, foreign purchases and contactless. At an example rate of 0.8667 that is £36.40.',
+      text: "The gateway passes the request, with the token in place of the card number, to the authorisation engine. It runs the cheap checks first, so most declines cost almost nothing. It reads the card store: the card is active, not frozen, not expired. The owner's controls allow restaurants, foreign purchases and contactless. The request also carries the amount in pounds: at an example rate of 0.8667, €42.00 is £36.40.",
+      story: {
+        context: "The cryptogram is valid, and the card is now known only as tok_8f3a91e2. The gateway sends the request to the authoriser with about 980 ms left on the deadline.",
+        problem: "The authoriser must run several checks: card state, the gateway's verification results, the owner's controls, a fraud score and finally the funds. Most are cheap reads, one is slow, and only the last changes money. The owner may also have frozen the card in the app a moment ago.",
+        consequence: "Running the expensive checks first would waste time and fraud calls on cards a cheap check would have declined. Reading card state from a lagging copy could miss a freeze, so a card the owner had reported lost would still work.",
+        fix: "The checks run in a fixed order and stop at the first failure, with the hold last because it is the only step that changes anything. The card is read by token from the primary database, or from a cache cleared on every write, within 5 ms. The cost is that changing the order or a rule is a deploy; limits the owner sets are data, so they are not.",
+      },
+      explain: [
+        { q: "What is the authorisation engine?", a: "The service that decides approve or decline. It keeps no state of its own, so any copy in either data centre can serve any request. It answers with a two-digit reason code: 00 approved, 05 do not honour, 51 not sufficient funds." },
+        { q: "What is in the card store?", a: "One row per card, keyed by token: status (active, frozen or lost), expiry, the account it draws on, and the owner's controls. Here: active, expires 2029-08, account acc_7731, gambling blocked, a per-purchase limit of £500." },
+        { q: "What are the owner's controls?", a: "Rules the business owner sets in the app for each card: blocked kinds of merchant, a contactless limit, a per-purchase limit, foreign purchases on or off. Restaurants are not blocked, so the check passes on to fraud scoring." },
+        { q: "What is a merchant category code?", a: "Four digits, carried in field 18, that say what kind of business the merchant is: 5812 is restaurants, 7995 gambling. Controls block categories by this code." },
+        { q: "Why must a freeze work on the very next tap?", a: "A freeze is how the owner stops a lost or stolen card. So the card is read from the primary database, or from a cache cleared on every write, never from a copy that may lag. The app confirms a freeze only once both data centres have it." },
+        { q: "Where does £36.40 come from?", a: "The purchase is in euros and the account in pounds. The request the gateway sends the authoriser carries both: 4,200 euro cents and 3,640 pence, at an example rate of 0.8667. The hold will be for the amount in pounds." },
+      ],
       focus: ['gateway', 'authz', 'cards'],
       path: ['decide', 'cards', 'cardinfo'],
       labels: ['£36.40', 'card?', 'active'],
     },
     {
       title: 'A fraud score inside 50 ms',
-      text: 'New country, but a normal amount at a normal time, and the card has been used abroad before. The model answers in 12 ms. Had it taken more than 50, the authoriser would have stopped waiting and decided on rules alone.',
+      text: "The authoriser asks fraud scoring how risky the purchase looks, because a decline now stops the money leaving. It compares it with the card's recent use: a new country, but a normal amount at a normal time, and the card has been used abroad before. The model answers in 12 ms: low risk. Had it taken more than 50 ms, the authoriser would have stopped waiting and decided on rules alone.",
+      story: {
+        context: "The card is active and its controls allow the purchase. The authoriser has the purchase details and most of its deadline still left.",
+        problem: "Card state and controls cannot tell a thief from the owner. A trained model can, by comparing the purchase with the card's recent history, but a model call is the slowest step on the path, and the model may be slow or down.",
+        consequence: "Without a score, fraud is found only after approval, when the money has gone and the best left is an alert and a dispute. With a score but no time limit, a slow model would push the answer past Mastercard's limit and turn purchases into stand-in decisions or declines.",
+        fix: "The authoriser sends the purchase and the card's features, kept up to date from the card events log so scoring is only a lookup and a model call. It waits at most 50 ms of the 106 ms typical budget. If the score is late it decides on rules alone (velocity, amount, country) and records that the model did not answer. The cost is a model small enough to answer in tens of milliseconds.",
+      },
+      explain: [
+        { q: "What is the fraud score?", a: "A number from a trained model saying how likely the purchase is to be fraud, with its reasons. Here it is 0.04, band low, because of a new country but a normal amount and time on a card used abroad before." },
+        { q: "What are the features?", a: "Facts about the card's recent use that the model reads: one purchase in the last hour, a new country, an amount 1.1 times the card's usual, used abroad before. A reader of the card events log keeps them up to date, so nothing is worked out from history while the purchase waits." },
+        { q: "What does a 50 ms hard timeout mean?", a: "The authoriser stops waiting after 50 milliseconds whatever happens. A late score is worth nothing, because a late answer to Mastercard is a decline." },
+        { q: "What are rules alone?", a: "Simple checks the authoriser runs itself: how often and how much the card has spent recently (velocity), the amount and the country. They are the fallback when the model is slow or down. Each such decision records that it had no score, so the team can watch how often that happens." },
+        { q: "Why score before approving rather than after?", a: "A decline here stops the money leaving. Once a purchase is approved, the best left is an alert to the owner and a dispute through the network." },
+      ],
       focus: ['authz', 'fraud'],
       path: ['fraud', 'score'],
       labels: ['features', 'low risk'],
     },
     {
       title: 'The hold, once',
-      text: 'One transaction locks the account, checks the available balance and the daily limit, writes a hold of £36.40 and an outbox event. Its key is the network\'s identifiers for this purchase, so a retry can never place a second hold.',
+      text: "Every check has passed, so the authoriser asks the ledger to reserve the money. One database transaction, all or nothing, locks the account, checks the available balance and the daily limit, and writes a hold of £36.40 and an outbox event (a note for other services, step 8). Its key is the network's identifiers for this purchase, so a retry can never place a second hold.",
+      story: {
+        context: "The cryptogram, card state, controls and fraud score all say yes. Only the money is left: does account acc_7731 have £36.40 available, within today's limit?",
+        problem: "A business can have many cards on one account, and two of them can tap at the same moment against the last £10. The network can also send the same request twice. And the hold and the message telling other services about it are two writes that could come apart.",
+        consequence: "Two checks that both read the old balance would both approve, spending money that is not there. A retry treated as new would hold £36.40 twice. A hold with no event, or an event with no hold, would hide a real purchase from the owner or show one that never happened.",
+        fix: "One transaction locks the account row, so a second tap waits. It looks for the key (card token, date, trace and reference numbers) and returns the first hold if it is there. It checks balance less holds against £36.40 and today's spending against the daily limit, inserts hold_5521907 and the outbox event, and commits. It takes 20 ms of the budget, and a busy account queues on its one row.",
+      },
+      explain: [
+        { q: "What is a hold?", a: "A pending entry in the ledger that lowers the available balance without moving money. It ends when clearing posts the purchase, a reversal cancels it, or it lapses at the end of the network's window. Here it is hold_5521907 for £36.40." },
+        { q: "What is the available balance?", a: "What the owner can still spend: the posted balance less open holds. In the example it falls from £4,812.20 to £4,775.80 (illustrative figures)." },
+        { q: "What is a transaction, and what does locking the account do?", a: "A database transaction is a group of writes that all happen or none do. Locking the account's row makes any other transaction on that account wait until this one commits, so two taps against the last £10 cannot both pass." },
+        { q: "What is the key, and where does it come from?", a: "Mastercard puts a trace number (field 11, STAN 004217) and a reference number (field 37, RRN 631612004217) on each authorisation, and a retry carries the same ones. With the card token and the date they make tok_8f3a91e2|2026-11-12|004217|631612004217, stored on the hold. A second request with that key finds the first hold and writes nothing." },
+        { q: "What is the outbox event?", a: "A row in an outbox table, written in the same transaction as the hold, saying the card was authorised for £36.40. Because they commit together, the hold and the event can never disagree. Step 8 shows how it leaves the database." },
+        { q: "What if there is not enough money?", a: "The transaction is rolled back, nothing is written, and the authoriser answers code 51, not sufficient funds." },
+      ],
       focus: ['authz', 'ledger'],
       path: ['hold', 'held'],
       labels: ['hold £36.40', 'held'],
     },
     {
       title: 'Approve, well inside the limit',
-      text: 'The decision is stored with its key, then sent: 0110, code 00, with the response cryptogram for the phone. About 100 ms after it arrived. The till shows approved.',
+      text: "The authoriser stores its decision under the purchase's key before replying, so a repeat of the request gets the same answer. The gateway sends Mastercard an 0110 answer: code 00, approved, with the response cryptogram the phone uses to check it came from us. About 100 ms have passed since the request arrived, well inside Mastercard's limit. Mastercard passes it to the acquirer, and the till shows approved.",
+      story: {
+        context: "The hold of £36.40 is committed in the ledger. The authoriser has its decision: approve, for the full amount.",
+        problem: "The answer must reach Mastercard before its timer runs out, and the decision must survive the answer being lost on the way. If the till never hears back, the same request may come again.",
+        consequence: "If the decision were not stored, a repeat would be decided afresh and could get a different answer from the first. A late answer is ignored, and the network decides by stand-in.",
+        fix: "The authoriser writes the decision under the key, then returns it to the gateway. The gateway builds the 0110 with response code 00 (field 39), authorisation code K7Q2M9 (field 38) and the ARPC from the HSM, and sends it on any live connection; field 37 ties it to the request. The whole answer takes about 106 ms against a target of under a second, which leaves room for a retry.",
+      },
+      explain: [
+        { q: "Who receives the answer, and how?", a: "The gateway sends the 0110 to Mastercard, which passes it to the acquirer, which passes it to the till. It may go back on any live connection; Mastercard matches it to its request by field 37, the reference number." },
+        { q: "What do code 00 and K7Q2M9 mean?", a: "Field 39 is the response code: 00 means approved, where 05 would be do not honour and 51 not sufficient funds. Field 38, K7Q2M9, is the authorisation code. Clearing uses it the next day to find this hold." },
+        { q: "What does the phone do with the response cryptogram?", a: "The ARPC, 9F8E7D6C5B4A3928, was made with our keys in the HSM. The phone checks it to confirm the answer came from the real issuer." },
+        { q: "Where is the decision stored, and why first?", a: "The authoriser stores it under the purchase's key before returning it. If the request comes again, the stored decision is returned rather than a new one being made (step 9)." },
+        { q: "What if the answer never reaches the till?", a: "The terminal sends a reversal, an 0400, which releases the hold at once. If nothing comes at all, the hold lapses at the end of the network's window: 2 days for a card-present purchase on Mastercard, by Stripe's published windows." },
+        { q: "Where does about 100 ms come from?", a: "It is our design target, not a network rule: link 10, parse 1, vault 5, HSM 5, card 5, fraud 50, hold 20 and reply 10 ms add up to 106 ms. The page aims for 300 ms at the 99th percentile and never more than about 1 second." },
+      ],
       focus: ['authz', 'gateway', 'network', 'merchant'],
       path: ['decision', 'authreply', 'tapreply'],
       labels: ['approve', '0110 00', 'approved'],
     },
     {
       title: 'Tell the owner, off the hot path',
-      text: 'A relay publishes the outbox event to the card events log. The notification service reads it and pushes "£36.40 at the restaurant" to the owner\'s phone within seconds. The alerts, rewards and analytics consumers read the same event at their own pace.',
+      text: "The answer has gone, so nothing here can slow a purchase. A relay copies the outbox event to the card events log (Kafka), a shared record many services read. The notification service reads it and pushes \"£36.40 at Restaurant\" to the owner's phone through Apple's and Google's push services, within seconds. The alerts, rewards and analytics services read the same event at their own pace.",
+      story: {
+        context: "The till shows approved. In the ledger, next to the hold, sits an outbox row saying the card was authorised for £36.40, written in the same transaction.",
+        problem: "Many services want to know about the purchase: the push notification, the suspicious-transaction alerts service, cashback, accounting integrations and analytics. Calling each of them during the authorisation would add their delays and failures to a path that must answer in about 100 ms.",
+        consequence: "A slow rewards service could turn a purchase into a decline. And if the event were published straight after the commit, a crash between the two would lose it, so the owner would never be told.",
+        fix: "A relay reads unsent outbox rows, publishes each to the card-events topic keyed by card, and marks it sent only after Kafka acknowledges it. Each reader keeps its own place in the log and drops repeats by event id, because the relay can send a row twice. The cost is a relay to run and watch, and lag to watch on each reader.",
+      },
+      explain: [
+        { q: "What is the relay?", a: "A small process that reads new rows from the ledger's outbox table, publishes them to the log, then marks them sent. If it stops after publishing but before marking, it sends those rows again: delivery is at least once, never lost." },
+        { q: "What is the card events log?", a: "A Kafka topic called card-events: an ordered, durable record of every change to a card transaction, kept so many services can read it. Events are keyed by card token, so each card's events stay in order." },
+        { q: "Who reads it?", a: "Independent services, each at its own pace: notifications, the suspicious-transaction alerts service, rewards, accounting integrations and analytics. Each remembers how far it has read (its offset), so it can catch up, or read again after a bug." },
+        { q: "How does a reader avoid acting twice?", a: "Every event has an id, here evt_01JC9W3K2T. A reader records the ids it has handled in its own database, in the same transaction as its own work, and skips any it has seen." },
+        { q: "What does off the hot path mean?", a: "The hot path is everything between the request arriving and the answer leaving. The notification happens after the answer has gone, so if it is slow or lost, no purchase is affected." },
+        { q: "What if the push is lost?", a: "Push is best effort, with no delivery guarantee. The app reads the ledger when it opens, so a lost notification never means a wrong balance." },
+      ],
       focus: ['ledger', 'events', 'consumers', 'app'],
       path: ['outbox', 'consume', 'push'],
       labels: ['authorised', 'event', '£36.40'],
     },
     {
       title: 'The network asks again',
-      text: 'The same request arrives a second time, as Lithic warns it can: a retry after a connection dropped. Same trace and reference numbers, so the authoriser finds the stored decision and returns it. No second hold, no second notification.',
+      text: "The same 0100 arrives a second time: a retry after a connection dropped, which Lithic, an issuer processor, warns can happen. It carries the same trace and reference numbers, so the authoriser builds the same key, finds the decision it stored and returns it. No second hold, no second notification. Retries are normal; treating one as a new purchase would hold the owner's money twice.",
+      story: {
+        context: "We approved the lunch about 100 ms after the request arrived, and the till showed approved. Then a connection between Mastercard and us dropped, and the request arrives again.",
+        problem: "The network cannot tell whether we got the first copy or whether our answer was lost, so it sends the same request again. To our gateway it is a new message.",
+        consequence: "If each message were treated as a new purchase, the owner would see a second hold of £36.40, a second notification, and an available balance £36.40 too low until the extra hold lapsed.",
+        fix: "The key is built from the network's identifiers, never from anything we assign when a message arrives, so the retry makes the same key: tok_8f3a91e2|2026-11-12|004217|631612004217. The authoriser finds the stored decision and returns it, and the gateway sends the same 0110. Nothing is written, so there is no new hold and no new event. Even a copy that reached the ledger would find hold_5521907 under that key and write nothing.",
+      },
+      explain: [
+        { q: "Why would the network send the same request twice?", a: "Connections drop and answers get lost. When a sender cannot tell whether the first copy arrived, it sends it again. Lithic's documentation warns that the same request can arrive twice." },
+        { q: "How do we know it is the same purchase?", a: "Mastercard's trace number (STAN 004217) and reference number (RRN 631612004217) are the same on a retry. With the card token and the date they make the same key as before." },
+        { q: "Why not use our own id for each message?", a: "A retry is a new message with the same identity. An id we gave each message on arrival would differ, so the retry would look like a new purchase." },
+        { q: "What does idempotent mean?", a: "Doing an operation twice has the same effect as doing it once. The stored decision and the hold are both keyed, so repeating them changes nothing." },
+        { q: "What if the retry lands in the other data centre?", a: "Either site can serve any request, and the key depends only on the network's identifiers, so it is the same in both. The stored keys catch the repeat there too." },
+      ],
       focus: ['network', 'gateway', 'authz'],
       path: ['auth', 'decide', 'decision', 'authreply'],
       labels: ['0100 again', 'same key', 'stored', 'same 0110'],
     },
     {
       title: 'Next day: the clearing file',
-      text: 'The acquirer has presented the purchase, and the network\'s clearing file carries it with the final amount: £36.55, at a rate of 0.8702 on the day it cleared. The authorisation was a promise; this is the bill, and it may differ.',
+      text: "Next day. The restaurant's bank has sent the purchase for payment, and Mastercard's clearing file, a batch of final purchase records it delivers several times a day, carries it with the final amount: £36.55, at a rate of 0.8702 on the day it cleared. The authorisation was a promise; this is the bill, and it may differ from the £36.40 held. Clearing, not authorisation, is what moves money.",
+      story: {
+        context: "Yesterday's hold of £36.40 is still open on account acc_7731. The restaurant's bank has now presented the purchase, and Mastercard delivers file clr-2026-11-13-02 with 241,806 records, one of them our lunch.",
+        problem: "The final amount can differ from the hold: a tip, or, as here, a different exchange rate on the day it cleared. Some records have no authorisation at all, such as offline taps and forced posts, and refunds arrive here too. Files come in batches of 200,000 to 300,000 records, and one could arrive twice.",
+        consequence: "Posting the held amount instead of the bill would leave this account 15p wrong, and errors like it across about 1.2 million purchases a day. Processing a file twice would charge every purchase in it twice.",
+        fix: "Clearing takes four to six of Mastercard's six daily files and treats each as one job: check its record counts, then handle each record on its own. Every record is keyed by file id and record number, so a rerun posts nothing twice. The cost is that posting lags the purchase, by a day in this tour.",
+      },
+      explain: [
+        { q: "What is clearing?", a: "The batch step, often a day later, where the acquirer presents the final amount and the issuer posts it. Authorisation placed a hold; clearing makes the purchase final." },
+        { q: "What does presenting the purchase mean?", a: "The acquirer sending the purchase for payment, with its final amount, through the network. It is also called presentment." },
+        { q: "Why is the amount £36.55 and not £36.40?", a: "The bill in euros did not change: €42.00. The rate on the day it cleared, 0.8702, differed from the example rate at authorisation, 0.8667, so the amount in pounds rose by 15p." },
+        { q: "What is in a clearing file?", a: "A header with the file id, settlement date and record count, then one record per purchase or refund: authorisation code, card, merchant, amount, the amount in pounds and the fees. The examples show generic fields, not Mastercard's layout." },
+        { q: "How often do the files come?", a: "Mastercard runs clearing six times a day; issuers may take all six, but four or five are usually enough, by Paymentology's guide. At about 1.2 million records a day, that is 200,000 to 300,000 records a file." },
+      ],
       focus: ['network', 'clearing'],
       path: ['files'],
       labels: ['£36.55'],
     },
     {
       title: 'Match, post, release',
-      text: 'No field links the record to its authorisation, so clearing matches on the authorisation code, card, merchant and amount. One transaction posts £36.55 and releases the £36.40 hold. A record with no hold, such as an offline tap, is posted all the same.',
+      text: "Clearing must find yesterday's hold, but no single field links the record to its authorisation. So it matches on the authorisation code (K7Q2M9), card, merchant and original amount. One transaction then posts £36.55 to the account and releases the £36.40 hold, so the money is never counted twice. A record with no hold, such as a tap the chip approved offline, is posted all the same.",
+      story: {
+        context: "Clearing has record 118,442 of file clr-2026-11-13-02: authorisation code K7Q2M9, the card, Restaurant in Dublin, €42.00, £36.55. In the ledger, hold_5521907 for £36.40 is still open.",
+        problem: "No single field ties the record to its hold, so it must be matched on several. Posting the bill and releasing the hold are two changes to the same account. And the issuer must honour a record even when there is no hold to match.",
+        consequence: "If the post and the release were separate writes, a crash between them would leave the money both held and posted: £72.95 gone for one lunch. A record left unposted because it had no hold would leave the ledger short of what the network will collect.",
+        fix: "Clearing looks up the open hold by authorisation code, card token, merchant and €42.00. One transaction then locks the account, inserts the posting keyed by file and record number, marks the hold released, takes 3,655 pence off the balance and 3,640 off the held total, and writes a 'cleared' outbox event. Records with no hold are posted anyway and sent to people for review.",
+      },
+      explain: [
+        { q: "What is posting?", a: "Writing the final entry to the ledger: here a debit of £36.55 from acc_7731, credited to the Mastercard settlement account. Posted entries are final; statements and interest are worked out from them, never from holds." },
+        { q: "What does releasing the hold do?", a: "It marks hold_5521907 released and takes its £36.40 off the account's held total. The available balance now reflects the posting alone." },
+        { q: "Why match on the euro amount?", a: "The amount in pounds changed between authorisation and clearing, from £36.40 to £36.55, so it cannot be used to match. The original €42.00 did not move." },
+        { q: "What if no hold matches?", a: "The purchase may have been approved offline by the chip, or be a forced post. It is posted anyway, even into a negative balance, and sent for review. The remedy for a wrong one is a dispute through the network." },
+        { q: "How often does matching fail?", a: "Marqeta says it matches about 99 per cent of records, against an industry norm of about 88 per cent; both are Marqeta's own claims. Unmatched records go to a queue for people." },
+        { q: "What stops a file being posted twice?", a: "Each posting is unique on its file id and record number. A rerun tries to insert the same pair, inserts nothing, and rolls back." },
+      ],
       focus: ['clearing', 'ledger'],
       path: ['post'],
       labels: ['post, release'],
     },
     {
       title: 'Settle, then reconcile',
-      text: 'The network nets every bank\'s position and debits ours once that working day. Reconciliation then compares three records: our postings, the clearing file totals and the settlement account. Every difference is a break with an owner.',
+      text: "Money between banks moves once a day, not per purchase. Mastercard nets every bank's position (adds up what each owes and is owed) and takes ours from our settlement account once that working day. Reconciliation then compares three records that should agree: our ledger postings, the clearing file totals and the settlement account's statement. Every difference is a break that someone owns and must explain.",
+      story: {
+        context: "The lunch is posted at £36.55 for settlement on Friday 13 November 2026. It is one of about 1.2 million postings that day.",
+        problem: "Our ledger, Mastercard's files and the money that really left our settlement account are three records kept by different systems. Each can be right by its own lights and still disagree with the others. And the account must hold enough by the cut-off on every settlement day.",
+        consequence: "A bug that posts slightly wrong amounts, a file processed short, or a settlement error would go unseen and build up day after day. Being short of funds on a settlement day breaks scheme rules.",
+        fix: "Mastercard debits one net amount, £29,838,929.74 in the illustrative advisement: what our cards spent, less refunds, less the interchange owed to us. Each day reconciliation totals our postings, the files and the bank statement by currency and date. In the example the statement shows £5.00 more than the other two: a break, with an owner and evidence. The cost is breaks that need people to explain them.",
+      },
+      explain: [
+        { q: "What is settlement?", a: "The movement of money between banks: net, once a working day per currency, worked out by the network from clearing. It runs Monday to Friday, and Saturday's clearing is netted into Monday, by Paymentology's guide." },
+        { q: "What does netting mean?", a: "Instead of moving money for every purchase, Mastercard adds up everything our cards spent, less refunds, less the interchange owed to us, and moves one amount. In the example that is £29,838,929.74 from our account." },
+        { q: "What is the settlement account?", a: "Our account in pounds at a settlement bank, which Mastercard debits with the net amount. It must hold enough by the cut-off on each settlement day, so we forecast the amount from open holds and cleared totals." },
+        { q: "What is interchange?", a: "A fee the acquirer pays the issuer on each purchase, set by the network. UK caps on it apply to consumer cards, not to commercial cards like these, which matters to a business-card issuer's income." },
+        { q: "What is a break, and who deals with it?", a: "A difference between the three records. Each one gets an owner, who traces it to the clearing record and the posting, fixes the cause and records the evidence. Monzo alerts an engineer for each break: one bank's practice, not a rule." },
+        { q: "Why three records, not two?", a: "Comparing only our ledger with the files misses the case where the money that actually moved is not what the files said. The bank statement is the only record of that." },
+      ],
       focus: ['bank', 'recon', 'clearing', 'ledger'],
       path: ['settle', 'statement'],
       labels: ['net debit', 'statement'],
     },
     {
       title: 'When we are too slow',
-      text: 'A database failover stalls the ledger. The network\'s timer runs out, and stand-in answers on our parameters: approved up to a per-card limit, gambling refused. When we recover it sends an 0120 advice, which we post as a hold. We never decide again; we apply what was decided.',
+      text: "Later, another purchase on the same card. The ledger's database is switching to its copy in the other data centre (a failover), so no hold can be placed. Mastercard's timer runs out and it answers for us (stand-in) on limits we set in advance: approved up to a per-card limit, gambling refused. When we recover it sends an 0120 advice, which we post as a hold. We never decide again; we apply what was decided.",
+      story: {
+        context: "A later purchase on the same card, £12.50 in the example advice, arrives while the ledger's primary database is failing over to its replica in the other data centre.",
+        problem: "The authoriser cannot place a hold, and it must not approve without one. Meanwhile Mastercard's timer is running, and it will not wait for the failover to finish.",
+        consequence: "Approving without a hold would break the balance: the same money could be spent twice. Declining every purchase during every failover would turn good customers away at the till.",
+        fix: "Mastercard's stand-in decides on parameters we set in advance: limits per card and per day, and categories to refuse such as gambling. When we are back it sends an 0120 advice with STAN 004391 and RRN 631613004391, and we post it as a hold, keyed the same way as any authorisation, exactly once. The cost: the parameters are product decisions to make and review before an outage, and stand-in approves less (Visa Research: 67 per cent against 93 when issuers answer).",
+      },
+      explain: [
+        { q: "What is a failover?", a: "The ledger's main database (the primary) copies every commit to a replica in the other data centre. When the primary fails, the replica takes over. For the seconds that takes, no holds can be placed." },
+        { q: "What is stand-in processing?", a: "The network deciding for the issuer when the issuer is down or too slow, using limits and rules the issuer set in advance. It tells the issuer afterwards with advice messages." },
+        { q: "Who sets the stand-in parameters, and when?", a: "We do, as the issuer, before any outage: limits per card and per day, and kinds of merchant to refuse. They are product decisions, made and reviewed in advance, not chosen in the moment." },
+        { q: "What is an 0120 advice?", a: "A message telling us what has already been decided, here a stand-in approval of £12.50. We apply it once; we do not decide again, even if our own checks would now say no." },
+        { q: "Why is it posted as a hold?", a: "Stand-in only authorised the purchase, like our own approvals. The final amount still comes through clearing, so the advice places a hold, keyed by the network's identifiers so it is applied only once." },
+        { q: "What if our own approval reaches Mastercard after its timer?", a: "Mastercard has already answered by stand-in and ignores ours. Its advice, not our record, is the truth: if it declined, we release our hold; if it approved, we keep it." },
+      ],
       focus: ['network', 'gateway', 'merchant'],
       path: ['auth', 'tapreply', 'auth'],
       labels: ['no answer', 'approved', '0120 advice'],
