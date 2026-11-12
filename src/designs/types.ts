@@ -58,6 +58,10 @@ export interface Reply {
   label: string;
   how: string;
   delivery: string;
+  /** How the reply travels, when it differs from the line's own method: a read back over a line drawn as a write. */
+  via?: string;
+  /** Its kind, when it differs from the line's own (a read is a call). */
+  mode?: Mode;
 }
 
 export interface Flow {
@@ -85,7 +89,7 @@ export interface Flow {
   chip?: number;
   /**
    * The height the chip's centre sits at, in diagram units: the point on the path at this height nearest `chip`.
-   * Lets a row of chips on different lines share one baseline exactly.
+   * Lets the chips on neighbouring lines be staggered to exact heights.
    */
   chipY?: number;
   /** Off the hot path: used for recovery or reprocessing, not on every fetch. Hidden until asked for. */
