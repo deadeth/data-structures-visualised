@@ -3,167 +3,235 @@ import type { Extras } from './types';
 /**
  * Interview extras for the ledger service.
  *
- * The question: "Design a ledger service that must ensure strict consistency
- * for account balances while supporting high-frequency transaction writes."
+ * The question: "Design a central multi-currency ledger for a business bank: bank payments,
+ * payroll, debit and credit card authorisations and settlements, and accounts in several
+ * currencies. Balances must be strictly consistent under high-frequency writes."
  *
- * The design: append-only ledger_entries; accounts as a balance cache kept by an AFTER INSERT
- * trigger, guarded against direct edits, with a CHECK that refuses customer overdrafts; rows
- * locked in id order FOR NO KEY UPDATE, then a conditional insert. Numbers agree with
- * src/designs/ledger.ts: 1,000 payments a second on average, 10,000 at peak; two ledger
- * transactions and five entries per payment; 16 Postgres shards by business, 2.7 TB hot each,
- * 110 GB a day, house accounts split 16 ways, keys kept 72 hours. Canonical example: Bright Bakery pays £1,200.00 with a 20p fee, sub-account 07.
- * Cost figures for machines are labelled as assumptions.
+ * The design (owner's third spec, unified debit/credit): append-only ledger_entries holding settled movements only,
+ * summing to zero per currency; pending_holds for money promised but not moved (ACTIVE, then
+ * CAPTURED, VOIDED or EXPIRED, once); accounts with posted_balance and held_balance as caches
+ * kept by triggers and guarded; credit_limit, with available = posted - held + credit_limit and
+ * the CHECK valid_available_funds refusing a customer account below minus its limit, so one
+ * schema serves debit wallets, overdrafts and credit cards. Statements, grace periods, the
+ * waterfall and nightly interest belong to a separate billing service. One currency per account. Locks in id order FOR NO KEY UPDATE, lock_timeout 50 ms,
+ * statement_timeout 250 ms. Hot system accounts split 16 ways by rail and currency, swept at end
+ * of day. Outbox and queues, no 2PC. Phases: one Postgres cluster, more clusters by business,
+ * then TigerBeetle for the hot path.
+ *
+ * Figures, derived from 1,000 payments a second on average and 10,000 at peak, with a bank
+ * payment as one hold insert, one hold update and one ledger transaction of three entries:
+ * 86.4 million payments a day; about 260 million entries and 86 million holds a day; two write
+ * transactions per payment ("TPS" means write transactions a second), 2,000 a second on average,
+ * 20,000 at peak; one cluster covers the average, four at peak (against the owner's estimate of
+ * 5,000 to 8,000 a second per primary); 2,500 / 16 = about 156 writes a second per split system
+ * row; five trigger UPDATEs per payment; about 80 GB a day (65 GB entries at 250 bytes, 13 GB
+ * holds at 150 bytes); 26 TB of entries (13 months) plus 1.2 TB of holds (3 months) hot, about
+ * 7 TB a cluster; 3 events per payment, 3 MB a second on average, 30 at peak. Agrees with
+ * src/designs/ledger.ts.
+ * Machine costs are labelled as assumptions. Canonical examples A, B, C and D from the brief and
+ * addendum: Bright Bakery, GBP wallet ...081442, posted 842000; credit card ...081444, limit 500000.
  */
 export const extras: Extras = {
   opening: [
-    "So the job is a ledger: how much money each customer has, and proof that every penny came from somewhere and went somewhere. Strict consistency means three things to me. No customer balance goes below zero, however many payments race. No write creates or loses money. And a read after a payment sees it.",
-    "My assumptions, which I'd check with you: customer balances at a UK business bank, so safeguarding and daily reconciliation apply. About a million businesses, 1,000 payments a second on average, 10,000 at peak around payroll and month end. Each payment is two ledger transactions, so 20,000 a second at peak. Faster Payments first, pounds only. And there is a ledger today, so this replaces one.",
-    "The design in one line: the journal is the truth, and the balance is a cache the database keeps for me. ledger_entries is append-only: a trigger refuses every UPDATE and DELETE. Amounts are signed pence, and each transaction's entries sum to zero. accounts holds one balance per account. An AFTER INSERT trigger on the entries adds each amount to its balance in the same transaction, so both commit or neither does. A guard trigger refuses any direct edit to a balance.",
-    "Overdrafts are refused twice. The Ledger API sends each transaction as one call to a function, ledger_transfer. It locks the accounts it touches in id order, FOR NO KEY UPDATE, then inserts the entries in one statement only if the balance covers the amount. Zero rows inserted means insufficient funds. Behind that, a CHECK on accounts refuses a customer balance below zero, whatever code wrote it. Locks last 1 to 2 ms and are never held across a network call.",
-    "Scale has three levers. Shard by business, 16 shards, so a payment stays on one shard. Partition each shard's journal by date and archive old months; that never slows a balance check, because the check reads accounts, not the journal. And split hot house accounts, such as fee income, 16 ways, because one row takes only 500 to 1,000 writes a second.",
-    "The payment scheme sits outside every transaction. A payment is two balanced transactions. Reserve moves the money from the wallet to a pending clearing account. Settle moves it on to settlement and fee income, or a reversal sends it back. The outbox row commits with the reserve, so the event goes out exactly when the money moved. No two-phase commit.",
-    "I'll do the data model, the numbers, one payment end to end, then concurrency, hot accounts and failure, and finish with how I'd deliver it.",
+    "This is the central ledger for a business bank. It serves bank payments, payroll, debit and credit card authorisations and settlements, and accounts in several currencies. Its job: say what each customer has, prove where every penny came from, and never let anyone spend beyond their limit.",
+    "My assumptions, to check with you: about a million businesses, 1,000 payments a second on average, 10,000 at peak around payroll and month end. Amounts are whole pence and cents, in BIGINT.",
+    "The journal is the truth. ledger_entries holds settled movements only. It is append-only: a trigger refuses every UPDATE and DELETE. Each transaction sums to zero in each currency.",
+    "Money promised but not yet moved, like a card authorisation, is a hold. Holds live in their own table, pending_holds. A hold starts ACTIVE and ends once: CAPTURED, VOIDED or EXPIRED.",
+    "accounts keeps two caches. posted_balance moves only through a trigger on the journal, held_balance only through a trigger on the holds. A guard trigger refuses any direct edit. Available is posted minus held plus credit_limit, and a CHECK refuses going below minus the limit, whatever code wrote it. So one schema serves debit, overdraft and credit: a limit of zero is a debit wallet.",
+    "One currency per account. The bakery has a GBP row and a USD row. A dollar card payment is two zero-sum groups, one per currency, joined through FX pool accounts.",
+    "Writes lock the accounts they touch in id order, FOR NO KEY UPDATE, with a 50 ms lock timeout and a 250 ms statement timeout. Hot system accounts, like FPS clearing in pounds, are split 16 ways by rail and currency, and swept at end of day.",
+    "The payment scheme is never inside a database transaction. An outbox row commits with the money, queues absorb spikes, and there is no two-phase commit.",
+    "It grows in three phases: one tuned Postgres cluster; more clusters split by business; then the hot debit and credit path moves to TigerBeetle, with Postgres kept for metadata, KYC, billing statements and reporting. I'll do the data model, one payment end to end, then concurrency, failure and delivery.",
   ],
 
   pushes: [
     {
-      q: "Two payments from the same wallet arrive in the same millisecond, and together they exceed the balance. Prove only one succeeds.",
+      q: "Two payments from the same account arrive in the same millisecond, and together they exceed what is available. Prove only one succeeds.",
       a: [
-        "Each one locks its rows first: SELECT ... ORDER BY account_id FOR NO KEY UPDATE. The second waits on the wallet row until the first commits.",
-        "Then it runs the CTE: insert the entries only if balance >= amount. The balance it now reads includes the first payment. If it no longer covers the amount, zero rows go in. I roll back and answer insufficient funds.",
-        "Locking in id order means two opposite transfers take locks in the same order, so they cannot deadlock.",
-        "I'd prove it with a test, not an argument: thousands of concurrent debits at one wallet, then assert no balance below zero and every transaction summing to zero.",
+        "Each locks the account first, in id order, FOR NO KEY UPDATE. The second waits until the first commits.",
+        "Then it inserts its hold only if posted minus held minus the amount stays at or above minus the credit limit. It now sees the first hold, so it inserts nothing, and I answer insufficient funds.",
+        "I'd prove it with a test: thousands of concurrent holds on one account, then assert none below its floor.",
       ],
     },
     {
       q: "Why lock at all, if the CHECK refuses an overdraft?",
       a: [
-        "The CHECK is the backstop, not the path. Without the lock, the losing payment would fail with a constraint error, 23514, half way through. I want a clean 'insufficient funds', decided before anything is written.",
-        "The lock also fixes the order. The trigger updates balances in whatever order the entries go in. Two transfers between the same accounts could take those row locks in opposite orders and deadlock. Locking in id order first removes that.",
-        "And it makes the funds check read a balance nobody else can change before I commit.",
+        "The CHECK is the backstop, not the path. Without the lock, the loser fails with error 23514 part way through. I want a clean refusal, decided before anything is written.",
+        "The lock also fixes the order. The triggers update account rows in whatever order rows go in, so two transactions could lock in opposite orders and deadlock. Id order first removes that.",
       ],
     },
     {
       q: "Why FOR NO KEY UPDATE and not FOR UPDATE?",
       a: [
-        "FOR UPDATE is stronger than I need. Nothing here changes a key, and the balance update itself takes FOR NO KEY UPDATE. So I lock what I'm about to do, no more.",
-        "The difference: inserting a row that references an account checks the foreign key with a FOR KEY SHARE lock. FOR UPDATE blocks that; FOR NO KEY UPDATE does not. Two balance writers still exclude each other.",
-        "In this design the gain is small, because another writer to the same account waits on its balance update anyway. It matters for tables that only reference accounts, and it is the right habit.",
+        "It is the weakest lock that still stops two balance writers. FOR UPDATE would also block inserts that only reference the account, because a foreign key check takes FOR KEY SHARE.",
+        "Honestly, the gain here is small. Another hold or entry for the same account still waits, on the trigger's own update of that row. It is the right habit: lock no more than you need.",
       ],
     },
     {
-      q: "Why a trigger and not application code?",
+      q: "lock_timeout 50 ms and statement_timeout 250 ms. What does the caller see?",
       a: [
-        "Because nobody can forget it. Every code path that inserts an entry moves the balance, in the same transaction: the API, a correction script, a migration, a backfill.",
-        "Together with the guard and the CHECK, the database refuses a wrong balance whatever wrote it. Application code can only promise that.",
-        "The alternative is to update the balance inside ledger_transfer itself. It works, but only if every writer goes through that function. A trigger puts the rule on the table.",
-        "Grants do the rest: the ledger's role can insert entries, nobody can update or delete them, and no other service has credentials.",
+        "Each write transaction starts with SET LOCAL for both, so they end with the transaction and are safe behind PgBouncer in transaction mode.",
+        "A normal lock is held 1 to 2 ms. Waiting 50 ms means a queue on a hot row, and I'd rather fail than pile up connections. The transaction rolls back, and the caller retries with the same idempotency key.",
+        "A card authorisation cannot queue: the network wants an answer in about 2 seconds. So it retries briefly, then declines or falls to stand-in rules. Payroll and payouts wait in Kafka or SQS and retry with backoff.",
       ],
     },
     {
-      q: "Triggers are hidden logic and slow. Defend it.",
+      q: "One table for debit wallets, overdrafts and credit cards. How?",
       a: [
-        "Hidden: fair. So it is not hidden from us. The triggers live in the repository with the schema, are reviewed like code, and have tests for each refusal: edit a balance, update an entry, overdraw. A superuser can skip triggers, so that role stays out of reach.",
-        "Slow: it costs one extra UPDATE per entry, inside a transaction that already holds that row's lock. The update was always needed; the trigger only moves where it runs. The commit to the standby, 1 to 2 ms, dominates.",
-        "Where it really costs is bulk loads, which fire it row by row. For those I'd use a statement-level trigger with a transition table, or load into a staging table and post summary transactions.",
-        "The balanced-transaction check at commit is optional. It runs one small query per inserted row. I keep it because the CTE should already guarantee it, and a backstop is cheap.",
+        "One column, credit_limit. The floor is minus the limit: zero for a debit wallet, minus the arranged amount for an overdraft, minus the card limit for a credit card. Available is always posted minus held plus credit_limit.",
+        "Signs never change. Spending is a debit. The bakery's credit card has a £5,000 limit; a £649.00 purchase is a hold of 64,900, leaving 435,100 available. The capture posts card -64,900, MASTERCARD_CREDIT_CLEARING_GBP shard 7 +64,900.",
+        "The alternative is a separate credit ledger. It duplicates every trigger, lock and check for no gain in safety.",
       ],
     },
     {
-      q: "Why keep a balance at all, if the journal is the truth?",
+      q: "How does a repayment restore credit?",
       a: [
-        "Because the funds check must be fast and must lock something. Summing a wallet's entries on every payment grows with history. Reading one row does not.",
-        "A row is also something to lock. You cannot lock 'the sum of entries' without locking every entry for the account.",
-        "And it is what lets the journal be partitioned and archived. Old months leave the database, and no balance check ever notices.",
+        "It is a plain two-leg transfer: the bakery's GBP wallet -30,000, the card +30,000. Or from FASTER_PAYMENTS_IN_GBP when it pays from another bank.",
+        "Posted on the card goes from -64,932 to -34,932, so available credit is 465,068 the moment it commits. An overpayment leaves the card positive, which is fine.",
+        "Which part of the debt it paid off is not the ledger's question.",
       ],
     },
     {
-      q: "How do you know the cache equals the journal?",
+      q: "Where do statements, grace periods and the fees, interest, principal waterfall live? Why not in the ledger?",
       a: [
-        "A reconciliation query, every few minutes: join accounts to the sum of their entries, grouped by account, and return any row where balance differs. It should return nothing.",
-        "Before a month is archived, each account's total for it goes into account_period_totals. The check is those totals plus the hot entries, not a re-sum of everything.",
-        "Alongside it: every transaction sums to zero, all balances together sum to zero, and every FPS_PENDING part returns to zero within an age limit.",
-        "A difference means a bug, most likely a trigger disabled or bypassed. It pages. Freeze the account, find the cause, then rebuild in a reviewed break-glass change: in one transaction, disable the guard, recompute from account_period_totals and the entries, re-enable it, and record who ran it.",
-        "Outside, every business day: settlement and safeguarding accounts against the bank statement and the scheme's settlement report.",
+        "In a separate billing service. Inside one card balance the ledger cannot tell principal from interest; they are all just entries. Billing keeps the per-statement breakdown and reconciles its totals to the card's posted balance.",
+        "Billing posts what it decides. Nightly interest is a pair: card -32, INTEREST_INCOME_GBP shard 7 +32, under the key interest:<account>:<date>, so a rerun posts nothing twice.",
+        "The alternative is sub-accounts per card for principal, interest and fees. The ledger could then answer it, but at three times the rows and the locks.",
       ],
     },
     {
-      q: "You said partition by date. What happens to your unique constraint?",
+      q: "What happens when a credit limit is cut below what is already used?",
       a: [
-        "It has to change, and it gets weaker. Postgres won't partition by created_at unless every unique key includes created_at.",
-        "So the keys become (entry_id, created_at) and (transaction_id, account_id, created_at). A replay carrying a different created_at is no longer caught by that constraint.",
-        "The guard that holds across partitions is idempotency_keys: one row per key, inserted first in the same transaction, ON CONFLICT DO NOTHING. A replay finds k7 already there and returns the saved result.",
-        "The unique constraint becomes a second guard within one partition. That is a real trade, and I'd rather say it than hide it.",
+        "The balance guard does not cover credit_limit; column grants do. Only the credit service's role may update credit_limit, allow_negative and is_active. The CHECK still runs on that update, so a cut below what is used is refused.",
+        "So it needs a decision: lower it to the amount used, or leave it and block new holds through is_active or a card control outside the ledger. Either way the customer's debt never changes by an edit.",
       ],
     },
     {
-      q: "Where is 'pending', if entries are never updated?",
+      q: "Why do holds get their own table? Why not entries?",
       a: [
-        "Not on an entry. Pending is where the money is. Bright Bakery's reserve debits the wallet £1,200.20 and credits FPS_PENDING_07.",
-        "So the wallet's balance drops at once, from £8,420.00 to £7,219.80. Balance is the available balance; there is no second figure.",
-        "Settle debits pending £1,200.20 and credits settlement £1,200.00 and fee income 20p. If the scheme rejects, a reversal, transaction ...900419, debits pending and credits the wallet.",
-        "The state, PENDING, SETTLED or FAILED, lives on the payment record in the payments service, which owns the workflow. A pending account that stays above zero is the signal that something is stuck. Nothing in the ledger stops both a settle and a reverse for one reserve, because their keys differ, k7:settle and k7:reverse; the payment's state machine allows only one, and a shared clearing key would let the ledger enforce it too.",
-        "On a timeout: unknown is not failed. The money stays in pending, we ask the scheme, then settle or reverse. Reversing on a timeout could pay the supplier and refund the bakery.",
+        "Because a hold changes and the journal must not. A hold starts ACTIVE and ends once, which is an update, and entries are never updated.",
+        "As entries, every voided or expired authorisation would leave two entries in the permanent books for money that never moved. The cost is two places to reconcile, and the check covers both.",
       ],
     },
     {
-      q: "Why not two-phase commit with the scheme?",
+      q: "Why posted and held? Why not one balance, or no cache at all?",
       a: [
-        "Faster Payments is not a participant in my database transaction, and I'd never want it to be. Locks would be held across a network call, seconds instead of 1 to 2 ms.",
-        "If the coordinator dies between prepare and commit, customer balances stay locked until someone resolves it, on the money path.",
-        "Instead: reserve commits with an outbox row; the payments service reads the event and calls the scheme; the answer comes back as a settle or reverse transaction, each idempotent on its own key, such as k7:settle.",
-        "The same idea covers a payment between two of our customers on different shards: a local debit into clearing on one, a local credit out of clearing on the other. Anything stuck shows as clearing not at zero.",
+        "They answer different questions. Posted is money that has moved: statements, interest and safeguarding use it. Available is what the customer can spend.",
+        "One balance means a hold must move money, through a pending clearing account. That was my earlier design. It mixes promises with facts, and a void adds entries.",
+        "A cache at all, because the funds check must read and lock one row, not sum years of entries. That also lets old months of the journal be archived.",
       ],
     },
     {
-      q: "A system account goes negative. Is that a bug?",
+      q: "Walk me through a debit card payment in dollars, from authorisation to settlement.",
       a: [
-        "It depends on the account, and the schema says which. Every transaction sums to zero, so all balances together sum to zero. Customers hold money, so something must be negative.",
-        "Settlement and funding accounts are allowed to go negative: they mirror our position with the scheme and the bank. That is bookkeeping, not a bug.",
-        "Wallets, pending clearing and fee income have allow_negative false. The CHECK refuses them below zero, so that bug cannot commit.",
+        "The bakery buys USD 100.00. At authorisation I lock its GBP wallet, quote 0.80, so 8,000 pence, plus a 3 per cent FX buffer: a hold of 8,240, if available covers it. Nothing goes in the journal.",
+        "It settles at 0.79. One statement captures the hold and posts five entries. Pounds: wallet -7,979, FX_POOL_GBP +7,900, FX_FEE_REVENUE_GBP +79. Dollars: FX_POOL_USD -10,000, MASTERCARD_DEBIT_CLEARING_USD +10,000.",
+        "Each currency sums to zero. The 8,240 is released, so the 261 difference is free again. The rate lives on the payment record, not the entries. Rates are illustrative.",
+      ],
+    },
+    {
+      q: "What if the settlement differs from the hold: smaller, larger, no hold, after expiry? Or past the funds or the credit limit?",
+      a: [
+        "Smaller: the capture releases the whole hold and posts the real amount. Larger, no hold, or after expiry: the network settles with us regardless, so we post it. An expired hold has left ACTIVE, so it posts as if there were no hold.",
+        "If the account can take it, it is an ordinary posting. If not, the account pays down to its floor, zero or minus the limit, and the rest is debited to CUSTOMER_RECEIVABLE_GBP, which collections chase. One balanced transaction; the CHECK never gives way.",
+        "That is my choice. The alternative is a second, larger over-limit column. Simpler postings, but every account then has two limits to manage.",
+      ],
+    },
+    {
+      q: "How do you know one hold can never be both captured and voided?",
+      a: [
+        "The hold's trigger allows one change: ACTIVE to CAPTURED, VOIDED or EXPIRED, and nothing after. It also refuses deletes and changes of amount, account or currency.",
+        "Capture is one statement: update the hold where status is ACTIVE, and insert the entries only from the row that update returned. Both happen or neither.",
+        "If a capture and a void race, the second waits on the hold's row lock, then finds it no longer ACTIVE. It updates nothing and posts nothing.",
+      ],
+    },
+    {
+      q: "Why zero sum per currency, and what happens to the FX pools over a day?",
+      a: [
+        "A pound and a dollar are different units, so a transaction that sums to zero overall can still hide an error. Each currency balances alone, enforced at commit, and reconciles against our bank accounts in that currency.",
+        "Over a day the GBP pool fills with pounds and the USD pool goes short of dollars. Treasury buys dollars with a real FX trade, booked as its own balanced transaction per currency. The gap between the rates is our FX profit or loss.",
+      ],
+    },
+    {
+      q: "Why triggers and not application code? Triggers are hidden and slow.",
+      a: [
+        "Because nobody can forget them. Every path that writes an entry or a hold moves the balance in the same transaction: the API, a script, a backfill. With the guard and the CHECK, the database refuses a wrong balance whatever wrote it.",
+        "Hidden: they live in the repository, are reviewed like code, and each refusal has a test. Slow: one UPDATE per row, on a row I have already locked, an update that was always needed. Bulk loads post summary transactions.",
+      ],
+    },
+    {
+      q: "How do you prove the caches equal the journal and the holds?",
+      a: [
+        "A check query, every few minutes. Every posted_balance equals the sum of its entries, every held_balance the sum of its ACTIVE holds, and posted balances sum to zero per currency.",
+        "Archived months are summed into account_period_totals first, so the check is those totals plus the hot entries.",
+        "A difference pages: freeze the account, find the cause, rebuild in a reviewed break-glass change. Every business day, clearing and safeguarding accounts are matched to bank statements and scheme reports.",
+      ],
+    },
+    {
+      q: "Every bank payment credits FPS clearing and fee revenue. At peak, what happens to those rows?",
+      a: [
+        "One row holds its lock 1 to 2 ms per transaction, so it takes roughly 500 to 1,000 writes a second. Without a split, every payment on a cluster queues on it.",
+        "So each hot system account is 16 rows, shard_id 0 to 15, picked by hash of the transaction id. At peak a cluster takes about 2,500 payments a second; divided by 16, about 156 writes a second on each row.",
+        "At end of day a batch job sweeps the 16 rows into a master account, in id order, as one balanced transaction. Customer wallets and cards are never split.",
+      ],
+    },
+    {
+      q: "System accounts may go negative. What protects them, then?",
+      a: [
+        "Customers hold money and every currency sums to zero, so something must be negative. And one of 16 rows can be negative while the account as a whole is not.",
+        "So the CHECK protects customer accounts only. System accounts are protected by the fixed shape of each transaction, the zero sum per currency, limits and alerts on each logical account's total, and daily reconciliation against the scheme. That is reconciliation's job, and I'd say so.",
+      ],
+    },
+    {
+      q: "You partition the journal by date. What happens to your unique constraint?",
+      a: [
+        "It gets weaker. Postgres won't partition by created_at unless every unique key includes it. So the key becomes (transaction_id, account_id, created_at), and a replay with a different created_at is no longer caught.",
+        "idempotency_keys is the guard across partitions: one row per key, kept 72 hours, inserted first in the same transaction. The unique key stays as a second guard within a partition.",
+        "Holds are partitioned by month too, about 3 months hot, and a month is dropped only when none of its holds is ACTIVE. Their key becomes (hold_id, created_at), so idempotency_keys guards holds as well.",
       ],
     },
     {
       q: "How do you correct a wrong entry?",
       a: [
-        "With a new transaction, never an edit. The trigger refuses UPDATE and DELETE on entries anyway.",
-        "Post a reversing transaction: the same accounts, opposite amounts, referencing the original. Then post the right one. The balances follow through the trigger.",
-        "It needs a second person to approve, and the history shows the mistake, the reversal and the fix. That is what auditors want to see.",
+        "With a new transaction, never an edit. Post a reversing transaction, same accounts, opposite amounts, referencing the original, then the right one. A wrong hold is voided and placed again.",
+        "Corrections need a second approver. The history shows mistake, reversal and fix, which is what auditors want.",
       ],
     },
     {
       q: "What does fillfactor 80 buy you?",
       a: [
-        "Postgres writes a new row version on every update. Fillfactor 80 leaves a fifth of each page free, so the new version of a balance row usually fits on the same page.",
-        "Then it can be a HOT update: balance is not indexed, so no index needs a new entry. Fewer writes per payment, less bloat, less work for vacuum.",
-        "The cost is about a quarter more pages for accounts. For a million rows that is nothing.",
+        "A bank payment updates the wallet row three times: hold placed, hold ended, entry posted. Each update writes a new row version.",
+        "Fillfactor 80 leaves a fifth of each page free, so the new version usually fits on the same page. The balance columns are not indexed, so it can be a HOT update with no new index entries. The cost is about a quarter more pages for accounts: nothing.",
       ],
     },
     {
-      q: "Every payment credits our fee account. At peak, what happens to that row?",
+      q: "Payroll for 5,000 employees, all at once.",
       a: [
-        "It becomes a queue. One row takes about 500 to 1,000 writes a second, and a shard peaks at about 1,000 payments a second. One fee row per shard would sit at its limit.",
-        "So each shard's house accounts are split 16 ways: FPS_PENDING, FPS_SETTLEMENT and FEE_INCOME, 01 to 16, picked by hashing the transaction id. About 60 writes a second on each fee or settlement part, and 125 on each pending part, which the reserve and the settle both write.",
-        "Fee income is never checked for overdraft, but the trigger's update still locks it, which is why it is split too.",
-        "Every minute a sweeper moves each FEE_INCOME and FPS_SETTLEMENT part's total into its main account, with an ordinary balanced transaction. FPS_PENDING is never swept: the settle or reverse must find the money there. I graph lock wait per account, so a new hot account shows up on a dashboard, not in an incident.",
+        "One transaction debits the employer once, for the total. If the employees bank elsewhere, it credits BACS_CLEARING_GBP once, and the 5,000 lines go in the Bacs file, not the journal.",
+        "If they bank with us, it credits each wallet: 5,001 entries and locks. Whether that fits in 250 ms is not measured. The fallback is chunks of a few hundred through PAYROLL_CLEARING_GBP, each its own balanced transaction, and the clearing account returns to zero when the run completes.",
+        "An account appears once per transaction, so a double payment is netted or goes in a second transaction. Payroll can queue; cards cannot.",
       ],
     },
     {
-      q: "What breaks first at ten times the load?",
+      q: "Why not two-phase commit with the scheme or the card network?",
       a: [
-        "Not total throughput: 100,000 payments a second is more shards, and a business still lives on one. What breaks is one very busy business. Its wallet is one row, it cannot be split, and every debit must lock it.",
-        "For that tenant: its own shard, then sub-wallets with a reserve topped up by sweeps, or batching its outgoing payments.",
-        "Next, house accounts per shard: raise 16 to 64. Then the journal: about 1.1 TB a day, so partitions get smaller and archive sooner.",
-        "If hot accounts still dominate, the exit is a ledger database such as TigerBeetle, which applies batches of up to 8,190 transfers in one round trip. The ledger API is the only way in, so that is a migration behind a stable interface.",
+        "They are not participants in my database transaction, and I'd never want them to be. Locks would be held across a network call, seconds instead of 1 to 2 ms, and a dead coordinator leaves customer rows locked.",
+        "Instead: the hold commits with an outbox row; the payments service calls the scheme; the answer comes back as a capture or a void, keyed k7:capture or k7:void. A timeout is unknown, not failed: the hold stays, we ask, then capture or void.",
+      ],
+    },
+    {
+      q: "When do you move to TigerBeetle, how, and what consistency do you give up?",
+      a: [
+        "When lock waits on hot rows dominate after splitting and adding clusters, or one customer's account is busier than one row can take. A customer account cannot be split.",
+        "Behind the ledger API I shadow-post to TigerBeetle, compare balances, and cut over by cohort. Holds become pending transfers. Transfer ids are the idempotency keys.",
+        "I give up the shared transaction with Postgres. So I order the writes: metadata to Postgres first, the transfer last, and read TigerBeetle first. TigerBeetle is the system of record for balances; billing and reporting catch up through change data capture.",
       ],
     },
     {
       q: "There is a ledger today. How do you move to this one without losing a penny?",
       a: [
-        "Shadow first. Every transaction in the old ledger is also posted to the new one, idempotent on the old id, and balances are compared per account continuously.",
-        "Open each account with one opening transaction against a funding account, not by setting a balance. The guard would refuse that anyway.",
-        "Cut over account by account through a flag in the routing directory, house accounts last, after weeks of zero unexplained breaks including a month end.",
-        "Keep the old ledger as reverse shadow, so rollback is flipping the flag back.",
+        "Shadow first: every old transaction is also posted to the new ledger, idempotent on the old id, and balances compared per account and currency.",
+        "Open each account with one opening transaction, never by setting a balance; carry ACTIVE holds across with their original ids. Cut over by cohort through a flag, system accounts last, after weeks of zero unexplained breaks across a month end. Keep the old ledger as reverse shadow, so rollback is a flag.",
       ],
     },
   ],
@@ -171,120 +239,128 @@ export const extras: Extras = {
   lead: {
     phases: [
       {
-        name: "1. Correct core, in shadow (one quarter)",
-        ships: "One Postgres primary with a synchronous standby in another zone. The append-only journal and its triggers, the accounts cache with its guard and CHECK, the locked conditional insert, idempotency keys, the outbox with CDC, and invariant checks every few minutes. Fed by shadow-posting from the existing ledger; nothing customer-facing reads it yet.",
-        why: "Retires the risk that matters most, that the model or the concurrency is wrong, while it costs nothing to be wrong. A small team of four or five can ship it in a quarter because there is no sharding, no hot-account work and no cut-over.",
+        name: "1. Phase 1 core, in shadow (one quarter)",
+        ships: "One Postgres cluster: a primary, two synchronous standbys in other zones, a read replica, PgBouncer in transaction mode. The journal, pending_holds and accounts with their triggers, guard, CHECK and column grants; the hold expiry job every minute; locked conditional holds and captures; idempotency keys; the outbox with CDC; invariant checks every few minutes; month partitions; system accounts split 16 ways. GBP bank payments and payroll first, fed by shadow-posting from the existing ledger.",
+        why: "Retires the risk that matters most, that the model or the concurrency is wrong, while being wrong costs nothing. One cluster carries the average load of about 2,000 write transactions a second with room to spare, so there is no routing work yet.",
       },
       {
-        name: "2. Reconciliation and break handling",
-        ships: "Daily matching against bank statements and scheme settlement reports, a break queue with owners and evidence, and a correcting-transaction workflow with second-person approval. Per-account comparison between old and new ledgers on the same tooling.",
-        why: "Nothing cuts over until we can prove it is right, and the same machinery is what safeguarding needs every business day afterwards. Building it second means the migration has a safety net from day one.",
+        name: "2. Reconciliation, cards and currencies",
+        ships: "Daily matching against bank statements and scheme settlement reports, a break queue with owners, and a correcting-transaction workflow with second-person approval. Then debit card holds with expiry, force-post handling with CUSTOMER_RECEIVABLE_GBP, USD and EUR accounts, FX pools and treasury's rebalancing trades. Then overdrafts and credit cards through credit_limit, with the billing service posting interest and repayments as ordinary transactions.",
+        why: "Nothing cuts over until we can prove it is right, and safeguarding needs the same machinery every business day afterwards. Cards, FX and credit come after because they add the hard cases: buffers, force-posts, two currencies in one transaction, and limits that move.",
       },
       {
         name: "3. Cut over, account by account",
-        ships: "A ledger-of-record flag per business in the routing directory. Cohorts: staff, then quiet accounts, then the rest, house accounts last. Balance reads move to the new ledger with each cohort. The old ledger runs as reverse shadow for rollback.",
-        why: "Each cohort limits the blast radius of a mistake to a few accounts, and each step is reversible by a flag. Moving house accounts last avoids splitting the hottest rows between two systems.",
+        ships: "A ledger-of-record flag per business. Cohorts: staff, quiet accounts, then the rest, system accounts last. The old ledger runs as reverse shadow, then is retired after a month end closes cleanly, with its history exported to the archive.",
+        why: "Each cohort limits a mistake to a few accounts, and each step is reversible by a flag. Retiring the old ledger is a deliverable: two ledgers are a standing source of breaks.",
       },
       {
-        name: "4. Scale when measured",
-        ships: "House accounts split 16 ways, with the sweeper, once lock-wait graphs show them. Sharding by business, starting at a few shards, when a single primary passes about half its tested write capacity at peak. Date partitions on the journal, with old months detached and archived to Parquet.",
-        why: "Sharding adds operational cost for every shard forever, so it waits for evidence. The first version uses the same tables and triggers, so this phase is routing and operations, not a rewrite.",
+        name: "4. Phase 2: more clusters, when measured",
+        ships: "Tune the one cluster towards the estimated 5,000 to 8,000 write transactions a second, proved by a load test. Then ledger clusters split by business, each with its own 16-way system accounts, behind a routing directory. At our 10,000 payments a second peak, which is 20,000 write transactions, that is about four clusters.",
+        why: "Each cluster adds operational cost forever, so it waits for evidence. It reuses the same tables and triggers, so this phase is routing and operations, not a rewrite.",
       },
       {
-        name: "5. Retire the old ledger",
-        ships: "Turn off reverse shadow after a rollback window that includes a month end. Export the old ledger's history to the archive with checksums, and decommission it.",
-        why: "Two ledgers are a standing source of breaks and double the audit surface. Ending the dual run is a deliverable, not an afterthought.",
+        name: "5. Phase 3: TigerBeetle for the hot path, if needed",
+        ships: "The debit and credit state machine moves to TigerBeetle behind the same ledger API, with holds as pending transfers. Postgres keeps customer metadata, KYC, billing statements, search and reporting, fed by change data capture.",
+        why: "Only when hot-row lock waits dominate after phase 2. It gives up the shared transaction with Postgres, so it is a planned migration with shadow-posting, not a tuning step.",
       },
     ],
 
     migration: [
-      "Map first. Write down how every account and transaction type in the old ledger maps to the new chart of accounts, and get finance to sign it off. Most migration breaks are mapping errors, not code.",
-      "Opening balances, not full history. For each account, post one opening transaction in the new ledger at a cut-off, referencing the old system's balance. History before the cut-off stays readable from the old system and then the archive.",
-      "Shadow-post. Every committed transaction in the old ledger is replayed into the new one from its events, idempotent on the old transaction id, including reserves, settlements and reversals. The new ledger rejects nothing silently: a rejection is a break.",
-      "Compare continuously. Per account: the balance, every few minutes. Per day: totals per house account, including what sits in pending clearing, and per currency. A difference is a break with an owner. Exit criterion for cut-over: zero unexplained breaks for several weeks spanning a month end and a payroll peak.",
-      "Cut over by cohort with a flag in the routing directory. Move an account when it has no payment waiting on the scheme, or carry the reserve across with its original ids so the settle or reversal lands in the new ledger. The freeze per account is seconds, not a maintenance window.",
-      "Reverse the shadow. Once an account is on the new ledger, its transactions are replayed into the old one, so rollback is flipping the flag back with the old books still current. Keep this until a month end has closed cleanly on the new ledger.",
-      "Keep external reconciliation running across both ledgers the whole time. During the mixed period house accounts exist in both, so finance sums both for the bank match and the daily safeguarding reconciliation.",
-      "Avoid month end, quarter end and large payroll dates for any cohort move. Brief the safeguarding officer and auditors before the first cohort; I would ask compliance whether the change needs telling the regulator about, as a material change to a critical system.",
+      "Map first. Write down how every account and transaction type in the old ledger maps to the new chart of accounts, per currency, and get finance to sign it off. Most migration breaks are mapping errors, not code.",
+      "Opening balances, not full history. For each account and currency, post one opening transaction at a cut-off against a migration account. History before the cut-off stays readable from the old system and then the archive.",
+      "Shadow-post. Every committed transaction in the old ledger is replayed into the new one, idempotent on the old id. Old authorisations become holds with ids derived from the originals. A rejection in the new ledger is a break, never silent.",
+      "Compare continuously. Per account: posted and held, every few minutes. Per day: totals per system account and per currency. Exit criterion: zero unexplained breaks for several weeks spanning a month end and a payroll peak.",
+      "Cut over by cohort with a flag. Carry ACTIVE holds across with their original ids, so the capture, void or expiry lands in the new ledger. The freeze per account is seconds, not a maintenance window.",
+      "Reverse the shadow. Once an account is on the new ledger, its transactions are replayed into the old one, so rollback is flipping the flag. Keep this until a month end has closed cleanly.",
+      "Keep external reconciliation running across both ledgers. During the mixed period system accounts exist in both, so finance sums both for the bank match and the daily safeguarding reconciliation.",
+      "Avoid month end, quarter end and large payroll dates for any cohort move. Brief the safeguarding officer and auditors first; ask compliance whether the regulator needs telling, as a material change to a critical system.",
     ],
 
     slos: [
       {
         name: "Unexplained breaks",
         target: "Target: zero open breaks older than one business day; zero internal invariant violations.",
-        why: "This is what 'correct' means. One business day matches the daily safeguarding reconciliation cycle, so a break is understood before the next one is due.",
+        why: "This is what 'correct' means. One business day matches the daily safeguarding cycle, so a break is understood before the next one is due.",
       },
       {
         name: "Time to detect a break",
         target: "Target: internal invariant violations detected within 5 minutes; external breaks within one business day of the statement arriving.",
-        why: "The internal checks run every few minutes, so a bug in a posting path is caught before it has touched many accounts. External truth only arrives daily, so that is the floor there.",
+        why: "The check query runs every few minutes, so a bad posting path is caught before it touches many accounts. External truth arrives daily, so that is the floor there.",
       },
       {
         name: "Durability",
-        target: "Target: zero acknowledged transactions lost; a shard writing again within 1 minute of losing its primary.",
-        why: "Recovery point zero is the reason for synchronous standbys. A minute is what a scripted promotion of an up-to-date standby takes, and clients retry safely with their keys meanwhile.",
+        target: "Target: zero acknowledged transactions lost; a cluster writing again within 1 minute of losing its primary.",
+        why: "Recovery point zero is the reason for synchronous standbys. A minute is a scripted promotion, and clients retry safely with their keys meanwhile.",
       },
       {
         name: "Write latency",
-        target: "Target: reserve or post under 50 ms at the 99th percentile, measured inside the ledger.",
-        why: "The payment journey also waits on authentication, fraud and the scheme. 50 ms leaves the ledger a small share and still allows a cross-zone synchronous commit and some lock waiting.",
+        target: "Target: a hold or a capture under 50 ms at the 99th percentile, measured inside the ledger.",
+        why: "A card authorisation has about 2 seconds end to end, shared with the network, fraud and the processor. 50 ms leaves room and still allows a cross-zone synchronous commit.",
       },
       {
         name: "Write availability",
-        target: "Target: 99.95 per cent of minutes per shard accepting writes, about 22 minutes a month.",
-        why: "Faster Payments runs all day every day, so there is no quiet window. It is not higher because we deliberately stop writes on a shard that has lost both standbys rather than risk losing payments.",
+        target: "Target: 99.95 per cent of minutes per cluster accepting writes, about 22 minutes a month.",
+        why: "Faster Payments and cards run all day every day. Not higher, because we stop writes on purpose on a cluster that has lost both standbys rather than risk losing payments.",
+      },
+      {
+        name: "Holds end on time",
+        target: "Target: no ACTIVE hold more than 5 minutes past its expires_at.",
+        why: "A hold that outlives its expiry keeps the customer's money unavailable for nothing. The expiry job runs every minute through a partial index of ACTIVE holds, and an alert watches the oldest overdue hold.",
       },
       {
         name: "Event freshness",
         target: "Target: outbox to topic within 5 seconds at the 99th percentile.",
-        why: "Notifications and fraud read the topic, and customers notice a notification that lags the balance. It is also the early warning for a replication slot filling the primary's disk.",
+        why: "Notifications and fraud read the topic. It is also the early warning for a replication slot filling the primary's disk.",
       },
     ],
 
     oncall: [
-      "Pages at 3am: any internal invariant violation (a transaction or a currency not summing to zero, a balance not equal to the sum of its entries). Money correctness outranks everything.",
-      "Pages at 3am: a shard not accepting writes, or down to no synchronous standby; replication slot lag or WAL disk growth heading for full; write latency SLO burning fast.",
-      "Pages at 3am: payments in 'unknown' with the scheme ageing past a threshold, because customers' money is held with no outcome.",
-      "Waits for the morning: a single external break under a set amount, consumer lag for the warehouse, an archive export that failed its count check, the sweeper stopping (balances are untidy, not wrong).",
-      "First runbook: shard failover, including the case where both synchronous standbys are lost and we stop writes on purpose, and how to tell customers and the payments team.",
-      "Second runbook: invariant violation. Freeze the affected accounts, find the code path and turn it off, rebuild the balances from account_period_totals and the entries in a reviewed break-glass change (disable the guard inside one transaction, recompute, re-enable, audit), and post reversing transactions for wrong entries. Who to call in finance and compliance.",
-      "Third runbook: CDC relay or Kafka down. The ledger carries on; watch the slot, how to drop and recreate it safely if disk is at risk, and how consumers replay without double-applying.",
+      "Pages at 3am: any invariant violation (a currency not summing to zero, posted not equal to the entries, held not equal to the ACTIVE holds). Money correctness outranks everything.",
+      "Pages at 3am: a cluster not accepting writes or down to no synchronous standby; replication slot or WAL disk heading for full; lock timeouts rising on one row; card authorisation latency SLO burning fast.",
+      "Pages at 3am: bank payments in 'unknown' with the scheme ageing past a threshold, or the hold expiry job stopped, because customers' money is held with no outcome.",
+      "Waits for the morning: a single small external break, the end-of-day sweep failing (system rows are untidy, not wrong), warehouse consumer lag, an archive export failing its count check, an FX pool near but inside its limit, the nightly interest run failing (billing reruns it; the key stops a double post).",
+      "First runbook: cluster failover, including losing both synchronous standbys and stopping writes on purpose, and how to tell customers and the payments team.",
+      "Second runbook: invariant violation. Freeze the accounts, turn off the code path, rebuild posted and held from account_period_totals, entries and ACTIVE holds in a reviewed, audited break-glass change, then post reversing transactions for wrong entries.",
+      "Third runbook: CDC relay, Kafka or SQS down. The ledger carries on; watch the slot, know how to drop and recreate it safely, and how consumers replay without double-applying.",
     ],
 
     teams: [
-      { name: "Ledger core", owns: "The ledger API, schema and triggers, sharding and routing, idempotency, the outbox and CDC relay, invariant checks. The only team with write access to ledger databases." },
-      { name: "Payments", owns: "Payment orchestration and its state machine, scheme connections (Faster Payments, Bacs, cards), status enquiries for unknown outcomes. Posts to the ledger through its API as a client." },
-      { name: "Reconciliation and financial control", owns: "Statement and settlement file ingestion, matching, the break queue and correction workflow, safeguarding reconciliation, migration comparisons. Engineers working day to day with finance operations." },
-      { name: "Platform (shared)", owns: "Postgres operations, backups and failover tooling, Kafka, object storage. The boundary that matters most is between ledger core and every product team: money moves only through the ledger API, and the ledger stays ignorant of rails and products." },
+      { name: "Ledger core", owns: "The ledger API, schema and triggers, holds and their expiry, clusters and routing, idempotency, the outbox and CDC relay, invariant checks. The only team with write access to ledger databases." },
+      { name: "Payments and cards", owns: "Payment orchestration and state machines, scheme connections (Faster Payments, Bacs, card networks), authorisation decisions and stand-in rules, status enquiries for unknown outcomes. Posts to the ledger through its API as a client." },
+      { name: "Credit and billing", owns: "Credit limits and their changes, statement cut-offs, grace periods, the fees, interest and principal waterfall, nightly interest. Posts interest and fees to the ledger as ordinary transactions, keyed interest:<account>:<date>, and reconciles its statement totals to each card's posted balance." },
+      { name: "Reconciliation and financial control", owns: "Statement and settlement file matching, the break queue and corrections, safeguarding reconciliation, FX pool positions with treasury, migration comparisons." },
+      { name: "Platform (shared)", owns: "Postgres operations, backups and failover tooling, Kafka and SQS, object storage. The boundary that matters most: money moves only through the ledger API, and the ledger knows accounts and currencies, not products." },
     ],
 
     buildBuy: [
-      { part: "Posting engine and ledger API", call: "Build on Postgres", why: "Small, critical, and the rules are ours. Hosted ledgers such as Modern Treasury Ledgers put an outside API on every payment and add a supplier to oversee; Formance is an open-source alternative worth a look; core banking platforms such as Thought Machine Vault make sense only as part of a wider core replacement." },
-      { part: "Database operations", call: "Buy managed Postgres if it meets recovery point zero, else run Patroni", why: "The team should spend its time on the ledger, not on failover scripts. The test is whether the managed service's failover can lose an acknowledged commit and whether we keep the settings we need." },
-      { part: "Change data capture", call: "Buy (open source): Debezium on Kafka Connect", why: "Log-based CDC with ordering is hard to get right and Debezium is the standard. We own its configuration and the replication slot monitoring." },
-      { part: "Event log", call: "Buy: managed Kafka (Amazon MSK or Confluent Cloud)", why: "About 2 MB a second on average is small. Nothing about it is ours to differentiate on." },
-      { part: "Reconciliation", call: "Build the ledger-side matching; consider a vendor for finance-ops matching", why: "Invariant checks and ledger-to-bank matching depend on our model. Products such as Duco exist for wider matching across finance, which finance may already own." },
-      { part: "Payment workflow", call: "Build a small state machine first", why: "A workflow engine such as Temporal is another system on the money path. Adopt it if the number of rails and states outgrows hand-written recovery workers." },
-      { part: "Hot-account engine", call: "Do not build or buy yet", why: "16 sub-accounts per house account carry us at 10,000 payments a second. TigerBeetle is the named exit if contention dominates; the ledger API keeps that option open." },
+      { part: "Posting engine and ledger API", call: "Build on Postgres", why: "Small, critical, and the rules are ours. Hosted ledgers such as Modern Treasury Ledgers put an outside API on every payment; Formance is an open-source alternative worth a look; core banking platforms such as Thought Machine Vault make sense only as part of a wider core replacement." },
+      { part: "Database operations", call: "Buy managed Postgres if it meets recovery point zero, else run Patroni", why: "The team should spend its time on the ledger, not failover scripts. The test is whether the managed failover can lose an acknowledged commit, and whether we keep the settings we need." },
+      { part: "Change data capture", call: "Buy (open source): Debezium on Kafka Connect", why: "Log-based CDC with ordering is hard to get right. We own its configuration and the replication slot monitoring." },
+      { part: "Queues and event log", call: "Buy: managed Kafka, or SQS for work queues", why: "Three events per payment: about 3,000 a second and 3 MB a second on average, 30 MB at peak. That is a light load. Nothing about it is ours to differentiate on." },
+      { part: "Reconciliation", call: "Build the ledger-side matching; consider a vendor for finance-ops matching", why: "Invariant checks and ledger-to-bank matching depend on our model. Wider matching across finance may already have an owner and a product." },
+      { part: "Payment workflow", call: "Build a small state machine first", why: "A workflow engine such as Temporal is another system on the money path. Adopt it if rails and states outgrow hand-written recovery workers." },
+      { part: "Hot-path engine", call: "Do not build. TigerBeetle in phase 3, if measured need", why: "16-way system accounts and about four clusters carry 10,000 payments a second. TigerBeetle is the named exit if hot-row contention dominates; the ledger API keeps that door open." },
     ],
 
     cost: [
-      "Machines: 16 shards, each a primary, two synchronous standbys and one read replica: 64 database nodes. Assumption: £2,000 to £4,000 a month each with fast storage, so roughly £130,000 to £250,000 a month at full scale. The first version is three nodes, well under £15,000 a month.",
-      "Storage: five entries a payment, about 110 GB a day; 13 months hot is about 43 TB, 2.7 TB a shard. Four copies of each shard means about 170 TB provisioned, plus backups and write-ahead log. The archive grows about 40 TB a year before Parquet compression, cheap in object storage.",
-      "Synchronous replication is the line item that buys recovery point zero: two standbys per shard rather than one doubles the standby bill, and is the right trade.",
-      "Kafka is small: about 2 MB a second on average, 20 MB at peak. CDC and the relay are a few small machines.",
-      "Headcount is the bigger cost and the bigger risk. Ledger core: five or six engineers. Reconciliation: three or four engineers alongside finance operations. Payments exists already. A share of a platform team for Postgres. Most of that is the same whether we run one shard or 16, which is why sharding waits for evidence.",
+      "Machines: a cluster is a primary, two synchronous standbys and a read replica, four nodes. Assumption: £2,000 to £4,000 a month per node with fast storage. Phase 1 is one cluster, £8,000 to £16,000 a month. Four clusters at peak, 16 nodes, is £32,000 to £64,000 a month.",
+      "Storage: about 260 million entries a day at an assumed 250 bytes is 65 GB; 86 million holds at an assumed 150 bytes is 13 GB; about 80 GB a day. Hot: 26 TB of entries for 13 months plus 1.2 TB of holds for 3 months, about 7 TB a cluster, times four copies. The accounts table is under 300 MB.",
+      "Events: hold placed, hold ended and transaction posted, three per payment: about 3,000 a second. At an assumed 1 KB each, 3 MB a second on average, 30 MB at peak: small.",
+      "Synchronous replication is the line item that buys recovery point zero. Two standbys rather than one doubles the standby bill, and is the right trade.",
+      "Headcount is the bigger cost. Ledger core: five or six engineers. Reconciliation: three or four alongside finance operations. Payments and cards exist already. A share of a platform team for Postgres.",
       "The cost of being wrong dominates both: an unreconciled safeguarding shortfall or a double-posted payroll run costs more in remediation and regulatory attention than a year of machines.",
     ],
 
     risks: [
-      { risk: "A mapping or model error found after cut-over: balances right in aggregate, wrong per account.", answer: "Shadow-post for weeks with per-account comparison, cut over by cohort, keep reverse shadow for rollback. Finance signs off the chart of accounts before code is written." },
-      { risk: "An unexpected hot account, such as a large customer receiving thousands of payments a second.", answer: "Lock wait per account on a dashboard with an alert. Sub-accounts work for any credit-heavy account, and a very large tenant can get its own shard." },
-      { risk: "Regulatory: daily safeguarding reconciliation is missed or wrong during the migration.", answer: "Reconciliation is phase 2, before any cut-over, and runs across both ledgers. The safeguarding officer and auditors are briefed before the first cohort and see the break reports." },
-      { risk: "Rules in triggers are hidden from application developers and hard to review and test.", answer: "Treat SQL as code: triggers in the repository with the schema, reviewed, with a test for each refusal (edit a balance, update an entry, overdraw). Property tests that assert the invariants under concurrency, and a load test at 10,000 payments a second with hot accounts." },
-      { risk: "Schema changes on 2.7 TB entries tables stall a shard.", answer: "Expand and contract only; monthly partitions from day one, with idempotency_keys as the replay guard because the unique key must then include the date; rehearse each change on a restored copy of a full shard." },
-      { risk: "Key-person risk: one or two people understand Postgres locking and the ledger model.", answer: "Pairing on the posting path, written design records, failover and invariant drills run by different people each quarter, and an on-call rota that includes the reconciliation team." },
-      { risk: "Scope creep: multi-currency, interest, FX and new rails all land on the ledger team.", answer: "The model supports currencies from the start but we ship pounds only. New rails are new accounts and new clients of the API, owned by the teams that want them." },
+      { risk: "A mapping or model error found after cut-over: right in aggregate, wrong per account.", answer: "Shadow-post for weeks with per-account, per-currency comparison; cut over by cohort; keep reverse shadow. Finance signs off the chart of accounts before code is written." },
+      { risk: "One very busy customer whose wallet takes more writes than one row can.", answer: "Lock wait per account on a dashboard, with an alert. A wallet cannot be split, so: its own cluster, batching its outgoing payments, and in the end the TigerBeetle phase." },
+      { risk: "Holds leak: authorisations never captured or voided keep customers' money unavailable.", answer: "Every hold has expires_at; an expiry job sets EXPIRED using the partial index; an SLO on holds past expiry; a late settlement still posts, as a no-hold settlement." },
+      { risk: "pending_holds gains about 86 million rows a day, and its trigger refuses deletes.", answer: "It is partitioned by month like the journal: about 3 months hot, and a month is dropped after export only when none of its holds is ACTIVE. The key then includes created_at, so idempotency_keys is the guard across partitions." },
+      { risk: "An FX pool's position runs beyond treasury's limit on a busy day.", answer: "The pool total is a monitored figure with a limit and an alert, and treasury trades during the day, not only at close. System rows may go negative, so this is a limit, not a CHECK." },
+      { risk: "A credit limit is cut below what a card has already used, and the CHECK refuses the update.", answer: "A written rule in the credit service: lower the limit to the amount used, or keep it and block new holds through is_active or a card control. Never edit a balance to make a limit fit." },
+      { risk: "Rules in triggers are hidden from application developers.", answer: "Treat SQL as code: in the repository, reviewed, a test for each refusal. Property tests that assert the invariants under concurrency, and a load test at 10,000 payments a second." },
+      { risk: "Regulatory: daily safeguarding reconciliation missed or wrong during the migration.", answer: "Reconciliation ships before any cut-over and runs across both ledgers. The safeguarding officer and auditors are briefed before the first cohort." },
+      { risk: "Key-person risk: few people understand Postgres locking and the ledger model.", answer: "Pairing on the posting path, written design records, failover and invariant drills run by different people each quarter." },
     ],
   },
 
@@ -292,25 +368,26 @@ export const extras: Extras = {
     {
       stage: "Clarify and scope",
       minutes: 5,
-      prompt: "Restate the problem in your own words. Ask the questions that change the design, then state your assumptions and the one hard problem out loud.",
+      prompt: "Restate the problem in your own words. Ask the questions that change the design, then state your assumptions and the hard problem out loud.",
       cover: [
-        "Whose money: customer balances at a regulated firm, so safeguarding and daily reconciliation apply.",
-        "What strict consistency means: no customer balance below zero, money conserved, a read sees the write.",
-        "Load and skew: 1,000 payments a second average, 10,000 peak, and whether some accounts are in most transactions.",
-        "Rails and currencies; whether a ledger already exists.",
-        "Names the hard problem: one hot balance row, not total throughput.",
+        "Whose money: customer balances at a regulated bank, so safeguarding and daily reconciliation apply.",
+        "Products: bank payments, payroll, debit and credit cards, overdrafts, accounts in several currencies.",
+        "Strict consistency: no customer below its floor, money conserved per currency, a read sees the write.",
+        "Load and skew: 1,000 payments a second average, 10,000 peak; which accounts are in most transactions.",
+        "Names the hard problem: one hot row, not total throughput.",
       ],
     },
     {
       stage: "Data model and invariants",
-      minutes: 6,
-      prompt: "Before any boxes, describe the two tables, the triggers and the rules that must always hold. Say what is the truth and what is a cache.",
+      minutes: 7,
+      prompt: "Before any boxes, describe the three tables, the triggers and the rules that must always hold. Say what is the truth and what is a cache.",
       cover: [
-        "ledger_entries: append-only, signed pence (credit positive), a BEFORE UPDATE OR DELETE trigger refuses changes.",
-        "accounts: balance BIGINT as a cache, kept by an AFTER INSERT trigger in the same transaction; fillfactor 80 for HOT updates.",
-        "Guard trigger refuses direct balance edits: pg_trigger_depth() <= 1 inside the function, not in a WHEN clause.",
-        "CHECK (allow_negative OR balance >= 0): wallets, pending and fee income never below zero; settlement may be.",
-        "Each transaction sums to zero (deferred check at commit, optional); corrections only by reversing transactions.",
+        "ledger_entries: settled only, append-only, signed minor units (credit positive), sums to zero per currency.",
+        "pending_holds: ACTIVE, then CAPTURED, VOIDED or EXPIRED, once; never deleted or changed in amount.",
+        "accounts: posted_balance and held_balance, each kept by its own trigger; guard trigger; fillfactor 80.",
+        "valid_available_funds: posted - held >= -credit_limit unless allow_negative. Limit 0 is debit; above 0 is overdraft or credit card.",
+        "Statements, grace periods, the waterfall and interest live in billing, not the ledger.",
+        "One currency per account; the trigger refuses an entry or hold in another currency.",
       ],
     },
     {
@@ -318,47 +395,47 @@ export const extras: Extras = {
       minutes: 4,
       prompt: "Do the sums that decide the architecture. Say which number matters most and why.",
       cover: [
-        "86 million payments a day; two ledger transactions and five entries each: 50,000 entries a second at peak.",
-        "About 110 GB a day; 13 months hot is about 43 TB, 2.7 TB on each of 16 shards.",
-        "Per shard at peak: 1,000 payments, 2,000 ledger transactions a second.",
+        "86.4 million payments a day. A bank payment: one hold insert, one hold update, one ledger transaction of three entries (five for a card with FX).",
+        "Two write transactions per payment: 2,000 a second average, 20,000 peak. TPS means write transactions.",
+        "About 80 GB a day (65 GB entries, 13 GB holds); 26 TB of entries and 1.2 TB of holds hot, about 7 TB a cluster.",
         "One hot row: 500 to 1,000 writes a second. This is the number that matters.",
-        "House accounts split 16 ways: about 60 writes a second per fee or settlement part, 125 per pending part.",
+        "One cluster covers the average, four at peak; 2,500 ÷ 16 = about 156 writes a second per system row.",
       ],
     },
     {
       stage: "Write path",
       minutes: 8,
-      prompt: "Walk Bright Bakery's £1,200.00 payment with a 20p fee from the app to the scheme and back. Say what is in each transaction and the balances after each.",
+      prompt: "Walk Bright Bakery's £1,200.00 Faster Payment with a 20p fee, then its USD 100.00 debit card payment and a £649.00 credit card purchase. Say what each transaction writes and the balances after.",
       cover: [
-        "One call to ledger_transfer per transaction. Key k7 inserted first, ON CONFLICT DO NOTHING; zero rows means a replay, return the saved result.",
-        "Reserve: lock FPS_PENDING_07 then the wallet, id order, FOR NO KEY UPDATE; CTE inserts -120020 and +120020 only if balance >= 120020.",
-        "Wallet £8,420.00 to £7,219.80; pending £1,200.20. Outbox row in the same commit; commit waits for a synchronous standby.",
-        "Settle under k7:settle: pending -120020, settlement +120000, fee income +20. Pending back to zero.",
-        "Rejected: a reversal (k7:reverse, ...900419) from pending to the wallet; the payment record allows only one of settle or reverse. Timeout: unknown, so enquire, then settle or reverse.",
+        "Hold ...0417 of 120020 under key k7: posted 842000, held 120020, available 721980. Outbox row in the same commit.",
+        "Capture under k7:capture, transaction ...900418: wallet -120020, FPS_CLEARING_GBP shard 7 +120000, FEE_REVENUE_GBP shard 7 +20. Posted 721980, held 0.",
+        "Scheme rejects: void under k7:void; held back to 0, posted still 842000, no entries. Timeout: unknown, enquire.",
+        "Card: hold of 8240 (8000 plus a 3 per cent buffer); settles at 0.79 as five entries in two currencies; 261 freed.",
+        "Credit card, limit 500000: hold 64900 leaves 435100; capture to MASTERCARD_CREDIT_CLEARING_GBP; interest 32; repayment 30000 leaves posted -34932, available 465068.",
+        "Force-post past funds or limit: account to its floor, the rest to CUSTOMER_RECEIVABLE_GBP.",
       ],
     },
     {
       stage: "Concurrency and hot accounts",
-      minutes: 8,
+      minutes: 7,
       prompt: "Go deep on two payments racing for one wallet, and on the account every payment touches. Compare the options before you pick.",
       cover: [
-        "The second payment waits on the row lock, then the CTE sees the new balance and inserts nothing.",
-        "Why lock when the CHECK exists: clean refusal, not error 23514; fixed lock order, no deadlocks.",
-        "FOR NO KEY UPDATE over FOR UPDATE; compared with conditional update in a function, serializable, optimistic, TigerBeetle.",
-        "Sub-account 07 of 16, picked by hashing the transaction id; fee and settlement parts swept every minute, pending never.",
-        "No two-phase commit: outbox plus reserve and settle; cross-shard by clearing accounts.",
+        "Lock in id order FOR NO KEY UPDATE; the second waits, then its conditional insert (floor minus credit_limit) places nothing.",
+        "Why lock when the CHECK exists: clean refusal, not 23514; fixed lock order, no deadlocks.",
+        "Capture as one statement; a hold leaves ACTIVE once, so never captured and voided.",
+        "lock_timeout 50 ms, statement_timeout 250 ms with SET LOCAL; cards fail fast, payroll queues.",
+        "System accounts 16 rows by rail and currency, hash of transaction id; end-of-day sweep.",
       ],
     },
     {
-      stage: "Failure, partitions and reads",
+      stage: "Failure, partitions and scale",
       minutes: 6,
-      prompt: "Break it. Walk through the failures an interviewer will pick and show what the customer sees in each. Then say what partitioning by date costs.",
+      prompt: "Break it. Walk through the failures an interviewer will pick and what the customer sees. Then the scale path.",
       cover: [
         "Primary dies: promote the synchronous standby, nothing lost, clients retry with keys.",
-        "Outbox and CDC, never dual write; Kafka down does not stop payments; watch the slot.",
+        "Outbox and CDC, never dual write; queues absorb spikes; no two-phase commit.",
         "Partitioned, the unique key must include created_at; idempotency_keys is the guard across partitions.",
-        "Old partitions detached and archived; balance checks never read them.",
-        "Balance from the primary; statements from replicas with cursor pagination.",
+        "Phases: one cluster; clusters by business; TigerBeetle for the hot path, no shared transaction, order the writes.",
       ],
     },
     {
@@ -366,9 +443,9 @@ export const extras: Extras = {
       minutes: 3,
       prompt: "Explain how you would know, every day, that the ledger is correct, and what happens when it is not.",
       cover: [
-        "Reconciliation query: each balance equals account_period_totals plus hot entries; all balances sum to zero.",
-        "Daily reconciliation against bank statements and scheme reports; CASS 15 for safeguarded funds.",
-        "A mismatch pages; rebuild from account_period_totals and entries only in a reviewed break-glass change.",
+        "Check query: posted equals entries, held equals ACTIVE holds, each currency sums to zero.",
+        "Daily reconciliation against bank statements and scheme reports; FX pools against treasury.",
+        "A mismatch pages; rebuild only in a reviewed break-glass change.",
         "Correctness as an SLO: zero unexplained breaks, time to detect.",
       ],
     },
@@ -377,11 +454,11 @@ export const extras: Extras = {
       minutes: 5,
       prompt: "Step back from the diagram. Tell them how you would deliver it from where the company is today, and how you would run it.",
       cover: [
-        "First version: one primary and a synchronous standby, tables and triggers, in shadow, in a quarter.",
-        "Reconciliation before cut-over; opening balances as transactions; account-by-account cut-over with reverse shadow.",
-        "Shard, split house accounts and partition when measured, with written triggers; what not to build.",
+        "Phase 1 in shadow in a quarter; reconciliation, then cards, currencies and credit, before cut-over.",
+        "Opening balances as transactions; cohort cut-over with reverse shadow.",
+        "Phase 2 clusters and phase 3 TigerBeetle only when measured.",
         "One team owns the ledger; product teams post through the API only.",
-        "What pages at 3am and the first runbooks; the main risks and answers.",
+        "What pages at 3am, the first runbooks, the main risks.",
       ],
     },
   ],
