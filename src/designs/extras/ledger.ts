@@ -6,112 +6,164 @@ import type { Extras } from './types';
  * The question: "Design a ledger service that must ensure strict consistency
  * for account balances while supporting high-frequency transaction writes."
  *
- * Numbers agree with src/designs/ledger.ts: 1,000 transactions a second on average,
- * 10,000 at peak, 16 Postgres shards, 1.6 TB hot each, 65 GB a day, 32 sub-accounts per
- * hot account, keys kept 72 hours. Cost figures for machines are labelled as assumptions.
+ * The design: append-only ledger_entries; accounts as a balance cache kept by an AFTER INSERT
+ * trigger, guarded against direct edits, with a CHECK that refuses customer overdrafts; rows
+ * locked in id order FOR NO KEY UPDATE, then a conditional insert. Numbers agree with
+ * src/designs/ledger.ts: 1,000 payments a second on average, 10,000 at peak; two ledger
+ * transactions and five entries per payment; 16 Postgres shards by business, 2.7 TB hot each,
+ * 110 GB a day, house accounts split 16 ways, keys kept 72 hours. Canonical example: Bright Bakery pays £1,200.00 with a 20p fee, sub-account 07.
+ * Cost figures for machines are labelled as assumptions.
  */
 export const extras: Extras = {
   opening: [
-    "So the job is a ledger: the system that says how much money each customer has, and that every penny that moved came from somewhere and went somewhere. Strict consistency, as I read it, means three things. No balance goes below its limit, however many payments race. No money is created or lost by a write. And a balance read after a payment sees that payment.",
-    "A few questions before I draw anything. Whose money is it: customer balances at a bank or e-money firm, or the company's own books? I'll assume customer balances for a UK business bank, so safeguarding and daily reconciliation apply. What is the load and how skewed is it? I'll assume about a million business accounts, 1,000 transactions a second on average and 10,000 at peak around payroll and month end. Which rails? I'll assume Faster Payments first, with cards and Bacs later, and pounds only to start.",
-    "Is there a ledger today? At a firm of any age there is, so I'll treat this as replacing or wrapping one, not a greenfield build. That changes the plan more than it changes the diagram, and I'll come back to it at the end.",
-    "The one hard problem is concurrency on a single balance. Throughput in total is easy: 10,000 a second spread over a million accounts is sharded Postgres. What is hard is one row that many transactions touch, such as our own fee income or the scheme settlement account. A balance row is a lock, and one lock with a synchronously replicated commit tops out around 500 to 1,000 writes a second.",
-    "The shape of the answer: double-entry, append-only entries in integer pence. One database call per transaction that stores the idempotency key, does a conditional update on each balance row, inserts the entries and an outbox row, and commits to a synchronous standby. Shard by business so a payment stays on one shard. Split hot accounts into sub-accounts and sweep them. Publish events from the outbox, never by a dual write. And prove it is right with continuous invariant checks and daily reconciliation against the bank.",
-    "I'll start with the data model and the two invariants, do the sums, draw the write path, then spend most of the time on concurrency, hot accounts and failure. I'll finish with how I'd phase it, migrate to it, and know it is working.",
+    "So the job is a ledger: how much money each customer has, and proof that every penny came from somewhere and went somewhere. Strict consistency means three things to me. No customer balance goes below zero, however many payments race. No write creates or loses money. And a read after a payment sees it.",
+    "My assumptions, which I'd check with you: customer balances at a UK business bank, so safeguarding and daily reconciliation apply. About a million businesses, 1,000 payments a second on average, 10,000 at peak around payroll and month end. Each payment is two ledger transactions, so 20,000 a second at peak. Faster Payments first, pounds only. And there is a ledger today, so this replaces one.",
+    "The design in one line: the journal is the truth, and the balance is a cache the database keeps for me. ledger_entries is append-only: a trigger refuses every UPDATE and DELETE. Amounts are signed pence, and each transaction's entries sum to zero. accounts holds one balance per account. An AFTER INSERT trigger on the entries adds each amount to its balance in the same transaction, so both commit or neither does. A guard trigger refuses any direct edit to a balance.",
+    "Overdrafts are refused twice. The Ledger API sends each transaction as one call to a function, ledger_transfer. It locks the accounts it touches in id order, FOR NO KEY UPDATE, then inserts the entries in one statement only if the balance covers the amount. Zero rows inserted means insufficient funds. Behind that, a CHECK on accounts refuses a customer balance below zero, whatever code wrote it. Locks last 1 to 2 ms and are never held across a network call.",
+    "Scale has three levers. Shard by business, 16 shards, so a payment stays on one shard. Partition each shard's journal by date and archive old months; that never slows a balance check, because the check reads accounts, not the journal. And split hot house accounts, such as fee income, 16 ways, because one row takes only 500 to 1,000 writes a second.",
+    "The payment scheme sits outside every transaction. A payment is two balanced transactions. Reserve moves the money from the wallet to a pending clearing account. Settle moves it on to settlement and fee income, or a reversal sends it back. The outbox row commits with the reserve, so the event goes out exactly when the money moved. No two-phase commit.",
+    "I'll do the data model, the numbers, one payment end to end, then concurrency, hot accounts and failure, and finish with how I'd deliver it.",
   ],
 
   pushes: [
     {
-      q: "Two payments for the same account arrive in the same millisecond, and together they exceed the balance. Prove only one succeeds.",
+      q: "Two payments from the same wallet arrive in the same millisecond, and together they exceed the balance. Prove only one succeeds.",
       a: [
-        "Both run UPDATE balances SET pending = pending + x WHERE id = a AND available >= x. The second blocks on the row lock the first holds. Under Read Committed, when the first commits, Postgres re-evaluates the WHERE clause against the new row, finds it false, and updates zero rows.",
-        "Zero rows updated means rejected: the function raises, the whole transaction rolls back, and no entries or outbox row exist for it. Check and reserve are one statement, so there is no gap to race in.",
-        "Transfers lock both accounts in ascending account id, so two opposite transfers cannot deadlock.",
-        "The lock is held only for in-database work plus the commit, because the transaction is a single stored-function call. No network round trip from the application while locks are held.",
-        "I would show it with a test, not an argument: a property test that fires thousands of concurrent debits at one account and asserts it never goes below its limit and the books sum to zero.",
+        "Each one locks its rows first: SELECT ... ORDER BY account_id FOR NO KEY UPDATE. The second waits on the wallet row until the first commits.",
+        "Then it runs the CTE: insert the entries only if balance >= amount. The balance it now reads includes the first payment. If it no longer covers the amount, zero rows go in. I roll back and answer insufficient funds.",
+        "Locking in id order means two opposite transfers take locks in the same order, so they cannot deadlock.",
+        "I'd prove it with a test, not an argument: thousands of concurrent debits at one wallet, then assert no balance below zero and every transaction summing to zero.",
       ],
     },
     {
-      q: "Every payment credits our fee account. At 10,000 a second, what happens to that row?",
+      q: "Why lock at all, if the CHECK refuses an overdraft?",
       a: [
-        "It becomes a queue. With the lock held until a synchronously replicated commit of 1 to 2 ms, one row takes 500 to 1,000 writes a second. Every payment would wait behind it.",
-        "Split it into 32 sub-accounts, picked by a hash of the transaction id: about 300 writes a second each at peak. A sweep every minute moves the totals into the main account with an ordinary balanced transaction.",
-        "Fee income only receives credits, so it has no limit to protect. I can skip the conditional check altogether and let a job roll up its balance, which is what Modern Treasury does for hot accounts.",
-        "The settlement account is harder because its balance matters to treasury. Sub-accounts keep every balance exact: main plus subs is always right, only the main row alone lags.",
-        "I watch lock wait time per account, so a new hot account, such as a large marketplace customer, is found by a graph, not an incident.",
+        "The CHECK is the backstop, not the path. Without the lock, the losing payment would fail with a constraint error, 23514, half way through. I want a clean 'insufficient funds', decided before anything is written.",
+        "The lock also fixes the order. The trigger updates balances in whatever order the entries go in. Two transfers between the same accounts could take those row locks in opposite orders and deadlock. Locking in id order first removes that.",
+        "And it makes the funds check read a balance nobody else can change before I commit.",
       ],
     },
     {
-      q: "We sent the payment to Faster Payments and the call timed out. What does the ledger show, and what do you do?",
+      q: "Why FOR NO KEY UPDATE and not FOR UPDATE?",
       a: [
-        "Unknown is not failed. The funds stay reserved as a pending transaction, so the customer cannot spend them twice while we find out.",
-        "The payment service asks the scheme for the status using the same payment identifier, then posts or voids the pending transaction. Each is idempotent on its key.",
-        "Payments that stay unknown are aged and alerted on. A growing count is a page, because it means customers' money is held without a reason they can see.",
-        "The worst design is to void on timeout: the money may have left, and we would have given it back to the customer as well.",
+        "FOR UPDATE is stronger than I need. Nothing here changes a key, and the balance update itself takes FOR NO KEY UPDATE. So I lock what I'm about to do, no more.",
+        "The difference: inserting a row that references an account checks the foreign key with a FOR KEY SHARE lock. FOR UPDATE blocks that; FOR NO KEY UPDATE does not. Two balance writers still exclude each other.",
+        "In this design the gain is small, because another writer to the same account waits on its balance update anyway. It matters for tables that only reference accounts, and it is the right habit.",
       ],
     },
     {
-      q: "A business pays another business that lives on a different shard. How do you keep it atomic?",
+      q: "Why a trigger and not application code?",
       a: [
-        "I avoid most of these by design: a business and all its accounts live on one shard, and house accounts exist on every shard, so an outbound payment never leaves its shard.",
-        "Business-to-business between our own customers is the real cross-shard case. I'd run it as a saga through a clearing account: debit the payer into clearing on shard A, then credit the payee from clearing on shard B, each a local transaction, idempotent on the transfer id.",
-        "Atomicity becomes visibility. Anything stuck shows as a non-zero clearing account, which reconciliation already watches. Clearing accounts should net to zero.",
-        "Not two-phase commit: a coordinator failure leaves locks held on two customer balances, on the money path.",
+        "Because nobody can forget it. Every code path that inserts an entry moves the balance, in the same transaction: the API, a correction script, a migration, a backfill.",
+        "Together with the guard and the CHECK, the database refuses a wrong balance whatever wrote it. Application code can only promise that.",
+        "The alternative is to update the balance inside ledger_transfer itself. It works, but only if every writer goes through that function. A trigger puts the rule on the table.",
+        "Grants do the rest: the ledger's role can insert entries, nobody can update or delete them, and no other service has credentials.",
       ],
     },
     {
-      q: "Why not serializable isolation, or optimistic locking with a version column?",
+      q: "Triggers are hidden logic and slow. Defend it.",
       a: [
-        "Serializable finds every anomaly, but it does it by aborting transactions that must then be retried. On a busy account that is a retry storm exactly at peak.",
-        "Optimistic locking is lovely when conflicts are rare: readers never block. Under contention most attempts fail and retry, so it is worst where load is highest.",
-        "A conditional update makes the rule explicit and the database queues the writers instead of failing them. It is the same lock as SELECT FOR UPDATE, held for less time.",
-        "I would still offer a version check in the API for a client that wants 'only if nothing changed since I looked', because that is a business rule, not a concurrency mechanism.",
+        "Hidden: fair. So it is not hidden from us. The triggers live in the repository with the schema, are reviewed like code, and have tests for each refusal: edit a balance, update an entry, overdraw. A superuser can skip triggers, so that role stays out of reach.",
+        "Slow: it costs one extra UPDATE per entry, inside a transaction that already holds that row's lock. The update was always needed; the trigger only moves where it runs. The commit to the standby, 1 to 2 ms, dominates.",
+        "Where it really costs is bulk loads, which fire it row by row. For those I'd use a statement-level trigger with a transition table, or load into a staging table and post summary transactions.",
+        "The balanced-transaction check at commit is optional. It runs one small query per inserted row. I keep it because the CTE should already guarantee it, and a backstop is cheap.",
+      ],
+    },
+    {
+      q: "Why keep a balance at all, if the journal is the truth?",
+      a: [
+        "Because the funds check must be fast and must lock something. Summing a wallet's entries on every payment grows with history. Reading one row does not.",
+        "A row is also something to lock. You cannot lock 'the sum of entries' without locking every entry for the account.",
+        "And it is what lets the journal be partitioned and archived. Old months leave the database, and no balance check ever notices.",
+      ],
+    },
+    {
+      q: "How do you know the cache equals the journal?",
+      a: [
+        "A reconciliation query, every few minutes: join accounts to the sum of their entries, grouped by account, and return any row where balance differs. It should return nothing.",
+        "Before a month is archived, each account's total for it goes into account_period_totals. The check is those totals plus the hot entries, not a re-sum of everything.",
+        "Alongside it: every transaction sums to zero, all balances together sum to zero, and every FPS_PENDING part returns to zero within an age limit.",
+        "A difference means a bug, most likely a trigger disabled or bypassed. It pages. Freeze the account, find the cause, then rebuild in a reviewed break-glass change: in one transaction, disable the guard, recompute from account_period_totals and the entries, re-enable it, and record who ran it.",
+        "Outside, every business day: settlement and safeguarding accounts against the bank statement and the scheme's settlement report.",
+      ],
+    },
+    {
+      q: "You said partition by date. What happens to your unique constraint?",
+      a: [
+        "It has to change, and it gets weaker. Postgres won't partition by created_at unless every unique key includes created_at.",
+        "So the keys become (entry_id, created_at) and (transaction_id, account_id, created_at). A replay carrying a different created_at is no longer caught by that constraint.",
+        "The guard that holds across partitions is idempotency_keys: one row per key, inserted first in the same transaction, ON CONFLICT DO NOTHING. A replay finds k7 already there and returns the saved result.",
+        "The unique constraint becomes a second guard within one partition. That is a real trade, and I'd rather say it than hide it.",
+      ],
+    },
+    {
+      q: "Where is 'pending', if entries are never updated?",
+      a: [
+        "Not on an entry. Pending is where the money is. Bright Bakery's reserve debits the wallet £1,200.20 and credits FPS_PENDING_07.",
+        "So the wallet's balance drops at once, from £8,420.00 to £7,219.80. Balance is the available balance; there is no second figure.",
+        "Settle debits pending £1,200.20 and credits settlement £1,200.00 and fee income 20p. If the scheme rejects, a reversal, transaction ...900419, debits pending and credits the wallet.",
+        "The state, PENDING, SETTLED or FAILED, lives on the payment record in the payments service, which owns the workflow. A pending account that stays above zero is the signal that something is stuck. Nothing in the ledger stops both a settle and a reverse for one reserve, because their keys differ, k7:settle and k7:reverse; the payment's state machine allows only one, and a shared clearing key would let the ledger enforce it too.",
+        "On a timeout: unknown is not failed. The money stays in pending, we ask the scheme, then settle or reverse. Reversing on a timeout could pay the supplier and refund the bakery.",
+      ],
+    },
+    {
+      q: "Why not two-phase commit with the scheme?",
+      a: [
+        "Faster Payments is not a participant in my database transaction, and I'd never want it to be. Locks would be held across a network call, seconds instead of 1 to 2 ms.",
+        "If the coordinator dies between prepare and commit, customer balances stay locked until someone resolves it, on the money path.",
+        "Instead: reserve commits with an outbox row; the payments service reads the event and calls the scheme; the answer comes back as a settle or reverse transaction, each idempotent on its own key, such as k7:settle.",
+        "The same idea covers a payment between two of our customers on different shards: a local debit into clearing on one, a local credit out of clearing on the other. Anything stuck shows as clearing not at zero.",
+      ],
+    },
+    {
+      q: "A system account goes negative. Is that a bug?",
+      a: [
+        "It depends on the account, and the schema says which. Every transaction sums to zero, so all balances together sum to zero. Customers hold money, so something must be negative.",
+        "Settlement and funding accounts are allowed to go negative: they mirror our position with the scheme and the bank. That is bookkeeping, not a bug.",
+        "Wallets, pending clearing and fee income have allow_negative false. The CHECK refuses them below zero, so that bug cannot commit.",
+      ],
+    },
+    {
+      q: "How do you correct a wrong entry?",
+      a: [
+        "With a new transaction, never an edit. The trigger refuses UPDATE and DELETE on entries anyway.",
+        "Post a reversing transaction: the same accounts, opposite amounts, referencing the original. Then post the right one. The balances follow through the trigger.",
+        "It needs a second person to approve, and the history shows the mistake, the reversal and the fix. That is what auditors want to see.",
+      ],
+    },
+    {
+      q: "What does fillfactor 80 buy you?",
+      a: [
+        "Postgres writes a new row version on every update. Fillfactor 80 leaves a fifth of each page free, so the new version of a balance row usually fits on the same page.",
+        "Then it can be a HOT update: balance is not indexed, so no index needs a new entry. Fewer writes per payment, less bloat, less work for vacuum.",
+        "The cost is about a quarter more pages for accounts. For a million rows that is nothing.",
+      ],
+    },
+    {
+      q: "Every payment credits our fee account. At peak, what happens to that row?",
+      a: [
+        "It becomes a queue. One row takes about 500 to 1,000 writes a second, and a shard peaks at about 1,000 payments a second. One fee row per shard would sit at its limit.",
+        "So each shard's house accounts are split 16 ways: FPS_PENDING, FPS_SETTLEMENT and FEE_INCOME, 01 to 16, picked by hashing the transaction id. About 60 writes a second on each fee or settlement part, and 125 on each pending part, which the reserve and the settle both write.",
+        "Fee income is never checked for overdraft, but the trigger's update still locks it, which is why it is split too.",
+        "Every minute a sweeper moves each FEE_INCOME and FPS_SETTLEMENT part's total into its main account, with an ordinary balanced transaction. FPS_PENDING is never swept: the settle or reverse must find the money there. I graph lock wait per account, so a new hot account shows up on a dashboard, not in an incident.",
+      ],
+    },
+    {
+      q: "What breaks first at ten times the load?",
+      a: [
+        "Not total throughput: 100,000 payments a second is more shards, and a business still lives on one. What breaks is one very busy business. Its wallet is one row, it cannot be split, and every debit must lock it.",
+        "For that tenant: its own shard, then sub-wallets with a reserve topped up by sweeps, or batching its outgoing payments.",
+        "Next, house accounts per shard: raise 16 to 64. Then the journal: about 1.1 TB a day, so partitions get smaller and archive sooner.",
+        "If hot accounts still dominate, the exit is a ledger database such as TigerBeetle, which applies batches of up to 8,190 transfers in one round trip. The ledger API is the only way in, so that is a migration behind a stable interface.",
       ],
     },
     {
       q: "There is a ledger today. How do you move to this one without losing a penny?",
       a: [
-        "Shadow first. Every transaction posted to the old ledger is also posted to the new one, and balances are compared per account continuously. Reconciliation is the safety net, not a final check.",
-        "I don't cut over until unexplained differences have been zero for several weeks, including a month end and a payroll peak.",
-        "Then account by account, through a flag in the routing directory: staff accounts, then quiet accounts, then by shard, house accounts last. Each cohort moves when it has no pending holds in flight.",
-        "After a cohort moves, the old ledger becomes the shadow for a rollback window, so flipping back is a flag change with the old books still current.",
-        "External reconciliation against the bank runs across both ledgers throughout, because safeguarding does not pause for a migration.",
-      ],
-    },
-    {
-      q: "How would you phase it, and what would you not build?",
-      a: [
-        "First quarter: one Postgres primary with a synchronous standby, the posting function, idempotency, the outbox and the invariant checks. Running in shadow. That retires the correctness risk before any scale work.",
-        "Then reconciliation and the break workflow, then migration cohorts, then sharding only when one primary's measured headroom says so. Hot-account sub-accounts come when a lock-wait graph shows a hot row.",
-        "Not building: two-phase commit, multi-currency, a workflow engine on the money path, a search index for statements, or a purpose-built database. Each has a trigger that would make me build it, and I'd write the trigger down.",
-        "The tables, functions and outbox are the same on one node as on 16, so sharding later is routing, not a rewrite.",
-      ],
-    },
-    {
-      q: "How do you know it is correct in production, not just fast?",
-      a: [
-        "Correct is an objective with a number: zero unexplained breaks older than one business day, and invariant violations found within minutes.",
-        "Inside: every few minutes, check that each transaction sums to zero, that all entries per currency sum to zero, and that each balance row equals the sum of its entries.",
-        "Outside: every business day, the ledger's view of settlement and safeguarding accounts against the bank statement and the scheme settlement reports.",
-        "Every break gets an owner, an amount and evidence, and is closed by a reviewed correcting transaction. Never by editing an entry. The count of breaks and their age are on the same dashboard as latency.",
-      ],
-    },
-    {
-      q: "Who owns the ledger, and what stops a product team writing to it directly?",
-      a: [
-        "One team owns the ledger: the API, the posting functions, the shards and the invariants. Payments, cards and lending own their flows and post to the ledger through its API, never its database.",
-        "The ledger knows about money, not about Faster Payments or fraud. A team that wants a new rail or product does not need a ledger change, only a new chart of accounts.",
-        "Database grants enforce it: the ledger's role can INSERT entries and nothing can UPDATE or DELETE them. No other service gets credentials.",
-        "Finance and the safeguarding officer are customers of the ledger with a say in the chart of accounts and correction approvals. That is a governance boundary as much as a technical one.",
-      ],
-    },
-    {
-      q: "When would you leave Postgres for something like TigerBeetle?",
-      a: [
-        "When hot-account contention dominates and sub-accounts stop being enough: tens of thousands of transfers a second through a few shared accounts, as at a card processor or a central switch.",
-        "TigerBeetle applies batches of up to 8,190 transfers on one thread in one round trip, with balance limits enforced inside. That removes row locks as the ceiling.",
-        "The price is a specialised database with its own operations, a team that must learn it, and account metadata still in Postgres beside it. For a regulated firm, also a new critical supplier to justify.",
-        "Because the ledger API is the only way in, swapping the posting engine is a migration behind a stable interface, done with the same shadow-and-compare playbook.",
+        "Shadow first. Every transaction in the old ledger is also posted to the new one, idempotent on the old id, and balances are compared per account continuously.",
+        "Open each account with one opening transaction against a funding account, not by setting a balance. The guard would refuse that anyway.",
+        "Cut over account by account through a flag in the routing directory, house accounts last, after weeks of zero unexplained breaks including a month end.",
+        "Keep the old ledger as reverse shadow, so rollback is flipping the flag back.",
       ],
     },
   ],
@@ -120,7 +172,7 @@ export const extras: Extras = {
     phases: [
       {
         name: "1. Correct core, in shadow (one quarter)",
-        ships: "One Postgres primary with a synchronous standby in another zone. The double-entry schema, the posting function with conditional balance updates, idempotency keys, the outbox with CDC, and invariant checks every few minutes. Fed by shadow-posting from the existing ledger; nothing customer-facing reads it yet.",
+        ships: "One Postgres primary with a synchronous standby in another zone. The append-only journal and its triggers, the accounts cache with its guard and CHECK, the locked conditional insert, idempotency keys, the outbox with CDC, and invariant checks every few minutes. Fed by shadow-posting from the existing ledger; nothing customer-facing reads it yet.",
         why: "Retires the risk that matters most, that the model or the concurrency is wrong, while it costs nothing to be wrong. A small team of four or five can ship it in a quarter because there is no sharding, no hot-account work and no cut-over.",
       },
       {
@@ -135,8 +187,8 @@ export const extras: Extras = {
       },
       {
         name: "4. Scale when measured",
-        ships: "Sub-accounts and the sweeper for hot accounts once lock-wait graphs show them. Sharding by business, starting at a few shards, when a single primary passes about half its tested write capacity at peak. Archive of old months to Parquet.",
-        why: "Sharding adds operational cost for every shard forever, so it waits for evidence. The first version uses the same tables and functions, so this phase is routing and operations, not a rewrite.",
+        ships: "House accounts split 16 ways, with the sweeper, once lock-wait graphs show them. Sharding by business, starting at a few shards, when a single primary passes about half its tested write capacity at peak. Date partitions on the journal, with old months detached and archived to Parquet.",
+        why: "Sharding adds operational cost for every shard forever, so it waits for evidence. The first version uses the same tables and triggers, so this phase is routing and operations, not a rewrite.",
       },
       {
         name: "5. Retire the old ledger",
@@ -148,9 +200,9 @@ export const extras: Extras = {
     migration: [
       "Map first. Write down how every account and transaction type in the old ledger maps to the new chart of accounts, and get finance to sign it off. Most migration breaks are mapping errors, not code.",
       "Opening balances, not full history. For each account, post one opening transaction in the new ledger at a cut-off, referencing the old system's balance. History before the cut-off stays readable from the old system and then the archive.",
-      "Shadow-post. Every committed transaction in the old ledger is replayed into the new one from its events, idempotent on the old transaction id, including pending holds, posts and voids. The new ledger rejects nothing silently: a rejection is a break.",
-      "Compare continuously. Per account: posted and available balances, every few minutes. Per day: totals per house account and per currency. A difference is a break with an owner. Exit criterion for cut-over: zero unexplained breaks for several weeks spanning a month end and a payroll peak.",
-      "Cut over by cohort with a flag in the routing directory. Move an account when it has no pending holds in flight, or carry them across as pending with their original ids. The freeze per account is seconds, not a maintenance window.",
+      "Shadow-post. Every committed transaction in the old ledger is replayed into the new one from its events, idempotent on the old transaction id, including reserves, settlements and reversals. The new ledger rejects nothing silently: a rejection is a break.",
+      "Compare continuously. Per account: the balance, every few minutes. Per day: totals per house account, including what sits in pending clearing, and per currency. A difference is a break with an owner. Exit criterion for cut-over: zero unexplained breaks for several weeks spanning a month end and a payroll peak.",
+      "Cut over by cohort with a flag in the routing directory. Move an account when it has no payment waiting on the scheme, or carry the reserve across with its original ids so the settle or reversal lands in the new ledger. The freeze per account is seconds, not a maintenance window.",
       "Reverse the shadow. Once an account is on the new ledger, its transactions are replayed into the old one, so rollback is flipping the flag back with the old books still current. Keep this until a month end has closed cleanly on the new ledger.",
       "Keep external reconciliation running across both ledgers the whole time. During the mixed period house accounts exist in both, so finance sums both for the bank match and the daily safeguarding reconciliation.",
       "Avoid month end, quarter end and large payroll dates for any cohort move. Brief the safeguarding officer and auditors before the first cohort; I would ask compliance whether the change needs telling the regulator about, as a material change to a critical system.",
@@ -190,17 +242,17 @@ export const extras: Extras = {
     ],
 
     oncall: [
-      "Pages at 3am: any internal invariant violation (a transaction or a currency not summing to zero, a balance row not equal to its entries). Money correctness outranks everything.",
+      "Pages at 3am: any internal invariant violation (a transaction or a currency not summing to zero, a balance not equal to the sum of its entries). Money correctness outranks everything.",
       "Pages at 3am: a shard not accepting writes, or down to no synchronous standby; replication slot lag or WAL disk growth heading for full; write latency SLO burning fast.",
       "Pages at 3am: payments in 'unknown' with the scheme ageing past a threshold, because customers' money is held with no outcome.",
       "Waits for the morning: a single external break under a set amount, consumer lag for the warehouse, an archive export that failed its count check, the sweeper stopping (balances are untidy, not wrong).",
       "First runbook: shard failover, including the case where both synchronous standbys are lost and we stop writes on purpose, and how to tell customers and the payments team.",
-      "Second runbook: invariant violation. Freeze the affected accounts, rebuild balance rows from entries, find the code path, turn it off, and post reviewed corrections. Who to call in finance and compliance.",
+      "Second runbook: invariant violation. Freeze the affected accounts, find the code path and turn it off, rebuild the balances from account_period_totals and the entries in a reviewed break-glass change (disable the guard inside one transaction, recompute, re-enable, audit), and post reversing transactions for wrong entries. Who to call in finance and compliance.",
       "Third runbook: CDC relay or Kafka down. The ledger carries on; watch the slot, how to drop and recreate it safely if disk is at risk, and how consumers replay without double-applying.",
     ],
 
     teams: [
-      { name: "Ledger core", owns: "The ledger API, posting functions, schema, sharding and routing, idempotency, the outbox and CDC relay, invariant checks. The only team with write access to ledger databases." },
+      { name: "Ledger core", owns: "The ledger API, schema and triggers, sharding and routing, idempotency, the outbox and CDC relay, invariant checks. The only team with write access to ledger databases." },
       { name: "Payments", owns: "Payment orchestration and its state machine, scheme connections (Faster Payments, Bacs, cards), status enquiries for unknown outcomes. Posts to the ledger through its API as a client." },
       { name: "Reconciliation and financial control", owns: "Statement and settlement file ingestion, matching, the break queue and correction workflow, safeguarding reconciliation, migration comparisons. Engineers working day to day with finance operations." },
       { name: "Platform (shared)", owns: "Postgres operations, backups and failover tooling, Kafka, object storage. The boundary that matters most is between ledger core and every product team: money moves only through the ledger API, and the ledger stays ignorant of rails and products." },
@@ -210,17 +262,17 @@ export const extras: Extras = {
       { part: "Posting engine and ledger API", call: "Build on Postgres", why: "Small, critical, and the rules are ours. Hosted ledgers such as Modern Treasury Ledgers put an outside API on every payment and add a supplier to oversee; Formance is an open-source alternative worth a look; core banking platforms such as Thought Machine Vault make sense only as part of a wider core replacement." },
       { part: "Database operations", call: "Buy managed Postgres if it meets recovery point zero, else run Patroni", why: "The team should spend its time on the ledger, not on failover scripts. The test is whether the managed service's failover can lose an acknowledged commit and whether we keep the settings we need." },
       { part: "Change data capture", call: "Buy (open source): Debezium on Kafka Connect", why: "Log-based CDC with ordering is hard to get right and Debezium is the standard. We own its configuration and the replication slot monitoring." },
-      { part: "Event log", call: "Buy: managed Kafka (Amazon MSK or Confluent Cloud)", why: "About 1 MB a second is small. Nothing about it is ours to differentiate on." },
+      { part: "Event log", call: "Buy: managed Kafka (Amazon MSK or Confluent Cloud)", why: "About 2 MB a second on average is small. Nothing about it is ours to differentiate on." },
       { part: "Reconciliation", call: "Build the ledger-side matching; consider a vendor for finance-ops matching", why: "Invariant checks and ledger-to-bank matching depend on our model. Products such as Duco exist for wider matching across finance, which finance may already own." },
       { part: "Payment workflow", call: "Build a small state machine first", why: "A workflow engine such as Temporal is another system on the money path. Adopt it if the number of rails and states outgrows hand-written recovery workers." },
-      { part: "Hot-account engine", call: "Do not build or buy yet", why: "Sub-accounts carry us at 10,000 a second. TigerBeetle is the named exit if contention dominates; the ledger API keeps that option open." },
+      { part: "Hot-account engine", call: "Do not build or buy yet", why: "16 sub-accounts per house account carry us at 10,000 payments a second. TigerBeetle is the named exit if contention dominates; the ledger API keeps that option open." },
     ],
 
     cost: [
       "Machines: 16 shards, each a primary, two synchronous standbys and one read replica: 64 database nodes. Assumption: £2,000 to £4,000 a month each with fast storage, so roughly £130,000 to £250,000 a month at full scale. The first version is three nodes, well under £15,000 a month.",
-      "Storage: 65 GB a day of entries, 13 months hot is about 26 TB, 1.6 TB a shard. Four copies of each shard means about 100 TB provisioned, plus backups and write-ahead log. The archive grows about 24 TB a year before Parquet compression, cheap in object storage.",
+      "Storage: five entries a payment, about 110 GB a day; 13 months hot is about 43 TB, 2.7 TB a shard. Four copies of each shard means about 170 TB provisioned, plus backups and write-ahead log. The archive grows about 40 TB a year before Parquet compression, cheap in object storage.",
       "Synchronous replication is the line item that buys recovery point zero: two standbys per shard rather than one doubles the standby bill, and is the right trade.",
-      "Kafka is small: about 1 MB a second, under 100 GB a day. CDC and the relay are a few small machines.",
+      "Kafka is small: about 2 MB a second on average, 20 MB at peak. CDC and the relay are a few small machines.",
       "Headcount is the bigger cost and the bigger risk. Ledger core: five or six engineers. Reconciliation: three or four engineers alongside finance operations. Payments exists already. A share of a platform team for Postgres. Most of that is the same whether we run one shard or 16, which is why sharding waits for evidence.",
       "The cost of being wrong dominates both: an unreconciled safeguarding shortfall or a double-posted payroll run costs more in remediation and regulatory attention than a year of machines.",
     ],
@@ -229,8 +281,8 @@ export const extras: Extras = {
       { risk: "A mapping or model error found after cut-over: balances right in aggregate, wrong per account.", answer: "Shadow-post for weeks with per-account comparison, cut over by cohort, keep reverse shadow for rollback. Finance signs off the chart of accounts before code is written." },
       { risk: "An unexpected hot account, such as a large customer receiving thousands of payments a second.", answer: "Lock wait per account on a dashboard with an alert. Sub-accounts work for any credit-heavy account, and a very large tenant can get its own shard." },
       { risk: "Regulatory: daily safeguarding reconciliation is missed or wrong during the migration.", answer: "Reconciliation is phase 2, before any cut-over, and runs across both ledgers. The safeguarding officer and auditors are briefed before the first cohort and see the break reports." },
-      { risk: "Business rules in stored functions are hard to review and test.", answer: "Treat SQL as code: in the repository, reviewed, versioned functions deployed beside the old ones. Property tests that assert the invariants under concurrency, and a load test at 10,000 a second with hot accounts." },
-      { risk: "Schema changes on 1.6 TB entries tables stall a shard.", answer: "Expand and contract only; monthly partitions from day one; rehearse each change on a restored copy of a full shard." },
+      { risk: "Rules in triggers are hidden from application developers and hard to review and test.", answer: "Treat SQL as code: triggers in the repository with the schema, reviewed, with a test for each refusal (edit a balance, update an entry, overdraw). Property tests that assert the invariants under concurrency, and a load test at 10,000 payments a second with hot accounts." },
+      { risk: "Schema changes on 2.7 TB entries tables stall a shard.", answer: "Expand and contract only; monthly partitions from day one, with idempotency_keys as the replay guard because the unique key must then include the date; rehearse each change on a restored copy of a full shard." },
       { risk: "Key-person risk: one or two people understand Postgres locking and the ledger model.", answer: "Pairing on the posting path, written design records, failover and invariant drills run by different people each quarter, and an on-call rota that includes the reconciliation team." },
       { risk: "Scope creep: multi-currency, interest, FX and new rails all land on the ledger team.", answer: "The model supports currencies from the start but we ship pounds only. New rails are new accounts and new clients of the API, owned by the teams that want them." },
     ],
@@ -243,22 +295,22 @@ export const extras: Extras = {
       prompt: "Restate the problem in your own words. Ask the questions that change the design, then state your assumptions and the one hard problem out loud.",
       cover: [
         "Whose money: customer balances at a regulated firm, so safeguarding and daily reconciliation apply.",
-        "What strict consistency means: no balance below its limit, money conserved, read sees the write.",
-        "Load and skew: 1,000 a second average, 10,000 peak, and whether some accounts are in most transactions.",
+        "What strict consistency means: no customer balance below zero, money conserved, a read sees the write.",
+        "Load and skew: 1,000 payments a second average, 10,000 peak, and whether some accounts are in most transactions.",
         "Rails and currencies; whether a ledger already exists.",
         "Names the hard problem: one hot balance row, not total throughput.",
       ],
     },
     {
       stage: "Data model and invariants",
-      minutes: 5,
-      prompt: "Before any boxes, describe what is stored and the rules that must always hold.",
+      minutes: 6,
+      prompt: "Before any boxes, describe the two tables, the triggers and the rules that must always hold. Say what is the truth and what is a cache.",
       cover: [
-        "Accounts, transactions, entries; entries append-only; integer minor units with a currency.",
-        "Each transaction sums to zero per currency; no balance below its limit under concurrency.",
-        "Pending then posted or voided; available balance against ledger balance.",
-        "Balance row as a cache of entries, updated in the same transaction.",
-        "Corrections only by new entries, with who approved them.",
+        "ledger_entries: append-only, signed pence (credit positive), a BEFORE UPDATE OR DELETE trigger refuses changes.",
+        "accounts: balance BIGINT as a cache, kept by an AFTER INSERT trigger in the same transaction; fillfactor 80 for HOT updates.",
+        "Guard trigger refuses direct balance edits: pg_trigger_depth() <= 1 inside the function, not in a WHEN clause.",
+        "CHECK (allow_negative OR balance >= 0): wallets, pending and fee income never below zero; settlement may be.",
+        "Each transaction sums to zero (deferred check at commit, optional); corrections only by reversing transactions.",
       ],
     },
     {
@@ -266,57 +318,57 @@ export const extras: Extras = {
       minutes: 4,
       prompt: "Do the sums that decide the architecture. Say which number matters most and why.",
       cover: [
-        "86 million transactions a day, about 3 entries each, about 65 GB a day.",
-        "13 months hot is about 26 TB; 16 shards at about 1.6 TB each.",
-        "About 1,000 a shard at peak; 10 needed, 16 for headroom.",
+        "86 million payments a day; two ledger transactions and five entries each: 50,000 entries a second at peak.",
+        "About 110 GB a day; 13 months hot is about 43 TB, 2.7 TB on each of 16 shards.",
+        "Per shard at peak: 1,000 payments, 2,000 ledger transactions a second.",
         "One hot row: 500 to 1,000 writes a second. This is the number that matters.",
+        "House accounts split 16 ways: about 60 writes a second per fee or settlement part, 125 per pending part.",
       ],
     },
     {
       stage: "Write path",
       minutes: 8,
-      prompt: "Draw one payment from the app to a committed reservation and back, then to the scheme and to posted. Say what is in each step's transaction.",
+      prompt: "Walk Bright Bakery's £1,200.00 payment with a 20p fee from the app to the scheme and back. Say what is in each transaction and the balances after each.",
       cover: [
-        "Client-made idempotency key, reused on every retry.",
-        "Payment service orchestrates; the ledger never talks to the scheme.",
-        "One stored-function call: insert key, conditional balance updates in account order, entries, outbox row.",
-        "Commit waits for one of two synchronous standbys in other zones.",
-        "Timeout from the scheme is unknown: keep the hold, enquire, then post or void.",
-        "Routing by business to a shard; house accounts on every shard.",
+        "One call to ledger_transfer per transaction. Key k7 inserted first, ON CONFLICT DO NOTHING; zero rows means a replay, return the saved result.",
+        "Reserve: lock FPS_PENDING_07 then the wallet, id order, FOR NO KEY UPDATE; CTE inserts -120020 and +120020 only if balance >= 120020.",
+        "Wallet £8,420.00 to £7,219.80; pending £1,200.20. Outbox row in the same commit; commit waits for a synchronous standby.",
+        "Settle under k7:settle: pending -120020, settlement +120000, fee income +20. Pending back to zero.",
+        "Rejected: a reversal (k7:reverse, ...900419) from pending to the wallet; the payment record allows only one of settle or reverse. Timeout: unknown, so enquire, then settle or reverse.",
       ],
     },
     {
       stage: "Concurrency and hot accounts",
       minutes: 8,
-      prompt: "Go deep on two payments racing for one balance, and on the account every payment touches. Compare the options before you pick.",
+      prompt: "Go deep on two payments racing for one wallet, and on the account every payment touches. Compare the options before you pick.",
       cover: [
-        "Conditional update with Read Committed re-check; why no gap between check and spend.",
-        "Compared with SELECT FOR UPDATE, optimistic versions, serializable, single writer, TigerBeetle.",
-        "Locks held for in-database time only, never across network round trips.",
-        "Sub-accounts with sweeps; skip checks on credit-only accounts.",
-        "Cross-shard transfers by saga through a clearing account, not two-phase commit.",
+        "The second payment waits on the row lock, then the CTE sees the new balance and inserts nothing.",
+        "Why lock when the CHECK exists: clean refusal, not error 23514; fixed lock order, no deadlocks.",
+        "FOR NO KEY UPDATE over FOR UPDATE; compared with conditional update in a function, serializable, optimistic, TigerBeetle.",
+        "Sub-account 07 of 16, picked by hashing the transaction id; fee and settlement parts swept every minute, pending never.",
+        "No two-phase commit: outbox plus reserve and settle; cross-shard by clearing accounts.",
       ],
     },
     {
-      stage: "Failure, events and reads",
+      stage: "Failure, partitions and reads",
       minutes: 6,
-      prompt: "Break it. Walk through the failures an interviewer will pick and show what the customer sees in each.",
+      prompt: "Break it. Walk through the failures an interviewer will pick and show what the customer sees in each. Then say what partitioning by date costs.",
       cover: [
         "Primary dies: promote the synchronous standby, nothing lost, clients retry with keys.",
-        "Both standbys lost: stop writes on that shard on purpose.",
         "Outbox and CDC, never dual write; Kafka down does not stop payments; watch the slot.",
-        "Consumers deduplicate by log position; downstream is eventually consistent by design.",
+        "Partitioned, the unique key must include created_at; idempotency_keys is the guard across partitions.",
+        "Old partitions detached and archived; balance checks never read them.",
         "Balance from the primary; statements from replicas with cursor pagination.",
       ],
     },
     {
       stage: "Proving it is right",
-      minutes: 4,
+      minutes: 3,
       prompt: "Explain how you would know, every day, that the ledger is correct, and what happens when it is not.",
       cover: [
-        "Internal invariant checks every few minutes.",
+        "Reconciliation query: each balance equals account_period_totals plus hot entries; all balances sum to zero.",
         "Daily reconciliation against bank statements and scheme reports; CASS 15 for safeguarded funds.",
-        "Breaks with owner, amount, evidence; fixed by reviewed correcting transactions.",
+        "A mismatch pages; rebuild from account_period_totals and entries only in a reviewed break-glass change.",
         "Correctness as an SLO: zero unexplained breaks, time to detect.",
       ],
     },
@@ -325,9 +377,9 @@ export const extras: Extras = {
       minutes: 5,
       prompt: "Step back from the diagram. Tell them how you would deliver it from where the company is today, and how you would run it.",
       cover: [
-        "First version: one primary and a synchronous standby, in shadow, in a quarter.",
-        "Reconciliation before cut-over; account-by-account cut-over with reverse shadow for rollback.",
-        "Shard and adopt hot-account handling when measured, with written triggers; what not to build.",
+        "First version: one primary and a synchronous standby, tables and triggers, in shadow, in a quarter.",
+        "Reconciliation before cut-over; opening balances as transactions; account-by-account cut-over with reverse shadow.",
+        "Shard, split house accounts and partition when measured, with written triggers; what not to build.",
         "One team owns the ledger; product teams post through the API only.",
         "What pages at 3am and the first runbooks; the main risks and answers.",
       ],
