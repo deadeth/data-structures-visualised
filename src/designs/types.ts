@@ -62,6 +62,8 @@ export interface Reply {
   via?: string;
   /** Its kind, when it differs from the line's own (a read is a call). */
   mode?: Mode;
+  /** What the line's chip says while the tour travels this reply, when the line's own method would name more than is used. */
+  chip?: string;
 }
 
 export interface Flow {
@@ -124,6 +126,8 @@ export interface TourStep {
   failed?: string[];
   /** Show the recovery and reprocessing paths for this step, whatever the key's toggle says. */
   recovery?: boolean;
+  /** Connections not drawn on this step, even with the recovery paths shown, so nothing on screen contradicts the step. */
+  hide?: string[];
 }
 
 export interface Design {

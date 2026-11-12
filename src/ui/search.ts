@@ -233,6 +233,21 @@ export async function mountSearch(host: HTMLElement, query: string, returning = 
   );
   const page = h('article.search-page', null, h('header.page-head', null, heading), summary, list, tries);
   host.append(page);
+  // Down and Up move from one result to the next, as they did from the search box into the first; Up from the first goes back to the box.
+  list.addEventListener('keydown', (e) => {
+    if ((e.key !== 'ArrowDown' && e.key !== 'ArrowUp') || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const links = [...list.querySelectorAll<HTMLElement>('h3 a')];
+    const at = links.indexOf(e.target as HTMLElement);
+    if (at < 0) return;
+    e.preventDefault();
+    const next = e.key === 'ArrowDown' ? links[Math.min(at + 1, links.length - 1)] : at > 0 ? links[at - 1] : document.getElementById('site-search');
+    if (!next) return;
+    next.focus({ preventScroll: true });
+    // Into view with room above, so the result's kind and title show whole.
+    const item = next.closest('li') ?? next;
+    const r = item.getBoundingClientRect();
+    if (r.top < 8 || r.bottom > innerHeight - 8) item.scrollIntoView({ block: 'nearest' });
+  });
 
   if (words.length) {
     const docs = await build();

@@ -135,27 +135,29 @@ main:has(> .design) {
   overflow: hidden;
 }
 
+.hld.two.three:not(.more) .hld-readout .hld-step-text {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
 .hld.two:not(.more) .hld-readout .hld-step-via {
   display: none;
 }
 
 /*
- * On a phone, More unfolds the step's words under the transport, over the top
- * of the canvas, so the canvas and everything under it stay where they are and
- * every transport button can still be pressed. On a very short screen it is
- * capped and scrolls inside.
+ * On a phone, More opens the step's words in place under its title. The head
+ * grows down over the canvas (the script gives it a negative margin, so the
+ * canvas and everything under it stay where they are), the transport directly
+ * under the words. On a short screen the words are capped and scroll inside.
  */
 .hld.phone.more .hld-step-body {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  z-index: 6;
-  max-height: max(96px, calc(100vh - 100% - 24px));
+  max-height: max(72px, calc(100vh - 190px));
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 10px 16px 14px;
-  background: var(--ink);
+}
+
+.hld.phone.more .hld-head {
+  z-index: 6;
   box-shadow: 0 8px 16px rgb(15 27 45 / 0.28);
 }
 
@@ -435,6 +437,8 @@ main:has(> .design) {
   display: flex;
   overflow: auto;
   scrollbar-width: none;
+  /* A margin round the diagram, so a box at its very edge can still rest 8px inside the canvas. */
+  padding: 12px;
 }
 
 .hld-canvas.cam::-webkit-scrollbar {
@@ -639,7 +643,8 @@ main:has(> .design) {
 .hld-flow.mode-write {
   stroke: var(--ink-2);
   stroke-width: 1.9;
-  stroke-dasharray: 14 4 2 4;
+  /* Long dashes and short gaps: a durable write reads at the same weight as a network call, its dot marking the mode. */
+  stroke-dasharray: 16 3 2.5 3;
   marker-end: url(#hld-arrow-ink2);
 }
 
@@ -775,6 +780,11 @@ main:has(> .design) {
   stroke-dasharray: none;
 }
 
+/* A lit chip's words are ink, an in-process or recovery chip's as much as any other. */
+.hld-chip.live text {
+  fill: var(--ink);
+}
+
 .hld-chip.picked .hld-chip-box {
   stroke: var(--ink);
   stroke-width: 2.6;
@@ -808,7 +818,28 @@ main:has(> .design) {
 .hld-node:focus-visible .hld-ring,
 .hld-chip:focus-visible .hld-ring {
   visibility: visible;
-  filter: drop-shadow(0 0 1.5px #fff) drop-shadow(0 0 1.5px #fff);
+}
+
+/* Outside the blue ring, a 2-unit white gap and a 2-unit ink ring: focus differs from a lit box, which is blue alone. */
+.hld-ring-gap,
+.hld-ring-outer {
+  fill: none;
+  visibility: hidden;
+}
+
+.hld-ring-gap {
+  stroke: #fff;
+  stroke-width: 7;
+}
+
+.hld-ring-outer {
+  stroke: var(--ink);
+  stroke-width: 2;
+}
+
+.hld-node:focus-visible :is(.hld-ring-gap, .hld-ring-outer),
+.hld-chip:focus-visible :is(.hld-ring-gap, .hld-ring-outer) {
+  visibility: visible;
 }
 
 /* ---- the key ---------------------------------------------------------------- */
@@ -1406,6 +1437,20 @@ main:has(> .design) {
   outline: none;
 }
 
+/* Above the diagram: a link to a part that is not there. */
+.hld-notfound {
+  margin: 14px 0 0;
+  padding: 10px 14px;
+  border: 1.5px solid var(--rule-strong);
+  border-left: 4px solid var(--ink);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+.hld-notfound[hidden] {
+  display: none;
+}
+
 .hld-detail-head h3 {
   font-size: 1.4rem;
   font-weight: 800;
@@ -1827,6 +1872,25 @@ main:has(> .design) {
   }
 }
 
+/*
+ * Room for the keyboard focus ring (it reaches 11.5 units outside a box) at
+ * every edge of the diagram, so a box at the edge shows its ring whole. Not on
+ * a phone's tour, where the camera's canvas keeps its own margin.
+ */
+.hld-svg {
+  overflow: visible;
+}
+
+.hld-canvas:not(.cam) {
+  --hld-edge: 12px;
+  padding-top: 10px;
+}
+
+.hld-canvas:not(.cam) > .hld-svg:not(.fit) {
+  margin-left: var(--hld-edge);
+  width: calc(100% - var(--hld-edge));
+}
+
 @media (max-width: 899px) {
   .hld-detail-grid,
   .hld-framings,
@@ -2224,6 +2288,14 @@ main:has(> .design) {
     stroke: Highlight !important;
   }
 
+  .hld-ring-gap {
+    stroke: Canvas !important;
+  }
+
+  .hld-ring-outer {
+    stroke: CanvasText !important;
+  }
+
   .hld-dot,
   .hld-pill rect {
     fill: Highlight !important;
@@ -2486,8 +2558,8 @@ main:has(> .design) {
 
   /* More opens the step's words under the row, over the top of the canvas. */
   .hld.phone.more .hld-step-body {
-    top: 100%;
-    padding: 6px 16px 12px;
+    max-height: max(64px, calc(100vh - 120px));
+    padding: 0 16px 10px;
   }
 
   .hld-transport {
@@ -2566,4 +2638,9 @@ main:has(> .design) {
   .design .page-head:not(:has(> :not(h1):not(.lede))) {
     margin: 0;
   }
+}
+
+/* The key column, where its notes run past its foot: a fade there until it is scrolled to the end. */
+.hld-legend.scrolls:not(.at-end) {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 48px), transparent);
 }
