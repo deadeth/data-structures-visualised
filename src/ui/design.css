@@ -1662,6 +1662,62 @@ main:has(> .design) {
   font-weight: 700;
 }
 
+/* A call written out: a labelled block of code that scrolls sideways inside itself, never the page. */
+.hld-examples {
+  min-width: 0;
+}
+
+.hld-ex-lead {
+  color: var(--ink-2);
+  font-size: 0.95rem;
+}
+
+.hld-ex {
+  margin: 12px 0 0;
+  min-width: 0;
+}
+
+.hld-ex figcaption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 700;
+  font-size: 0.93rem;
+  margin-bottom: 4px;
+}
+
+.hld-ex-lang {
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.hld-ex pre {
+  margin: 0;
+  padding: 11px 14px 12px;
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: #f6f8fb;
+  overflow-x: auto;
+  font: 500 0.86rem/1.5 var(--mono);
+  white-space: pre;
+  tab-size: 2;
+}
+
+.hld-ex pre:focus-visible {
+  outline: 3px solid var(--focus, #2a63e0);
+  outline-offset: 2px;
+}
+
+.hld-ex-note {
+  margin-top: 4px;
+  color: var(--ink-2);
+  font-size: 0.95rem;
+}
+
 /* The working under a figure: quieter than the figure, and indented with it. */
 .hld-figures .hld-from {
   margin-top: 2px;

@@ -1184,6 +1184,24 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
               ]),
           h('h4', null, mode.about), h('p', null, mode.note),
         ),
+        fl.examples?.length
+          ? h(
+              'div.hld-examples', null,
+              h('h4', null, 'What it looks like'),
+              h('p.hld-ex-lead', null, 'An example with the names this page uses. It shows the shape of the call, not a real system\'s API.'),
+              fl.examples.map((ex, i) => {
+                const id = `${design.id}-ex-${fl.id}-${i}`;
+                const langs = { sql: 'SQL', json: 'JSON', proto: 'Protocol Buffers', http: 'HTTP', text: 'Text' } as const;
+                return h(
+                  'figure.hld-ex', null,
+                  h('figcaption', { id }, ex.title, h('span.hld-ex-lang', null, langs[ex.lang])),
+                  // Wide lines scroll inside the block, which takes focus so the keyboard can scroll it.
+                  h('pre', { tabIndex: 0, role: 'region', 'aria-labelledby': id }, h('code', null, ex.code)),
+                  ex.note ? h('p.hld-ex-note', null, ex.note) : null,
+                );
+              }),
+            )
+          : null,
         fl.ways?.length
           ? h('div.hld-alt-block', null, h('h4', null, 'Ways to connect them'), h('ul.hld-alts', null, fl.ways.map(altItem)))
           : h(
