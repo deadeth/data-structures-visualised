@@ -2,6 +2,20 @@
  * Design tokens.
  * One rule above all: magenta means "the key you are following" and is used for nothing else.
  */
+/*
+ * Plain zero: one glyph, the digit zero of Atkinson Hyperlegible Next (SIL Open Font License 1.1) with its slash
+ * removed and one oval counter in its place, at every weight from 200 to 800. Built with fontTools from the
+ * @fontsource-variable file; it only ever draws U+0030, and every other character falls through to the real font.
+ */
+@font-face {
+  font-family: 'Plain zero';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: block;
+  src: url(data:font/woff2;base64,d09GMgABAAAAAARkABMAAAAACOQAAAP5AAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGyAcKj9IVkFSTj9NVkFSOwZgP1NUQVSBHCcmADQvXBEICmSBATCCCgE2AiQDCAsGAAQgBYV2ByAbrwfIrg5sY/pD3egTiGMtJVmK8eqfSDw875/9r31uNM7ImXlSvoAKYkXWqH7popE14svhXF6f1Wug2GcLwENOga6hgXdzG+LgJqGnFIVBjK8OuKautr6W//Sy///9SqcSx/Oec3UKfI6PwZssmgaq1mga4q/TtYGRoCuyZ8kWSPahG6B9dTAzn8vnC9QbMCT2P3B7AQk5qAFwydXWShy15EWnSx9SLX4KATpwcPmRjQKjQvaCF8AOv+7t/kFDkJAhpLHmMpCCACXJwJVXcQHA1fMhRoQuIZ4RCObkUmc8qEh3p5OBw0IqcYpmJJZ+MP0o+d+AX1XV7Iutr5D9Eg8jIMbSI6jIhFCS0KGEldK155pSw/n76moloWzAWjvb39EDkwYR3kBApNiIDCmyeJD0DAIiF1Mp5NPJoLfAx4pZpS89dOpAeJJQfMELfvDN7lDW+nTF0DFVG946cD/N3dHbFOKcCnI8kVStoYZqH463nLIkdCgq7fZR8E88SFaBEEE5mtgZPUwcjhwxJZbnFtyFnSZEsd/bQ9RoAQnkkFDBdpTvDKlcPv3uz4qbPr/hnk91I3yWoLjps+rvDrjRnNOwX8OJVx86D13WJWHvVVqTP+SI/urrT74hQsM770yDHF+iT6JHw3WfGXLgCwfEDr+yt2Z5wzkwMheFnIUKMff/X/9I//p/qdSKSktzU398f6c/puaM3TRcs3WrLEVEyiQ1tV//mtHQ1Y/zuxrM/PXrr7eMFM2MA5pRbOkZlPa0zP/2Dfptvti5dts9azuLmm+6Sb5gcXErEG+eQt6akbKx7z7H+d+NKY+sWXPLSMnUf4CmlFoHRqUDrfM/f4F+ni/1bNp5z6aekvJNNykULSxsBYLzFAs2r+nw75cf4nf48l8dazZvvoVAsu/9ZcOpLbtPl7LsD/jp6J6zAb/31w/avXY6PD2GggSCbxNIdzI8u5t61FvJlFpsS9WBpNKrCV1q851M5OqwRAqhwxIkzVGGTFsM9eZ4yOuLKhSMxqHKZjvGRWVBYzyKEDriKUjq46WebJ5g5Nqy34G8cnwBBaX4A4raYoxWEqf0tDr1qdl+UOAHZzGYJGJbVde7Kf767VUcz0QR+5AcFp+AfMTBfgQozkUZLG+gShyJ+iZXH41DNuqdHCGgaMiEOFVirfNIUkVo22ILE7uS8qbuTMirSSJkjO3W56YmCQ2nr8iQmvMkNZfQSzHXa48YcUO7GDrT3Kq2h7N21X0VJgRr56Nta7Oqqm3aDaiN1Hh/BOmB399F0mV5LyUFqn4yWcM1ei/u2aqz3Ktt2R7vs0N9sCiecxrdqx5Dro/Q3tteSq9Ir/O6z8741175wkAtzQIAAAA=) format('woff2');
+  unicode-range: U+0030;
+}
+
 :root {
   /* One row of example code: 0.75rem text at about 1.65, rounded to whole pixels. */
   --code-row: round(nearest, calc(0.75rem * 1.65), 1px);
@@ -24,7 +38,12 @@
   --bad: #c93434;
   --bad-soft: #fbe1e1;
 
-  --sans: 'Atkinson Hyperlegible Next Variable', 'Atkinson Hyperlegible Next', system-ui, sans-serif;
+  /*
+   * Two faces of one font. The font draws its zero with a slash. --sans-data keeps it, for digits that are data:
+   * tables, diagrams, counters and code. --sans, for prose, headings and search, puts a plain zero ("Plain zero" below) in its place.
+   */
+  --sans-data: 'Atkinson Hyperlegible Next Variable', 'Atkinson Hyperlegible Next', system-ui, sans-serif;
+  --sans: 'Plain zero', var(--sans-data);
   --mono: 'Atkinson Hyperlegible Mono Variable', 'Atkinson Hyperlegible Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
   --radius: 14px;
@@ -40,6 +59,11 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+}
+
+/* Digits in a drawing are data: they keep the slashed zero. */
+svg {
+  font-family: var(--sans-data);
 }
 
 body {
@@ -855,6 +879,7 @@ svg.scene {
 }
 
 .step-label {
+  font-family: var(--sans-data);
   font-size: 0.88rem;
   color: var(--ink-2);
   white-space: nowrap;
@@ -1053,7 +1078,7 @@ svg.scene {
 .cell-sub,
 .node-title,
 .node-caption {
-  font-family: var(--sans) !important;
+  font-family: var(--sans-data) !important;
   font-size: var(--label-size);
   fill: var(--ink-2);
 }
@@ -1115,7 +1140,7 @@ svg.scene {
 }
 
 .tag-text {
-  font-family: var(--sans) !important;
+  font-family: var(--sans-data) !important;
   font-size: var(--label-size);
   font-weight: 600;
   fill: var(--ink);
@@ -1202,7 +1227,7 @@ svg.scene {
 }
 
 .decor-label {
-  font-family: var(--sans) !important;
+  font-family: var(--sans-data) !important;
   font-size: var(--label-size);
   fill: var(--ink-2);
 }
@@ -1303,6 +1328,7 @@ svg.scene {
 }
 
 table {
+  font-family: var(--sans-data);
   border-collapse: collapse;
   width: 100%;
   font-size: 0.97rem;
@@ -1536,7 +1562,7 @@ td.num {
   table.stack td::before {
     content: attr(data-label);
     display: block;
-    font: 400 0.86rem/1.4 var(--sans);
+    font: 400 0.86rem/1.4 var(--sans-data);
     color: var(--ink-2);
   }
 
