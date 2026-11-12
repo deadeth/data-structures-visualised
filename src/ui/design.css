@@ -1684,6 +1684,39 @@ main:has(> .design) {
   margin-top: 14px;
 }
 
+.hld-explain-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.hld-explain-head h2 {
+  margin: 0;
+}
+
+.hld-explain-toggle {
+  flex: none;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1.5px solid var(--ink);
+  border-radius: 8px;
+  background: var(--paper, #fff);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.hld-explain-toggle:hover {
+  background: var(--ink);
+  color: var(--paper, #fff);
+}
+
+.hld-explain-body > :first-child {
+  margin-top: 10px;
+}
+
 .hld-explain-text {
   max-width: 78ch;
   color: var(--ink-2);
