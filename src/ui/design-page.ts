@@ -464,8 +464,10 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   }
   const token = makeToken('main');
   const branchTok = makeToken('branch');
+  /** The token as it fades out where a hop leaves, while the token itself fades in where the hop lands: never a frame with neither. */
+  const ghost = makeToken('ghost');
   // The token is drawn last, above the chips, so a chip never hides the dot or its words, moving or at rest.
-  svg.append(labelLayer, token.tie, branchTok.tie, chipLayer, token.g, branchTok.g);
+  svg.append(labelLayer, ghost.tie, token.tie, branchTok.tie, chipLayer, ghost.g, token.g, branchTok.g);
 
   const canvas = h('div.hld-canvas', null);
   canvas.append(svg);
@@ -494,7 +496,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   const playLabel = h('span.hld-play-text', null, 'Play the tour');
   const btn = (name: keyof typeof ICON, label: string, keys: string, fn: () => void, cls = '') => {
     // A button marked aria-disabled does nothing, but keeps focus: see disable.
-    const b: HTMLButtonElement = h(`button.hld-icon${cls}`, { type: 'button', 'aria-label': label, title: keys ? `${label} (${keys})` : label, 'data-keys': keys, onclick: () => b.getAttribute('aria-disabled') !== 'true' && fn() }, icon(name)) as HTMLButtonElement;
+    const b: HTMLButtonElement = h(`button.hld-icon${cls}`, { type: 'button', 'aria-label': label, 'data-keys': keys, onclick: () => b.getAttribute('aria-disabled') !== 'true' && fn() }, icon(name)) as HTMLButtonElement;
+    // A tooltip only where it adds something to the name (the key, see syncKeys): never the name said twice.
+    if (keys) b.title = `${label} (${keys})`;
     return b;
   };
   const restartBtn = btn('restart', 'Back to the start', '', () => go(0, true), '.hld-restart');
@@ -515,7 +519,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   const speedGroup = h('div.hld-speed', { role: 'group', 'aria-label': still ? 'Time on each step' : 'Tour speed' }, speedName);
   for (const s of SPEEDS) {
     // The name starts with the words on the button, so a voice user can say what they see.
-    const b = h('button', { type: 'button', 'aria-pressed': String(s === 1), 'aria-label': still ? WAIT_NAMES[s] : `${s}×, ${SPEED_NAMES[s].toLowerCase()}`, title: still ? WAIT_TITLES[s] : SPEED_NAMES[s], onclick: () => setSpeed(s) }, speedWord(s)) as HTMLButtonElement;
+    const b = h('button', { type: 'button', 'aria-pressed': String(s === 1), 'aria-label': still ? WAIT_NAMES[s] : `${s}×, ${SPEED_NAMES[s].toLowerCase()}`, onclick: () => setSpeed(s) }, speedWord(s)) as HTMLButtonElement;
+    // The speed's name is already in the button's name: only the waits, with reduced motion, say more in a tooltip.
+    if (still) b.title = WAIT_TITLES[s];
     speedBtns.push(b);
     speedGroup.append(b);
   }
@@ -533,7 +539,10 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       if (on) b.setAttribute('aria-keyshortcuts', k);
       else b.removeAttribute('aria-keyshortcuts');
     }
-    for (const b of [backBtn, nextBtn]) b.title = on ? `${b.getAttribute('aria-label')} (${b.dataset.keys})` : b.getAttribute('aria-label')!;
+    // A description only where it adds to the name: the key, and for Next that it pauses the tour.
+    if (on) backBtn.title = `${backBtn.getAttribute('aria-label')} (${backBtn.dataset.keys})`;
+    else backBtn.removeAttribute('title');
+    nextBtn.title = `${on ? `Next step (${nextBtn.dataset.keys})` : 'Next step'}. Pauses the tour if it is playing.`;
     playBtn.title = on ? 'Play or pause (Space). R replays the step.' : '';
     keyHints.hidden = !on;
   }
@@ -561,12 +570,14 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   /** On a step about recovery the paths show whatever the box says: the box shows ticked, and says why. */
   const coldWhy = h('span.hld-cold-why', null, ': this step shows them');
   coldWhy.hidden = true;
+  /** The room the words above take, kept before the box while they are hidden (design.css), so the box and its label sit together. */
+  const coldRoom = h('span.hld-cold-room', { 'aria-hidden': 'true' }, ': this step shows them');
   const keyItem = (glyph: SVGSVGElement, label: string, note: string, cold = false) => h(cold ? 'li.cold' : 'li', null, glyph, h('span', null, label), h('span.visually-hidden', null, `: ${note}`));
   // In the key column of a very wide screen the notes start open, so the column beside the diagram is not left blank.
   const keyNotes = h(
     'details.hld-key-notes', { open: matchMedia(KEY_COLUMN).matches },
     h('summary', null, 'What each line promises'),
-    h('dl', null, MODES.flatMap((m) => [h('dt', null, m.label), h('dd', null, m.note)]), h('dt', null, 'Off the hot path'), h('dd', null, 'Recovery and reprocessing: used after a failure or a fix, not on every fetch.')),
+    h('dl', null, MODES.flatMap((m) => [h('dt', null, m.label), h('dd', null, m.note), ...(design.keyNotes ?? []).filter((n) => n.mode === m.id).map((n) => h('dd', null, n.text))]), h('dt', null, 'Off the hot path'), h('dd', null, 'Recovery and reprocessing: used after a failure or a fix, not on every fetch.')),
   );
   const legend = h(
     'div.hld-legend', null,
@@ -584,7 +595,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     ),
     h(
       'div.hld-key-row', null,
-      h('p.hld-cold-toggle', null, coldBox, h('label', { for: `${design.id}-cold` }, 'Show recovery and reprocessing paths', coldWhy)),
+      h('p.hld-cold-toggle', null, coldRoom, coldBox, h('label', { for: `${design.id}-cold` }, 'Show recovery and reprocessing paths', coldWhy)),
       keyNotes,
     ),
   );
@@ -1103,7 +1114,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       return h('li', null, b);
     };
     detailBody.replaceChildren(
-      h('div.hld-detail-head', null, h('h3', { tabIndex: -1 }, c.name), h('p.hld-detail-tech', null, c.tech), backControl()),
+      h('div.hld-detail-head', null, h('div.hld-detail-title', null, h('h3', { tabIndex: -1 }, c.name), h('p.hld-detail-tech', null, c.tech)), backControl()),
       h(
         'div.hld-detail-grid', null,
         h(
@@ -1136,7 +1147,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const method = kind.startsWith(fl.via.toLowerCase()) ? kind : `${fl.via}, ${kind}`;
     glyph.classList.add('hld-detail-glyph');
     detailBody.replaceChildren(
-      h('div.hld-detail-head', null, glyph, h('h3', { tabIndex: -1 }, lineName(fl)), h('p.hld-detail-tech', null, `${method}${fl.cold ? ', off the hot path' : ''}`), backControl()),
+      h('div.hld-detail-head', null, h('div.hld-detail-title', null, glyph, h('h3', { tabIndex: -1 }, lineName(fl)), h('p.hld-detail-tech', null, `${method}${fl.cold ? ', off the hot path' : ''}`)), backControl()),
       h(
         'div.hld-detail-grid', null,
         h(
@@ -1254,7 +1265,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       status.textContent = 'Closed.';
       return;
     }
-    afterOpen(how, from, wasPlaying, byId.get(id)!.name);
+    afterOpen(how, from, wasPlaying);
   }
 
   function pickFlow(id0: string, how: How, from?: Element): void {
@@ -1273,10 +1284,10 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       status.textContent = 'Closed.';
       return;
     }
-    afterOpen(how, from, wasPlaying, lineName(fl));
+    afterOpen(how, from, wasPlaying);
   }
 
-  function afterOpen(how: How, from: Element | undefined, wasPlaying: boolean, what: string): void {
+  function afterOpen(how: How, from: Element | undefined, wasPlaying: boolean): void {
     origin = from ? { el: from, y: window.scrollY, x: canvas.scrollLeft } : null;
     const h3 = detailBody.querySelector('h3');
     // From the diagram, the notes or a link alike: on a wide screen the diagram and the detail share the screen; narrower, the detail comes to the top.
@@ -1284,7 +1295,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     // A pointer moves focus too (the box it came from is now off screen), but without a focus mark until a key is pressed.
     if (how !== 'pointer') h3?.focus({ preventScroll: true });
     else if (h3) quietFocus(h3);
-    status.textContent = `${wasPlaying ? `Paused at step ${step + 1}. ` : ''}Showing ${what}.`;
+    // The heading taking focus says what opened: the status says only what the reader could not otherwise know.
+    status.textContent = wasPlaying ? `Paused at step ${step + 1}.` : '';
   }
 
   /** Go back to where the detail was opened from, leaving it open. */
@@ -1455,6 +1467,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     if (forced && document.activeElement === coldBox) playBtn.focus({ preventScroll: true });
     coldBox.disabled = forced;
     coldWhy.hidden = !forced;
+    coldRoom.hidden = forced;
     syncHead();
     paintFlows(light);
     // Chips may have come or gone: each pill checks it still covers nothing.
@@ -1552,6 +1565,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     if (!quiet) syncHead();
     else overlayHead();
     bodyScroll();
+    camMore();
     if (!byReader) {
       if (!on) moreResume = false;
       return;
@@ -2093,7 +2107,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     tk.pillW = w;
     if (!tk.target) tk.pillOp = pillOp;
     drawPill(tk);
-    if (tk === token || trip) keepInView(x, y, tk);
+    if (tk !== ghost && (tk === token || trip)) keepInView(x, y, tk);
   }
   function hideToken(tk: Tok = token): void {
     tk.g.style.display = 'none';
@@ -2395,12 +2409,23 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
           const v = camView();
           const m = 30;
           if (sg.b.x < v.x + m || sg.b.x > v.x + v.w - m || sg.b.y < v.y + m || sg.b.y > v.y + v.h - m) {
-            sg.pan = CATCH_UP;
-            camGlide(tourK, { x: sg.b.x, y: sg.b.y }, window.scrollY, CATCH_UP);
+            sg.pan = camGlide(tourK, { x: sg.b.x, y: sg.b.y }, window.scrollY, CATCH_UP);
           }
         }
       }
-      // Fade out where it is, cross unseen in one step, fade in where the next line starts: it never moves while faded.
+      if (!sg.pan) {
+        // In view: a cross-fade. It fades out where it is as it fades in where the next line starts, the two overlapping,
+        // so some token always shows. It never moves while faded.
+        const out = Math.max(0, Math.min(1, 1 - (u - 0.1) / 0.6));
+        const inn = Math.max(0, Math.min(1, (u - 0.3) / 0.6));
+        if (out > 0) place(ghost, sg.a.x, sg.a.y, sg.label, out, sg.offA, 1);
+        else hideToken(ghost);
+        place(token, sg.b.x, sg.b.y, sg.next, inn, sg.offB, sg.noPillB ? 0 : 1);
+        if (inn <= 0) token.g.style.display = token.tie.style.display = 'none';
+        return;
+      }
+      // Out of view on a phone: fade out where it is, cross unseen while the view travels, fade in where the next line
+      // starts. It never moves while faded.
       const fo = 0.45 * (2 * FADE + 80) / (2 * FADE + 80 + sg.pan);
       const o = u < fo ? 1 - u / fo : u > 1 - fo ? (u - (1 - fo)) / fo : 0;
       const p = u < 0.5 ? sg.a : sg.b;
@@ -2545,6 +2570,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       stage.classList.toggle('cam', on);
       if (!on) {
         canvas.style.height = '';
+        setCover(0);
         canvas.scrollTop = 0;
       }
       syncPan();
@@ -2564,11 +2590,13 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   function camGeom(k: number): { ox: number; oy: number; maxL: number; maxT: number } {
     const cw = canvas.clientWidth;
     const ch = canvas.clientHeight;
-    const P = parseFloat(getComputedStyle(canvas).paddingLeft) || 0;
-    const Q = parseFloat(getComputedStyle(canvas).paddingTop) || 0;
+    const cs = getComputedStyle(canvas);
+    const P = parseFloat(cs.paddingLeft) || 0;
+    const Q = parseFloat(cs.paddingTop) || 0;
+    const Qb = parseFloat(cs.paddingBottom) || 0;
     const sw = W * k;
     const sh = H * k;
-    return { ox: P + Math.max(0, (cw - 2 * P - sw) / 2), oy: Q + Math.max(0, (ch - 2 * Q - sh) / 2), maxL: Math.max(0, sw + 2 * P - cw), maxT: Math.max(0, sh + 2 * Q - ch) };
+    return { ox: P + Math.max(0, (cw - 2 * P - sw) / 2), oy: Q + Math.max(0, (ch - Q - Qb - sh) / 2), maxL: Math.max(0, sw + 2 * P - cw), maxT: Math.max(0, sh + Q + Qb - ch) };
   }
   /** Put the view's centre at (cx, cy) at scale k: the canvas scrolls, and where the diagram is smaller than the canvas it sits in the middle. */
   function camApply(k: number, cx: number, cy: number): void {
@@ -2694,8 +2722,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
    * not all in that view opens on its source for a beat and the view follows
    * the token.
    */
-  let camPlan: { k: number; rest: Box; start: Box | null; landing: Box | null; centre: Pt } | null = null;
-  function planCam(i: number): { k: number; rest: Box; start: Box | null; whole: boolean; landing: Box | null; centre: Pt } {
+  let camPlan: { k: number; rest: Box; start: Box | null; landing: Box | null; centre: Pt; must: Box } | null = null;
+  function planCam(i: number): { k: number; rest: Box; start: Box | null; whole: boolean; landing: Box | null; centre: Pt; must: Box } {
     planK = null;
     const fits = (u: Box | null): u is Box => !!u && fitK(u) >= FLOOR_SCALE - 1e-6;
     const all = stepBox(i);
@@ -2773,9 +2801,24 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       }
     };
     hold(must);
-    // A lit box the view cuts is pulled wholly into view when a pan can do it with the box the step ends at and the
-    // resting labels still inside: the largest part showing first. One that cannot be gets an edge sign (updateMarks).
     const fitsNow = (u: Box) => u.w * k <= canvas.clientWidth - 2 * CAM_PAD + 0.5 && u.h * k <= canvas.clientHeight - 2 * CAM_PAD + 0.5;
+    // A chip of the step's own legs the view cuts is pulled wholly into view first, when a pan can do it with the box the
+    // step ends at and the resting labels: it goes with where the token rests.
+    const v1 = camViewAt(k, centre);
+    const shown1 = (b: Box) => (Math.max(0, Math.min(b.x + b.w, v1.x + v1.w) - Math.max(b.x, v1.x)) * Math.max(0, Math.min(b.y + b.h, v1.y + v1.h) - Math.max(b.y, v1.y))) / (b.w * b.h);
+    const pad = CAM_PAD / k;
+    const liveChips = [...pathLegs(i), ...(br ? pathLegs(i, 'branch') : [])].map((l) => chipOf(l, i)).filter((b): b is Box => !!b);
+    const inner = { x: v1.x + pad, y: v1.y + pad, w: v1.w - 2 * pad, h: v1.h - 2 * pad };
+    // One already whole in view is kept so: nothing pulled in after it may push it out.
+    for (const c of liveChips) if (within(c, inner, 0.5) && fitsNow(union(must, c))) must = union(must, c);
+    for (const b of liveChips.filter((c) => shown1(c) > 0 && !within(c, inner, 0.5)).sort((a, b) => shown1(b) - shown1(a))) {
+      const m2 = union(must, b);
+      if (!fitsNow(m2)) continue;
+      must = m2;
+      hold(must);
+    }
+    // Then a lit box the view cuts is pulled wholly into view when a pan can do it with what is held already: the
+    // largest part showing first. One that cannot be gets an edge sign (updateMarks).
     const v0 = camViewAt(k, centre);
     const shown = (b: Box) => (Math.max(0, Math.min(b.x + b.w, v0.x + v0.w) - Math.max(b.x, v0.x)) * Math.max(0, Math.min(b.y + b.h, v0.y + v0.h) - Math.max(b.y, v0.y))) / (b.w * b.h);
     const cut = design.tour[i].focus.map((id) => boxOf(id)).filter((b) => shown(b) > 0 && !within(b, v0, 0.5)).sort((a, b) => shown(b) - shown(a));
@@ -2795,46 +2838,153 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     // A failure is opened on for a beat, then the view follows the recovery and comes back to it.
     if (failing) start = rest;
     else if (!whole && pathLegs(i).length) start = camStartRegion(i, k);
-    return { k, rest, start, whole: whole && !start, landing, centre };
+    return { k, rest, start, whole: whole && !start, landing, centre, must };
   }
   /** Glide the zoom and the view centre together, and the page to y, in about 280ms (at once with reduced motion). Returns how long it takes. */
   /** Whether the camera is gliding to a new view: the edge signs wait until it stops. */
   let camGliding = false;
+  /** The camera's top speed, in px a millisecond (25px a frame at 60fps), and the shortest time for a move over 400px. */
+  const CAM_TOP = 1.5;
+  const CAM_LONG = 450;
+  /** How far a move of the view shifts what is on screen, in px: the worst of the canvas's middle and corners, and the page. */
+  function camShift(k0: number, c0: Pt, k1: number, c1: Pt, dy: number): number {
+    const v0 = camViewAt(k0, c0);
+    const v1 = camViewAt(k1, c1);
+    const cw = canvas.clientWidth;
+    const ch = canvas.clientHeight;
+    let d = 0;
+    for (const [sx, sy] of [[cw / 2, ch / 2], [0, 0], [cw, 0], [0, ch], [cw, ch]]) {
+      const ux = v0.x + sx / k0;
+      const uy = v0.y + sy / k0;
+      d = Math.max(d, Math.hypot((ux - v1.x) * k1 - sx, (uy - v1.y) * k1 - sy - dy));
+    }
+    return d;
+  }
+  /** Undo a cut's fade, if one was cut short. */
+  function camUnfade(): void {
+    if (svg.style.opacity) svg.style.opacity = '';
+  }
   function camGlide(k1: number, c1: Pt, y1: number, ms = 280): number {
     cancelAnimationFrame(followRaf);
     camGliding = false;
+    camUnfade();
     const k0 = tourK ?? k1;
     const v = camView();
     const c0 = tourK == null ? c1 : { x: v.x + v.w / 2, y: v.y + v.h / 2 };
     const y0 = window.scrollY;
     if (tourK == null || reducedMotion() || (Math.abs(k1 - k0) < 0.002 && Math.hypot(c1.x - c0.x, c1.y - c0.y) * k1 < 1 && Math.abs(y1 - y0) < 1)) {
+      const entering = tourK == null && !reducedMotion();
       camApply(k1, c1.x, c1.y);
       if (Math.abs(y1 - window.scrollY) > 0.5) window.scrollTo(0, y1);
       requestAnimationFrame(() => alive && updateMarks());
+      // The tour starting on a phone: the diagram is zoomed and placed for it at once, so it fades in rather than jump.
+      if (entering) {
+        let run = 0;
+        let last = performance.now();
+        svg.style.opacity = '0';
+        const fadeIn = (now: number) => {
+          run += Math.max(0, Math.min(25, now - last));
+          last = Math.max(last, now);
+          const t = Math.min(1, run / (2 * FADE));
+          svg.style.opacity = t < 1 ? t.toFixed(2) : '';
+          if (t < 1 && alive) followRaf = requestAnimationFrame(fadeIn);
+        };
+        followRaf = requestAnimationFrame(fadeIn);
+      }
       return 0;
     }
+    // Never faster than the top speed: the ease peaks at twice its mean speed, and the zoom adds a little. A move over 400px takes
+    // at least 450ms. A jump further than the canvas is wide is a cut: the view fades out, moves unseen and fades back in.
+    const dist = camShift(k0, c0, k1, c1, y1 - y0);
+    const cut = dist > canvas.clientWidth;
+    ms = cut ? 2 * FADE + 60 : Math.max(ms, (dist * 2.5) / CAM_TOP, dist > 400 ? CAM_LONG : 0);
     const t0 = performance.now();
     camGliding = true;
     if (marks.firstChild) marks.replaceChildren();
     if (dock.firstChild) dock.replaceChildren();
+    let moved = false;
+    // The glide's own clock: a frame stamped before it began (after a long task) counts as its start, and a late frame
+    // moves it on by at most 25ms, so a stall on a slow phone slows the view down rather than making it jump.
+    let last = t0;
+    let run = 0;
     const step2 = (now: number) => {
       if (!alive || !cam) {
         camGliding = false;
+        camUnfade();
         return;
       }
-      const t = Math.min(1, (now - t0) / ms);
-      const e = ease(t);
-      camApply(k0 + (k1 - k0) * e, c0.x + (c1.x - c0.x) * e, c0.y + (c1.y - c0.y) * e);
-      window.scrollTo(0, y0 + (y1 - y0) * e);
+      run += Math.max(0, Math.min(25, now - last));
+      last = Math.max(last, now);
+      const t = Math.min(1, run / ms);
+      if (cut) {
+        const f = (FADE / ms);
+        svg.style.opacity = t < f ? (1 - t / f).toFixed(2) : t > 1 - f ? ((t - (1 - f)) / f).toFixed(2) : '0';
+        if (t >= 0.5 && !moved) {
+          moved = true;
+          camApply(k1, c1.x, c1.y);
+          window.scrollTo(0, y1);
+        }
+      } else {
+        const e = ease(t);
+        camApply(k0 + (k1 - k0) * e, c0.x + (c1.x - c0.x) * e, c0.y + (c1.y - c0.y) * e);
+        window.scrollTo(0, y0 + (y1 - y0) * e);
+      }
       if (t < 1) followRaf = requestAnimationFrame(step2);
       else {
         // The view has come to a stop: the signs are worked out for where it stopped.
         camGliding = false;
+        camUnfade();
         updateMarks();
       }
     };
     followRaf = requestAnimationFrame(step2);
     return ms;
+  }
+  /**
+   * On a phone with More open, the step's words lie over the top of the canvas. The canvas gets that much more room above
+   * the diagram (so a box at the very top can still be brought down into view) and the view rests low enough that the
+   * box the step ends at, with the token's label, shows under the words.
+   */
+  let coverPad = 0;
+  const coverPx = () => (cam && moreOpen && overlayMore() && step >= 0 ? Math.max(0, Math.round(head.getBoundingClientRect().bottom - canvas.getBoundingClientRect().top)) : 0);
+  function setCover(px: number): void {
+    if (px === coverPad) return;
+    const d = px - coverPad;
+    coverPad = px;
+    canvas.style.paddingTop = px ? `calc(${px}px + 12px)` : '';
+    // The diagram keeps its place on screen: the canvas scrolls by what was added above it.
+    canvas.scrollTop += d;
+  }
+  function restCentre(p: { k: number; centre: Pt; must: Box }): Pt {
+    if (!coverPad) return p.centre;
+    const half = canvas.clientHeight / 2;
+    const pad = CAM_PAD / p.k;
+    for (const m of [p.must, endBox(step)]) {
+      const hi = m.y - pad + (half - coverPad) / p.k;
+      const lo = m.y + m.h + pad - half / p.k;
+      if (lo <= hi) return { x: p.centre.x, y: Math.max(lo, Math.min(hi, p.centre.y)) };
+    }
+    return { x: p.centre.x, y: endBox(step).y - pad + (half - coverPad) / p.k };
+  }
+  let coverTimer = 0;
+  /** More opened or closed on a phone: the view moves down to clear the words, or back up to the step's rest. */
+  function camMore(): void {
+    clearTimeout(coverTimer);
+    if (!cam || !camPlan || tourK == null || fitted || step < 0) return;
+    const plan = camPlan;
+    if (moreOpen) {
+      setCover(coverPx());
+      if (stage.dataset.phase !== 'trip') camGlide(plan.k, restCentre(plan), window.scrollY);
+      return;
+    }
+    if (!coverPad) return;
+    const was = coverPad;
+    coverPad = 0;
+    const to = restCentre(plan);
+    coverPad = was;
+    // Back to the rest view first, with the room still there, then the room goes without the diagram moving.
+    const ms = stage.dataset.phase !== 'trip' ? camGlide(plan.k, { x: to.x, y: to.y }, window.scrollY) : 0;
+    coverTimer = window.setTimeout(() => alive && !moreOpen && setCover(0), ms + 20);
   }
   /** The page sits with the stage at the top of the screen for the whole tour: the readout, then the canvas. */
   const camPageY = () => Math.max(0, Math.min(stage.getBoundingClientRect().top + window.scrollY, document.documentElement.scrollHeight - innerHeight));
@@ -2850,7 +3000,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     stepFits = p.whole;
     const motion = !reducedMotion();
     openBeat = motion && p.start ? BEAT : 0;
-    return camGlide(p.k, motion && p.start ? camCentre(p.start) : p.centre, camPageY());
+    setCover(coverPx());
+    return camGlide(p.k, motion && p.start ? camCentre(p.start) : restCentre(p), camPageY());
   }
   /**
    * The trip has ended: the view comes to rest on the step's rest frame,
@@ -2864,7 +3015,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     clearTimeout(camHoldTimer);
     if (!cam || !camPlan || tourK == null) return 0;
     const plan = camPlan;
-    const settle = () => camGlide(plan.k, plan.centre, window.scrollY, CATCH_UP);
+    const settle = () => camGlide(plan.k, restCentre(plan), window.scrollY, CATCH_UP);
     if (plan.landing && !reducedMotion() && step >= 0) {
       const at = step;
       const ms = camGlide(plan.k, camCentre(plan.landing), window.scrollY, CATCH_UP);
@@ -3265,6 +3416,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
    */
   function follow(i: number, force = false): number {
     cancelAnimationFrame(followRaf);
+    camGliding = false;
+    camUnfade();
     const sr = stage.getBoundingClientRect();
     const vh = innerHeight;
     if (!force && (sr.bottom < 40 || sr.top > vh - 40)) return 0;
@@ -3315,6 +3468,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   /** Glide the page and the canvas together to a place: returns how long that takes (0 when already there, or with reduced motion). */
   function glide(sl0: number, y0: number): number {
     cancelAnimationFrame(followRaf);
+    camGliding = false;
+    camUnfade();
     const sl = Math.max(0, Math.min(sl0, canvas.scrollWidth - canvas.clientWidth));
     const y = Math.max(0, Math.min(y0, document.documentElement.scrollHeight - innerHeight));
     const fromY = window.scrollY;
@@ -3329,7 +3484,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const ms = Math.min(520, 260 + Math.max(Math.abs(y - fromY), Math.abs(sl - fromL)) * 0.6);
     const step2 = (now: number) => {
       if (!alive) return;
-      const t = Math.min(1, (now - t0) / ms);
+      const t = Math.max(0, Math.min(1, (now - t0) / ms));
       const e = ease(t);
       window.scrollTo(0, fromY + (y - fromY) * e);
       canvas.scrollLeft = fromL + (sl - fromL) * e;
@@ -3498,6 +3653,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     trip = null;
     cancelGlance();
     hideToken(branchTok);
+    hideToken(ghost);
     // A token far from where this trip starts goes at once (no fade where it was): the trip fades it in at its start.
     const first = startOf(i);
     if (token.at && Math.hypot(token.at.x - first.x, token.at.y - first.y) > JUMP) hideToken();
@@ -3576,6 +3732,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       trip = null;
       cancelGlance();
       hideToken(branchTok);
+      hideToken(ghost);
       hideToken();
       // On a phone the view pans to the step with the token already waiting where it sets off, so it is never lost. A step
       // about a failure shows the token there too, at every size, through the beat it opens on: never an empty diagram.
@@ -3668,6 +3825,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     clearTimeout(starting);
     starting = 0;
     cancelAnimationFrame(followRaf);
+    camGliding = false;
+    camUnfade();
     const beforeY = window.scrollY;
     playing = false;
     cancelAnimationFrame(raf);
@@ -3681,6 +3840,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     step = -1;
     hideToken();
     hideToken(branchTok);
+    hideToken(ghost);
     token.g.classList.remove('waiting');
     if (moreOpen) setMore(false, true);
     if (fromButton) playBtn.focus({ preventScroll: true });

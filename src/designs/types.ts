@@ -152,6 +152,8 @@ export interface Design {
   drills: { name: string; what: string }[];
   interview: string[];
   sources: { label: string; href?: string; note: string }[];
+  /** Extra lines for the key's notes, each shown under the note for its kind of line (a chip word this design uses, say). */
+  keyNotes?: { mode: Mode; text: string }[];
   /** Terms worth being able to look up. `where` is the component the term belongs to. */
   glossary: { term: string; also?: string[]; text: string; where?: string; see?: { id: string; label: string } }[];
 }
