@@ -1689,6 +1689,47 @@ main:has(> .design) {
   color: var(--ink-2);
 }
 
+/* The step as a short account: where we are, the problem, what it costs, the fix. */
+.hld-story {
+  margin: 14px 0 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+  gap: 12px 36px;
+}
+
+.hld-story dt {
+  font-weight: 700;
+}
+
+.hld-story dd {
+  margin: 2px 0 0;
+  max-width: 68ch;
+  line-height: 1.5;
+}
+
+.hld-explain h3 {
+  margin: 20px 0 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+/* A product named on a box: what it is, then why it is the one used here. */
+.hld-built {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.hld-built dt {
+  font-weight: 700;
+}
+
+.hld-built dd {
+  margin: 1px 0 0;
+  max-width: 68ch;
+  line-height: 1.5;
+}
+
 .hld-qa {
   margin: 12px 0 0;
   display: grid;

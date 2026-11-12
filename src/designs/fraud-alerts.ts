@@ -876,6 +876,36 @@ export const fraudAlerts: Design = {
       how: 'POST /payments with an idempotency key chosen by the client, the payee, the amount and the device\'s identity. The payee goes through Confirmation of Payee first, when the payee is new.',
       delivery: 'Safe to repeat: the same idempotency key returns the same payment, never a second one.',
       alts: ['An Open Banking payment initiated by another app on the owner\'s behalf.', 'A card authorisation from the card network, with a much tighter deadline.'],
+      examples: [
+        { title: 'Request', lang: 'http', code: `POST /payments HTTP/1.1
+Host: api.bank.example
+Authorization: Bearer <session token>
+Idempotency-Key: 6f1c2e0a-4b7d-4e8a-9d3f-2a5b8c1e7f40
+Content-Type: application/json
+
+{
+  "account_id": "acc_51207",
+  "scheme": "FPS",
+  "payee_id": "pye_77310",
+  "amount_pence": 480000,
+  "currency": "GBP",
+  "device": {
+    "id": "dev_web_9c1e",
+    "kind": "browser"
+  }
+}`,
+          note: 'The client chose the Idempotency-Key, so sending this again returns pay_8KD3F2, never a second payment.' },
+        { title: 'Response (the reply: pending)', lang: 'http', code: `HTTP/1.1 202 Accepted
+Location: /payments/pay_8KD3F2
+Content-Type: application/json
+
+{
+  "payment_id": "pay_8KD3F2",
+  "status": "pending",
+  "message": "We are checking this payment."
+}`,
+          note: 'Pending says nothing about suspicion; the final state comes later through the inbox or a refresh.' },
+      ],
       ways: [
         { name: 'HTTPS', chosen: true, what: 'POST /payments from the app, the web or the API, with a client-chosen idempotency key, the payee, the amount and the device\'s identity. The service answers "pending" while it checks.',
           pros: [
@@ -918,6 +948,52 @@ export const fraudAlerts: Design = {
       how: 'Score(payment, account, device, payee) with a deadline of 150 ms. The request carries everything the payment service already knows, so the engine does not call back.',
       delivery: 'One try within the deadline. On timeout the payment service applies its fallback policy and logs that it did.',
       alts: ['An asynchronous score after submission, which is too late for Faster Payments.', 'The rules compiled into the payment service as a library, with no network hop but slower to change.'],
+      examples: [
+        { title: 'Service definition', lang: 'proto', code: `service RiskEngine {
+  rpc Score(ScoreRequest) returns (Verdict);
+}
+
+message ScoreRequest {
+  Payment payment = 1;  // id, amount_pence, scheme, created_at
+  Account account = 2;  // id, business_id
+  Device device = 3;    // id, kind, bound, country
+  Payee payee = 4;      // id, added_at
+}
+
+message Verdict {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ALLOW = 1;
+    WARN = 2;
+    HOLD = 3;
+    BLOCK = 4;
+  }
+  Action action = 1;
+  double score = 2;
+  repeated string reasons = 3;
+  string model_version = 4;
+  string rules_version = 5;
+}` },
+        { title: 'Example call (the reply: hold)', lang: 'text', code: `Score, deadline 150 ms
+{
+  payment: { id: "pay_8KD3F2", amount_pence: 480000,
+             scheme: "FPS", created_at: "2026-11-13T23:40:12Z" },
+  account: { id: "acc_51207", business_id: "biz_3318" },
+  device:  { id: "dev_web_9c1e", kind: "browser",
+             bound: false, country: "NL" },
+  payee:   { id: "pye_77310", added_at: "2026-11-13T23:38:05Z" }
+}
+
+reply
+{
+  action: HOLD,
+  score: 0.93,
+  reasons: ["new_device", "new_payee_velocity", "unusual_hour"],
+  model_version: "model-2026-11-02",
+  rules_version: "rules-418"
+}`,
+          note: 'The reply names the model and rule versions, so the logged decision can be replayed; on a timeout there is no reply and the fallback policy applies.' },
+      ],
       ways: [
         { name: 'gRPC', chosen: true, what: 'Score(payment, account, device, payee) with a 150 ms deadline. The request carries everything the payment service knows, so the engine never calls back.',
           pros: [
@@ -960,6 +1036,32 @@ export const fraudAlerts: Design = {
       how: 'One round trip: a short script reads the account\'s feature hash and increments the short-window counters for this payment, atomically.',
       delivery: 'A timeout of about 10 ms. Missing features are marked missing, not zero.',
       alts: ['A feature service in front of the store, as Monzo\'s feature loader, which resolves a graph of features with a timeout.', 'Reading features from a stream processor\'s state.'],
+      examples: [
+        { title: 'Commands', lang: 'text', code: `# One round trip: the engine runs one stored script
+EVALSHA <sha> 1 feat:acc_51207 480000 dev_web_9c1e NL
+# Inside the script, as one atomic step:
+HGETALL feat:acc_51207
+# -> new_payees_1h 3, pays_1h 0, sent_today_pence 0,
+#    late_pays_ytd 0, dev:dev_ios_41a2 1, cc:GB 1
+HINCRBY feat:acc_51207 pays_1h 1
+# -> 1: this payment is counted
+HINCRBY feat:acc_51207 sent_today_pence 480000
+# -> 480000
+HINCRBY feat:acc_51207 late_pays_ytd 1
+# -> 1: the first payment after 23:00 this year
+# The script returns the old hash and the new counts.`,
+          note: 'Read and increment run inside one script, so two payments at the same moment both count.' },
+        { title: 'Reply (velocity)', lang: 'json', code: `{
+  "new_payees_1h": 3,
+  "pays_1h": 1,
+  "sent_today_pence": 480000,
+  "late_pays_ytd": 1,
+  "device_seen": false,
+  "country_seen": false,
+  "missing": []
+}`,
+          note: 'A feature that did not resolve within about 10 ms is listed under missing, never returned as zero.' },
+      ],
       ways: [
         { name: 'Redis', chosen: true, what: 'One round trip runs a short script in Redis that reads the account\'s feature hash and increments its short-window counters, atomically. The timeout is about 10 ms.',
           pros: [
@@ -1002,6 +1104,41 @@ export const fraudAlerts: Design = {
       how: 'The held state and an outbox row commit in one transaction. Change data capture reads the database\'s log and publishes each outbox row to Kafka, keyed by account id.',
       delivery: 'At-least-once. The relay can publish and crash before it records that it did, so every event carries a deterministic id and readers ignore repeats.',
       alts: ['A relay that polls the outbox table, which is simpler but adds polling delay.', 'Publishing straight to Kafka after the commit, which is the dual write this avoids.'],
+      examples: [
+        { title: 'One transaction', lang: 'sql', code: `BEGIN;
+UPDATE payments
+   SET status = 'held',
+       version = 2,
+       hold_expires_at = '2026-11-19 23:59:59+00'
+ WHERE payment_id = 'pay_8KD3F2'
+   AND status = 'pending'
+   AND version = 1;
+-- 1 row; 0 rows would mean something else moved it first
+
+INSERT INTO outbox (event_id, account_id, event_type, payload)
+VALUES ('pay_8KD3F2:2', 'acc_51207', 'payment.held', $1);
+-- $1 is the message value shown on the next connection
+COMMIT;`,
+          note: 'The event id is the payment id and its version, so a row published twice carries the same id and readers drop the repeat.' },
+        { title: 'Change event read from the database log', lang: 'json', code: `{
+  "table": "outbox",
+  "op": "insert",
+  "before": null,
+  "after": {
+    "event_id": "pay_8KD3F2:2",
+    "account_id": "acc_51207",
+    "event_type": "payment.held",
+    "payload": "<the message value, next connection>"
+  },
+  "committed_at": "2026-11-13T23:40:12Z"
+}`,
+          note: 'A generic shape, not any one connector\'s format: an insert with no before and the new row after.' },
+        { title: 'Topic and key', lang: 'text', code: `topic      payment-events
+key        acc_51207   (account id)
+value      the outbox row's payload, JSON
+partition  hash(key) mod the number of partitions`,
+          note: 'Keyed by account, every event for the café lands on one partition, so "rejected" is never read before "held".' },
+      ],
       ways: [
         { name: 'CDC', chosen: true, what: 'Change data capture reads the database\'s own log and publishes each committed outbox row to Kafka, keyed by account. The payment service only writes to its database.',
           pros: [
@@ -1039,6 +1176,40 @@ export const fraudAlerts: Design = {
       how: 'The alert service\'s consumer group reads the partitions of payment-events. It acts on events that need a person (held, blocked, released, card frozen) and ignores the rest.',
       delivery: 'At-least-once, in order per account. Offsets are committed only after the alert is written and its sends are queued.',
       alts: ['A topic of risk decisions published by the engine, which separates "held" from the payment\'s own record.', 'A webhook from the payment service, with retries to build.'],
+      examples: [
+        { title: 'Message value', lang: 'json', code: `{
+  "event_id": "pay_8KD3F2:2",
+  "event_type": "payment.held",
+  "payment_id": "pay_8KD3F2",
+  "version": 2,
+  "account_id": "acc_51207",
+  "business_id": "biz_3318",
+  "scheme": "FPS",
+  "amount_pence": 480000,
+  "currency": "GBP",
+  "payee": { "id": "pye_77310", "new": true },
+  "device": { "id": "dev_web_9c1e", "bound": false },
+  "risk": {
+    "action": "HOLD",
+    "reasons": ["new_device", "new_payee_velocity",
+                "unusual_hour"]
+  },
+  "hold_expires_at": "2026-11-19T23:59:59Z",
+  "occurred_at": "2026-11-13T23:40:12Z"
+}` },
+        { title: 'What the consumer does', lang: 'text', code: `group alerts, reading payment-events
+payment.held      alert_id = hash(payment_id, "payment.held")
+                  shown as A-91 on this page
+                  write the alert, resolve the plan, queue sends
+payment.rejected  close A-91 as answered, cancel later steps
+payment.created   ignore
+payment.sent      ignore
+
+commit the offset only after the alert row and its jobs
+are written; after a crash the event is read again and
+finds A-91 already there`,
+          note: 'The alert id comes from the payment id and the reason, so a second copy of the event creates nothing new.' },
+      ],
       ways: [
         { name: 'Kafka', chosen: true, what: 'The alert service\'s consumer group reads payment-events, acts on held, blocked, released and card frozen, and ignores the rest. Offsets are committed only after the alert is written and its sends are queued.',
           pros: [
@@ -1076,6 +1247,53 @@ export const fraudAlerts: Design = {
       how: 'Resolve(business, category, amount, time) returns a plan: people, channels in order, language, which rules were overridden and why.',
       delivery: 'A timeout of 50 ms. On failure the alert service uses its cached plan or the mandatory default, and records that it did.',
       alts: ['A local copy of preferences in the alert service, kept current by change data capture.', 'Preferences sent inside every event, which goes stale as soon as someone changes a setting.'],
+      examples: [
+        { title: 'Service definition', lang: 'proto', code: `service Preferences {
+  rpc Resolve(ResolveRequest) returns (Plan);
+}
+
+message ResolveRequest {
+  string business_id = 1;
+  string category = 2;      // "security"
+  int64 amount_pence = 3;
+  string at = 4;            // when the event happened
+}
+
+message Plan {
+  repeated Recipient recipients = 1;
+  repeated string overrides = 2;  // which rule, and why
+}
+
+message Recipient {
+  string person_id = 1;
+  string role = 2;
+  string language = 3;
+  bool can_answer = 4;
+  repeated Step steps = 5;  // channel, after_seconds
+}` },
+        { title: 'Example call (the reply: plan)', lang: 'text', code: `Resolve, deadline 50 ms
+{ business_id: "biz_3318", category: "security",
+  amount_pence: 480000, at: "2026-11-13T23:40:12Z" }
+
+reply
+{
+  recipients: [
+    { person_id: "per_1101", role: "owner", language: "en-GB",
+      can_answer: true,
+      steps: [ { channel: "push",  after_seconds: 0 },
+               { channel: "sms",   after_seconds: 90 },
+               { channel: "voice", after_seconds: 300 } ] },
+    { person_id: "per_1103", role: "director", language: "en-GB",
+      can_answer: true,
+      steps: [ { channel: "push", after_seconds: 600 } ] },
+    { person_id: "per_1102", role: "bookkeeper", language: "en-GB",
+      can_answer: false,
+      steps: [ { channel: "email", after_seconds: 0 } ] }
+  ],
+  overrides: ["owner quiet hours from 22:00: category security"]
+}`,
+          note: 'The override is named in the plan, and the plan is stored with the alert, so the audit shows why the owner was woken.' },
+      ],
       ways: [
         { name: 'gRPC', chosen: true, what: 'Resolve(business, category, amount, time) returns a plan within 50 ms. On failure the alert service uses its cached plan or the mandatory default, and records that it did.',
           pros: [
@@ -1118,6 +1336,41 @@ export const fraudAlerts: Design = {
       how: 'Insert the alert with its id as the primary key, the plan, and the time of the next step. Later steps append events: sent, delivered, answered, closed.',
       delivery: 'Safe to repeat: inserting an alert id that exists does nothing, and events are keyed by alert id and step.',
       alts: ['Event-sourcing the alert into its own topic and building the inbox from it.', 'A document per alert, updated in place, which loses the history.'],
+      examples: [
+        { title: 'Write the alert before sending', lang: 'sql', code: `INSERT INTO alerts
+  (alert_id, created_at, payment_id, account_id, category,
+   severity, status, plan, next_step, next_step_at)
+VALUES
+  ('A-91', '2026-11-13 23:40:12+00', 'pay_8KD3F2',
+   'acc_51207', 'security', 'high', 'open', $1, 2,
+   '2026-11-13 23:41:42+00')
+ON CONFLICT DO NOTHING;
+-- $1 is the plan from Preferences, as JSON
+-- a second copy of the held event inserts nothing`,
+          note: 'The table is partitioned by month, so PostgreSQL needs created_at in the key; it is the event\'s own time, so a repeat still collides.' },
+        { title: 'Later steps append events', lang: 'sql', code: `INSERT INTO alert_events
+  (alert_id, alert_created_at, step, kind, at, detail)
+VALUES ('A-91', '2026-11-13 23:40:12+00', 1, 'push_accepted',
+        '2026-11-13 23:40:13+00', '{"provider": "apns"}')
+ON CONFLICT DO NOTHING;
+
+-- 23:43, after "not me" and the payment.rejected event
+BEGIN;
+INSERT INTO alert_events
+  (alert_id, alert_created_at, step, kind, at, detail)
+VALUES ('A-91', '2026-11-13 23:40:12+00', 2, 'answered',
+        '2026-11-13 23:43:05+00',
+        '{"answer": "not_me", "device": "dev_ios_41a2"}')
+ON CONFLICT DO NOTHING;
+UPDATE alerts
+   SET status = 'answered', answer = 'not_me',
+       next_step_at = NULL
+ WHERE alert_id = 'A-91'
+   AND created_at = '2026-11-13 23:40:12+00'
+   AND status IN ('open', 'sent', 'delivered');
+COMMIT;`,
+          note: 'Setting next_step_at to NULL is what cancels the call and the director: the timer is that column.' },
+      ],
       ways: [
         { name: 'SQL', chosen: true, what: 'Insert the alert with its id as the primary key, its plan and the time of its next step. Later steps append event rows keyed by alert id and step.',
           pros: [
@@ -1155,6 +1408,40 @@ export const fraudAlerts: Design = {
       how: 'One job per person and channel on the topic for the alert\'s priority: P0 for this one. Each job carries its dedup key, the template id, the language and an expiry.',
       delivery: 'At-least-once. The dedup key makes a repeated job harmless, and an expired job is dropped, because a fraud alert after the hold has ended only confuses people.',
       alts: ['Calling the workers directly, which loses buffering and retries.', 'One job per alert that the worker fans out, which hides failures per person.'],
+      examples: [
+        { title: 'Topic and key', lang: 'text', code: `topic  sends.p0   (others: sends.p1, sends.p2, sends.p3)
+key    A-91       (alert id: one alert's steps stay in order)
+value  one send job per person and channel, JSON
+
+for A-91 at 23:40:12:
+  A-91:per_1101:push:1    owner, push
+  A-91:per_1102:email:1   bookkeeper, email copy, no buttons
+at 23:41:42, step 2:
+  A-91:per_1101:sms:2     owner, SMS` },
+        { title: 'Message value', lang: 'json', code: `{
+  "job_id": "A-91:per_1101:push:1",
+  "alert_id": "A-91",
+  "person_id": "per_1101",
+  "channel": "push",
+  "step": 1,
+  "device_id": "dev_ios_41a2",
+  "template": "payment_held",
+  "language": "en-GB",
+  "params": { "amount_pence": 480000, "payee_new": true },
+  "expires_at": "2026-11-19T23:59:59Z"
+}`,
+          note: 'The job id is the dedup key (alert, person, channel, step), and expires_at is the end of the hold.' },
+        { title: 'Receipt read back from send-status', lang: 'json', code: `{
+  "job_id": "A-91:per_1101:sms:2",
+  "attempt": 1,
+  "alert_id": "A-91",
+  "channel": "sms",
+  "provider": "sms-a",
+  "outcome": "delivered",
+  "at": "2026-11-13T23:41:46Z"
+}`,
+          note: 'Recorded as an event row keyed by alert and step, so a repeated receipt changes nothing.' },
+      ],
       ways: [
         { name: 'Kafka', chosen: true, what: 'One job per person and channel on the topic for the alert\'s priority, each with its dedup key, template id, language and expiry.',
           pros: [
@@ -1197,6 +1484,35 @@ export const fraudAlerts: Design = {
       how: 'Each channel\'s workers read their own topics, with more consumers on P0 than on P3, and a separate quota with each provider for P0.',
       delivery: 'At-least-once. After the last retry a job goes to a dead-letter topic, and a P0 job there opens a case.',
       alts: ['Workers pulling from SQS queues per priority, with visibility timeouts for retries.'],
+      examples: [
+        { title: 'Topics and consumer groups', lang: 'text', code: `sends.p0, one consumer group per channel pool:
+  push-p0    takes jobs with channel "push"
+  sms-p0     takes jobs with channel "sms"
+  voice-p0   takes jobs with channel "voice"
+  email-p0   takes jobs with channel "email"
+P0 groups run more consumers than P3 groups, and use
+their own quota with each provider.
+
+before each provider call, an atomic set-if-absent:
+  dedup:A-91:per_1101:push:1   (kept until the hold ends)
+  -> set:     this worker sends
+  -> present: a copy already sent or is sending; skip
+
+after the last retry (about 1, 2 and 4 seconds):
+  topic sends.p0.dead-letter, key A-91, value the job
+  a P0 job there also opens a case` },
+        { title: 'Status message (the reply), key job id', lang: 'json', code: `{
+  "job_id": "A-91:per_1101:push:1",
+  "attempt": 1,
+  "alert_id": "A-91",
+  "channel": "push",
+  "provider": "apns",
+  "outcome": "accepted",
+  "detail": "200",
+  "at": "2026-11-13T23:40:13Z"
+}`,
+          note: 'Accepted means Apple has it, not that anyone saw it, so the 90-second timer keeps running.' },
+      ],
       ways: [
         { name: 'Kafka', chosen: true, what: 'Each channel\'s workers read their own priority topics, with more consumers on P0 than on P3. After the last retry a job goes to a dead-letter topic.',
           pros: [
@@ -1239,6 +1555,50 @@ export const fraudAlerts: Design = {
       how: 'A POST to APNs with apns-priority 10, push type alert, the Time Sensitive interruption level, a collapse id of the alert id, and an expiry at the end of the hold. FCM gets the same message at high priority.',
       delivery: 'Best effort. Connections are kept open for hours and reused, and each request has its own id for tracing.',
       alts: ['FCM for both platforms.', 'A silent push that makes the app fetch the alert, which iOS may delay or skip.'],
+      examples: [
+        { title: 'Request to APNs', lang: 'http', code: `POST /3/device/<token of the owner's iPhone>
+apns-push-type: alert
+apns-priority: 10
+apns-collapse-id: A-91
+apns-expiration: 1795132799
+apns-topic: <the app's bundle id>
+authorization: bearer <provider token>
+
+{
+  "aps": {
+    "alert":
+      "A payment of £4,800 to a new payee is on hold. Was this you?",
+    "interruption-level": "time-sensitive",
+    "category": "PAYMENT_HOLD"
+  },
+  "alert_id": "A-91"
+}`,
+          note: 'Expiry 1795132799 is 23:59:59 on 19 November, the end of the hold; header and aps names are Apple\'s, alert_id and PAYMENT_HOLD are the app\'s own.' },
+        { title: 'The same alert through FCM (generic)', lang: 'text', code: `to            the owner's Android device token
+priority      high
+collapse      A-91
+time to live  until 2026-11-19 23:59:59
+text          A payment of £4,800 to a new payee is on hold.
+              Was this you?
+data          alert_id A-91, two actions
+
+Shown as fields, not as FCM's own request format.` },
+        { title: 'Responses (the reply: 200 or 410)', lang: 'http', code: `HTTP/2 200
+apns-id: <Apple's id for this request>
+-- accepted: queued by Apple, not seen by anyone
+
+HTTP/2 410
+{"reason": "Unregistered"}
+-- the token is dead: delete it, go to the SMS step now
+
+HTTP/2 429
+{"reason": "TooManyRequests"}
+
+HTTP/2 503
+{"reason": "ServiceUnavailable"}
+-- retry with backoff; a run of these opens the breaker`,
+          note: 'Only the status decides what happens next; a 200 never stops the escalation timer.' },
+      ],
       ways: [
         { name: 'HTTP/2', chosen: true, what: 'A POST to APNs over a long-lived HTTP/2 connection: priority 10, Time Sensitive, the alert id as collapse id, and an expiry at the end of the hold. FCM gets the same message at high priority.',
           pros: [
@@ -1281,6 +1641,51 @@ export const fraudAlerts: Design = {
       how: 'A request to the SMS provider with the text and a status callback address. The worker picks the provider by weight and by each provider\'s breaker.',
       delivery: 'At-least-once from the worker. A provider may also retry inside its own network.',
       alts: ['A direct connection to a mobile network, which only very large senders have.', 'A voice call first for very large amounts.'],
+      examples: [
+        { title: 'Request to an SMS provider (generic)', lang: 'http', code: `POST /messages HTTP/1.1
+Host: sms-a.example
+Authorization: Bearer <API key>
+Content-Type: application/json
+
+{
+  "client_ref": "A-91:per_1101:sms:2",
+  "to": "+447700900123",
+  "sender": "YOURBANK",
+  "text": "<the SMS text, next block>",
+  "status_callback":
+    "https://notify.bank.example/sms/status"
+}
+
+HTTP/1.1 202 Accepted
+
+{ "message_id": "sms-a-55130", "status": "queued" }`,
+          note: 'Field names are generic, not any provider\'s API; client_ref carries the job id so receipts can be matched.' },
+        { title: 'The SMS text, and the call at 5 minutes', lang: 'text', code: `SMS, step 2 at 90 seconds, to the verified number:
+  Your bank: a payment from your business account is on
+  hold. Open the app to check it. We will never ask you to
+  move money to another account.
+
+Call, step 3 at 5 minutes, through the voice provider:
+  "A payment from your business account is on hold.
+   If you did not make it, press 1. Otherwise, open the
+   app to confirm it."
+  key 1 -> "not me", passed to the reply service`,
+          note: 'No link, no code and no way to release money: a SIM swap would give the attacker this text.' },
+        { title: 'Status callback (the reply: delivered)', lang: 'http', code: `POST /sms/status HTTP/1.1
+Host: notify.bank.example
+X-Signature: <provider's signature of the body>
+Content-Type: application/json
+
+{
+  "message_id": "sms-a-55130",
+  "client_ref": "A-91:per_1101:sms:2",
+  "status": "delivered",
+  "at": "2026-11-13T23:41:46Z"
+}
+
+HTTP/1.1 204 No Content`,
+          note: 'Delivered means the carrier confirmed it; no callback within 60 seconds counts as unknown, not failed.' },
+      ],
       ways: [
         { name: 'HTTPS', chosen: true, what: 'A request to the chosen provider with the text and a status callback address. The worker picks the provider by weight and by each provider\'s breaker.',
           pros: [
@@ -1322,6 +1727,24 @@ export const fraudAlerts: Design = {
       how: 'Apple or Google delivers the notification over the phone\'s own connection to them, and the phone shows it on the lock screen with its two actions.',
       delivery: 'No promise. If the phone is offline, APNs stores one notification for the app, usually the latest.',
       alts: ['The app\'s own WebSocket, which reaches the phone only while the app is open.'],
+      examples: [
+        { title: 'On the lock screen', lang: 'text', code: `YOUR BANK                                    now
+A payment of £4,800 to a new payee is on hold.
+Was this you?
+
+   [ Not me ]          [ Yes, it was me ]
+
+No account number, no balance, no link.`,
+          note: 'Time Sensitive lets it through the owner\'s Focus; collapse id A-91 means a duplicate replaces this one.' },
+        { title: 'What the app gets when an action is tapped', lang: 'text', code: `action    NOT_ME          (runs only on an unlocked phone)
+alert_id  A-91            (from the push payload)
+then      POST /alerts/A-91/answer, signed by the bound key
+
+action    YES_IT_WAS_ME   (opens the app)
+then      strong authentication for £4,800 to pye_77310,
+          then POST /alerts/A-91/answer`,
+          note: 'The action names are the app\'s own, defined for category PAYMENT_HOLD; iOS hands the app the action and the payload.' },
+      ],
       ways: [
         { name: 'push', chosen: true, what: 'Apple or Google delivers over the phone\'s own connection to them, and the phone shows the alert on the lock screen with its two actions.',
           pros: [
@@ -1358,6 +1781,49 @@ export const fraudAlerts: Design = {
       how: 'POST /alerts/{id}/answer from the app with the answer, signed by the device\'s bound key. "Yes" also carries a strong authentication result tied to the amount and payee.',
       delivery: 'Safe to repeat: keyed by alert id, so a second tap gets the first result.',
       alts: ['An SMS reply through the provider\'s webhook, accepted for "not me" only.', 'A key press on the voice call, also "not me" only.'],
+      examples: [
+        { title: 'Request ("Not me")', lang: 'http', code: `POST /alerts/A-91/answer HTTP/1.1
+Host: api.bank.example
+Authorization: Bearer <app session>
+Device-Id: dev_ios_41a2
+Device-Signature: <bound key's signature of the body>
+Content-Type: application/json
+
+{
+  "answer": "not_me",
+  "signed_at": "2026-11-13T23:43:05Z"
+}`,
+          note: 'The alert id in the path is the idempotency key, and the signature proves the answer came from the bound phone.' },
+        { title: 'Response (the reply: blocked)', lang: 'http', code: `HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "alert_id": "A-91",
+  "result": "blocked",
+  "payment": { "id": "pay_8KD3F2", "status": "rejected" },
+  "cards": "frozen",
+  "sessions_ended": 1,
+  "shown": [
+    "Your payment of £4,800 has been stopped.",
+    "Your cards are frozen.",
+    "Our fraud team will be in touch."
+  ]
+}`,
+          note: 'A second tap, or a retried request, gets this same body back.' },
+        { title: 'What "Yes, it was me" would carry', lang: 'http', code: `POST /alerts/A-91/answer HTTP/1.1
+Device-Id: dev_ios_41a2
+Device-Signature: <bound key's signature of the body>
+
+{
+  "answer": "yes",
+  "sca": {
+    "amount_pence": 480000,
+    "payee_id": "pye_77310",
+    "auth_code": "<code bound to this amount and payee>"
+  }
+}`,
+          note: 'Dynamic linking: the code is specific to £4,800 and pye_77310, so changing either invalidates it.' },
+      ],
       ways: [
         { name: 'HTTPS', chosen: true, what: 'POST /alerts/{id}/answer from the app, signed by the device\'s bound key. "Yes" also carries a strong authentication result tied to the amount and payee.',
           pros: [
@@ -1400,6 +1866,44 @@ export const fraudAlerts: Design = {
       how: 'Reject(payment, reason) and FreezeCards(account), or Release(payment, authentication result). Each carries the alert id as its idempotency key.',
       delivery: 'Safe to repeat. A payment that is no longer held, because it expired or someone else already answered, returns its current state.',
       alts: ['Publishing the answer as an event that the payment service consumes, which is simpler to scale but slower to confirm to the owner.'],
+      examples: [
+        { title: 'Service definition', lang: 'proto', code: `service PaymentService {
+  rpc Reject(RejectRequest) returns (PaymentState);
+  rpc FreezeCards(FreezeCardsRequest) returns (CardsState);
+  rpc Release(ReleaseRequest) returns (PaymentState);
+}
+message RejectRequest {
+  string payment_id = 1;
+  string reason = 2;
+  string idempotency_key = 3;   // the alert id
+}
+message FreezeCardsRequest {
+  string account_id = 1;
+  string idempotency_key = 2;   // the alert id
+}
+message ReleaseRequest {
+  string payment_id = 1;
+  bytes sca_result = 2;         // tied to amount and payee
+  string idempotency_key = 3;   // the alert id
+}
+message PaymentState {
+  string payment_id = 1;
+  string status = 2;            // held, rejected, sent
+  int64 version = 3;
+}
+message CardsState { string account_id = 1; bool frozen = 2; }` },
+        { title: 'Example call (the reply: blocked)', lang: 'text', code: `Reject { payment_id: "pay_8KD3F2", reason: "owner_not_me",
+         idempotency_key: "A-91" }
+-> { payment_id: "pay_8KD3F2", status: "rejected", version: 3 }
+
+FreezeCards { account_id: "acc_51207", idempotency_key: "A-91" }
+-> { account_id: "acc_51207", frozen: true }
+
+the same Reject again, key A-91:
+-> { payment_id: "pay_8KD3F2", status: "rejected", version: 3 }
+   the first result; nothing is applied twice`,
+          note: 'Version 3 leaves through the outbox as event pay_8KD3F2:3, payment.rejected, which is how the alert service hears of it.' },
+      ],
       ways: [
         { name: 'gRPC', chosen: true, what: 'Reject and FreezeCards, or Release with the authentication result, each carrying the alert id as its idempotency key. The reply is the payment\'s new state.',
           pros: [
@@ -1442,6 +1946,34 @@ export const fraudAlerts: Design = {
       how: 'A change feed on the alert store turns alerts closed as "not me", expired without an answer, or sent to a vulnerable customer into cases.',
       delivery: 'At-least-once, keyed by alert id, so a replay finds the case already open.',
       alts: ['The alert service calling the case tool directly when it closes an alert.'],
+      examples: [
+        { title: 'Change event on the alerts table', lang: 'json', code: `{
+  "table": "alerts",
+  "op": "update",
+  "before": { "alert_id": "A-91", "status": "delivered" },
+  "after": {
+    "alert_id": "A-91",
+    "status": "answered",
+    "answer": "not_me",
+    "payment_id": "pay_8KD3F2",
+    "account_id": "acc_51207"
+  },
+  "committed_at": "2026-11-13T23:43:06Z"
+}`,
+          note: 'A generic change event: answered with "not me" is one of the three changes that open a case.' },
+        { title: 'Case opened', lang: 'text', code: `opens a case when an alert is answered "not me", expires
+unanswered, or went to a customer flagged as vulnerable
+
+case      case-A-91   (one per alert: a replay finds it open)
+queue     fraud operations
+timeline  from alert_events for A-91:
+  23:40:12  payment held, alert opened
+  23:40:13  push accepted by APNs
+  23:41:46  SMS delivered
+  23:43:05  "not me" from dev_ios_41a2
+  23:43:06  payment rejected, cards frozen`,
+          note: 'The case carries the same timeline the owner saw, so nobody has to rebuild it.' },
+      ],
       ways: [
         { name: 'CDC', chosen: true, what: 'A change feed on the alert store turns alerts closed as "not me", expired, or sent to a vulnerable customer into cases, keyed by alert id.',
           pros: [
@@ -1478,6 +2010,30 @@ export const fraudAlerts: Design = {
       how: 'Off the hot path. Every minute a sweeper reads alerts whose next step is overdue (a timer missed during a deploy, or a job lost to a bug) and enqueues the step again. The dedup keys make it safe.',
       delivery: 'Repeatable. It only enqueues steps that have no recorded result.',
       alts: ['A workflow engine\'s durable timers, which do this for you.', 'Trusting the timers, and finding out from a complaint.'],
+      examples: [
+        { title: 'Sweeper query, every minute', lang: 'sql', code: `SELECT a.alert_id, a.created_at, a.next_step
+  FROM alerts a
+ WHERE a.status IN ('open', 'sent', 'delivered')
+   AND a.next_step_at < now() - interval '10 seconds'
+   AND NOT EXISTS (
+         SELECT 1
+           FROM alert_events e
+          WHERE e.alert_id = a.alert_id
+            AND e.alert_created_at = a.created_at
+            AND e.step = a.next_step)
+ ORDER BY a.next_step_at
+ LIMIT 500;`,
+          note: 'Only steps with no recorded event come back, which is what makes running it twice safe.' },
+        { title: 'If the step 2 timer for A-91 were missed', lang: 'text', code: `23:41:42  next_step_at passes; a deploy is running,
+          nothing fires
+23:42:00  the sweeper finds A-91, step 2, no event yet
+          -> sends.p0, key A-91,
+             job A-91:per_1101:sms:2 (the same job id)
+
+if the first job went out after all, the worker finds
+dedup:A-91:per_1101:sms:2 already set and sends nothing`,
+          note: 'The job id is rebuilt from the alert, person, channel and step, so the sweeper\'s copy hits the same dedup key.' },
+      ],
       ways: [
         { name: 'sweeper', chosen: true, what: 'Every minute a sweeper reads alerts whose next step is overdue and enqueues that step again. The dedup keys make it safe.',
           pros: [

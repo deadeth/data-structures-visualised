@@ -520,6 +520,51 @@ export const ledger: Design = {
         how: 'The payment\'s id and state: pending while the scheme decides, then completed or failed.',
         delivery: 'Safe to ask again: the same key always returns the same payment.',
       },
+      examples: [
+        {
+          title: 'Request',
+          lang: 'http',
+          code: `POST /payments HTTP/1.1
+Host: api.bank.example
+Authorization: Bearer <access token, after SCA>
+Idempotency-Key: k7
+Content-Type: application/json
+
+{
+  "from_account": "81442",
+  "payee": {
+    "name": "Mill Lane Flour Ltd",
+    "sort_code": "12-34-56",
+    "account_number": "12345678"
+  },
+  "amount": 120000,
+  "currency": "GBP",
+  "reference": "INV 3318"
+}`,
+          note: 'k7 stands for a version 4 UUID made once, when the payment was drafted; every retry sends the same one.',
+        },
+        {
+          title: 'Response',
+          lang: 'http',
+          code: `HTTP/1.1 201 Created
+Content-Type: application/json
+
+{
+  "id": "pay_3fK9",
+  "status": "pending",
+  "amount": 120000,
+  "fee": 20,
+  "currency": "GBP"
+}
+
+The retry with Idempotency-Key: k7 gets this same status line
+and body, read from the saved result. No second payment.
+
+GET /payments/pay_3fK9   ->   200 OK
+{ "id": "pay_3fK9", "status": "completed" }`,
+          note: 'The amount is in pence: 120000 is £1,200. The fee of 20p is why the ledger holds 120020.',
+        },
+      ],
     },
     {
       id: 'send', from: 'api', to: 'fps', d: 'M310,172 V62', label: 'payment',
@@ -537,6 +582,39 @@ export const ledger: Design = {
         how: 'The scheme accepts or rejects the payment, usually within seconds.',
         delivery: 'Recorded in the payment state before the ledger is told, so a crash cannot lose it.',
       },
+      examples: [
+        {
+          title: 'Payment message (the fields that matter here)',
+          lang: 'text',
+          code: `To Faster Payments, directly or through a sponsor bank.
+The scheme's own message format is not shown.
+
+payment id   pay_3fK9        the same on every resend
+amount       120000 pence    £1,200.00
+currency     GBP
+payer        Bright Bakery Ltd, account 81442
+payee        Mill Lane Flour Ltd, 12-34-56 12345678
+reference    INV 3318
+
+Banking API: payment pay_3fK9 recorded as "sent"
+before the message leaves.`,
+        },
+        {
+          title: 'Reply, and what the API does with it',
+          lang: 'text',
+          code: `accepted   pay_3fK9
+  -> recorded on the payment, then PostPending (state: posted)
+
+rejected   pay_3fK9, with a reason
+  -> recorded on the payment, then VoidPending (state: voided)
+
+no answer before the timeout
+  -> state stays "sent"; the 120020p stays reserved
+  -> ask the scheme for the status of pay_3fK9,
+     then post or void`,
+          note: 'A timeout is not a rejection: the hold stays until the scheme answers for the same payment id.',
+        },
+      ],
     },
     {
       id: 'post', from: 'api', to: 'ledger', d: 'M390,200 H485', label: 'reserve, post, void',
@@ -554,6 +632,74 @@ export const ledger: Design = {
         how: 'The transaction id, its status and the account\'s resulting balances; or "insufficient funds".',
         delivery: 'The same answer for every repeat of the same key.',
       },
+      examples: [
+        {
+          title: 'Service definition',
+          lang: 'proto',
+          code: `service Ledger {
+  rpc CreateTransaction(CreateTransactionRequest) returns (Result);
+  rpc PostPending(PendingRequest) returns (Result);
+  rpc VoidPending(PendingRequest) returns (Result);
+}
+message Entry {
+  string account = 1;    // account id, or a house account name
+  string direction = 2;  // "debit" or "credit"
+  int64 amount = 3;      // pence, always positive
+}
+message CreateTransactionRequest {
+  string idempotency_key = 1;
+  string status = 2;           // "PENDING" or "POSTED"
+  string currency = 3;         // one currency per transaction
+  repeated Entry entries = 4;  // debits must equal credits
+  string reference = 5;
+}
+message PendingRequest {
+  string idempotency_key = 1;
+  int64 pending_txn_id = 2;    // the reservation to post or void
+}
+message Result {
+  int64 txn_id = 1;
+  string status = 2;  // PENDING, POSTED, VOIDED, INSUFFICIENT_FUNDS
+  int64 posted = 3; int64 available = 4;  // the payer's, afterwards
+}`,
+          note: 'GetBalance and ListEntries are left out to keep it short.',
+        },
+        {
+          title: 'Example call: reserve, then the retry',
+          lang: 'text',
+          code: `CreateTransaction
+{ "idempotency_key": "k7", "status": "PENDING",
+  "currency": "GBP", "reference": "pay_3fK9",
+  "entries": [
+    { "account": "81442", "direction": "debit", "amount": 120020 },
+    { "account": "fps_settlement", "direction": "credit",
+      "amount": 120000 },
+    { "account": "fee_income", "direction": "credit", "amount": 20 }
+  ] }
+-> { "txn_id": 900417, "status": "PENDING",
+     "posted": 842000, "available": 721980 }
+
+The app's retry reaches here as the same call with key k7
+-> the same reply, read from the saved result`,
+          note: 'The Ledger API turns fps_settlement and fee_income into sub-account 17 of each, by hashing transaction id 900417.',
+        },
+        {
+          title: 'Example call: post, and a refusal',
+          lang: 'text',
+          code: `PostPending
+{ "idempotency_key": "k7:post", "pending_txn_id": 900417 }
+-> { "txn_id": 900418, "status": "POSTED",
+     "posted": 721980, "available": 721980 }
+
+Had available been under 120020, the reserve would reply
+-> { "status": "INSUFFICIENT_FUNDS", "available": 61500 }
+   and nothing would have been written.
+
+GetBalance { "account": "81442" }
+-> { "posted": 721980, "available": 721980 }`,
+          note: 'Posting is a new transaction with its own key; it names the reservation instead of editing it.',
+        },
+      ],
     },
     {
       id: 'txn', from: 'ledger', to: 'db', d: 'M615,200 H700', label: 'one call',
@@ -571,6 +717,79 @@ export const ledger: Design = {
         how: 'The commit returns once the write-ahead log is flushed locally and one synchronous standby confirms it has flushed it too.',
         delivery: 'Durable on two machines when acknowledged.',
       },
+      examples: [
+        {
+          title: 'The one call (reserve, then post)',
+          lang: 'sql',
+          code: `-- Reserve: the Ledger API's single call for key k7
+SELECT * FROM apply_transaction(
+  p_key       => 'k7',
+  p_txn_id    => 900417,
+  p_status    => 'pending',
+  p_currency  => 'GBP',
+  p_reference => 'pay_3fK9',
+  p_entries   => '[
+    {"account": 81442, "direction": "debit",  "amount": 120020},
+    {"account": 2017,  "direction": "credit", "amount": 120000},
+    {"account": 3017,  "direction": "credit", "amount": 20}
+  ]'::jsonb);
+-- 2017, 3017: sub-account 17 of FPS settlement and of fee
+-- income, picked by hashing transaction id 900417
+
+-- Post, once the scheme has accepted
+SELECT * FROM post_pending(
+  p_key => 'k7:post', p_pending => 900417, p_txn_id => 900418);`,
+        },
+        {
+          title: 'What the function runs, as one transaction',
+          lang: 'sql',
+          code: `BEGIN;
+INSERT INTO idempotency_keys (key, txn_id, created_at)
+VALUES ('k7', 900417, now()) ON CONFLICT (key) DO NOTHING;
+-- no row inserted: k7 exists; return its saved result, stop
+
+-- balance rows in ascending account id: 2017, 3017, 81442
+UPDATE balances SET pending_in = pending_in + 120000,
+  version = version + 1 WHERE id = 2017;
+UPDATE balances SET pending_in = pending_in + 20,
+  version = version + 1 WHERE id = 3017;
+UPDATE balances SET pending = pending + 120020,
+  version = version + 1
+WHERE id = 81442 AND available >= 120020;
+-- 0 rows: raise insufficient funds; nothing above is kept
+
+INSERT INTO entries
+  (txn_id, account_id, direction, amount, currency, status)
+VALUES (900417, 81442, 'debit',  120020, 'GBP', 'pending'),
+       (900417,  2017, 'credit', 120000, 'GBP', 'pending'),
+       (900417,  3017, 'credit',     20, 'GBP', 'pending');
+-- debits must equal credits, or raise
+INSERT INTO outbox (txn_id, account_id, payload)
+VALUES (900417, 81442, v_event);
+UPDATE idempotency_keys SET result = v_result WHERE key = 'k7';
+COMMIT;  -- returns once one synchronous standby has it`,
+          note: 'The WHERE clause is the check and the UPDATE is the reserve, so no other payment can spend the money in between.',
+        },
+        {
+          title: 'The balance row, and a balance read',
+          lang: 'sql',
+          code: `CREATE TABLE balances (
+  id         bigint PRIMARY KEY,           -- account id
+  posted     bigint NOT NULL,              -- pence: ledger balance
+  pending    bigint NOT NULL DEFAULT 0,    -- debits held
+  pending_in bigint NOT NULL DEFAULT 0,    -- credits on the way
+  available  bigint GENERATED ALWAYS AS (posted - pending) STORED,
+  version    bigint NOT NULL DEFAULT 0
+);
+
+-- GetBalance, always on the primary
+SELECT posted, available, version FROM balances WHERE id = 81442;
+--  before:        posted 842000, available 842000, version 6
+--  after reserve: posted 842000, available 721980, version 7
+--  after post:    posted 721980, available 721980, version 8`,
+          note: 'Available is posted minus pending holds, so a hold lowers it at once while the ledger balance waits for the post.',
+        },
+      ],
     },
     {
       id: 'wal', from: 'db', to: 'replicas', d: 'M795,259 V330', label: 'commit log',
@@ -582,6 +801,32 @@ export const ledger: Design = {
         { name: 'Sync WAL', chosen: true, what: 'The primary streams its write-ahead log to both standbys, and the commit returns once either one confirms it has flushed the record: ANY 1 (s1, s2).', pros: ['Recovery point zero.', 'One standby can be lost with no pause in writes.'], cons: ['About a millisecond more per commit (an estimate).', 'If both standbys are lost, commits wait.'] },
         { name: 'Consensus replication with three voters', what: 'Three or more voters agree on each log record and elect a new leader themselves. A write commits once a majority has it.', pros: ['Failover needs no operator or separate tool.', 'The same recovery point of zero.'], cons: ['A database built around it, not stock Postgres.', 'At least three voters per shard.'] },
         { name: 'Asynchronous streaming', what: 'The primary streams the log without waiting. The commit returns once the record is on the primary\'s own disk.', pros: ['Lowest commit latency.', 'Standbys never slow payments.'], cons: ['Can lose the last seconds of payments on failover.', 'Not acceptable for a ledger.'] },
+      ],
+      examples: [
+        {
+          title: 'The setting on each primary',
+          lang: 'text',
+          code: `# postgresql.conf
+synchronous_standby_names = 'ANY 1 (s1, s2)'
+synchronous_commit = on
+
+# s1 and s2 are standbys in two other zones.
+# Further replicas stream asynchronously and serve statements.`,
+        },
+        {
+          title: 'One commit, in order',
+          lang: 'text',
+          code: `primary  writes the commit record for txn 900417 to its WAL
+primary  flushes it to its own disk
+primary  streams it to s1 and s2
+s2       flushes it and confirms first
+primary  returns from the call: 900417 is committed
+s1       confirms a moment later; nothing waited for it
+
+If the primary died after the commit returned, s2 already
+holds 900417 and is promoted with nothing lost.`,
+          note: 'The call returns only after a second machine has the record: that is recovery point zero.',
+        },
       ],
     },
     {
@@ -595,6 +840,37 @@ export const ledger: Design = {
         { name: 'Rolling up an append-only account asynchronously', what: 'For an account that only receives credits, entries are appended with no balance update, and a job adds them into the balance later.', pros: ['No sub-accounts at all.', 'Appends never wait on each other.'], cons: ['Only for accounts with no limit to enforce.', 'The balance lags; Modern Treasury applies such entries within 60 seconds.'] },
         { name: 'No sweep', what: 'Totals stay in the 32 sub-accounts for good, and every report sums them with the main account.', pros: ['Nothing to run.', 'Nothing lags: the sum is always exact.'], cons: ['Every reader must know to sum 33 rows.', 'One report that forgets shows a near-empty main account.'] },
       ],
+      examples: [
+        {
+          title: 'One sweep of fee income, as one transaction',
+          lang: 'sql',
+          code: `-- Fee income: main account 3000, sub-accounts 3001 to 3032
+BEGIN;
+INSERT INTO idempotency_keys (key, txn_id, created_at)
+VALUES ('sweep:3000:2026-11-12T10:41', 900452, now())
+ON CONFLICT (key) DO NOTHING;
+-- no row inserted: this minute is swept already, stop
+
+-- ascending account id: main 3000 first, then 3001 to 3032
+SELECT posted FROM balances WHERE id = 3000 FOR UPDATE;
+-- then for each sub-account in turn (sub 17 shown):
+SELECT posted FROM balances WHERE id = 3017 FOR UPDATE;
+--   posted = 37500
+UPDATE balances SET posted = posted - 37500,
+  version = version + 1 WHERE id = 3017;
+INSERT INTO entries
+  (txn_id, account_id, direction, amount, currency, status)
+VALUES (900452, 3017, 'debit', 37500, 'GBP', 'posted');
+-- last, the main account takes the sum of all 32
+UPDATE balances SET posted = posted + 1201340,
+  version = version + 1 WHERE id = 3000;
+INSERT INTO entries
+  (txn_id, account_id, direction, amount, currency, status)
+VALUES (900452, 3000, 'credit', 1201340, 'GBP', 'posted');
+COMMIT;`,
+          note: 'The key is the account and the minute, so a rerun of the same sweep finds it and does nothing. Amounts are illustrative.',
+        },
+      ],
     },
     {
       id: 'cdc', from: 'db', to: 'relay', d: 'M890,240 H925 Q935,240 935,250 V340 Q935,350 945,350 H980', label: 'outbox rows',
@@ -606,6 +882,28 @@ export const ledger: Design = {
         { name: 'CDC', chosen: true, what: 'The relay reads the write-ahead log through a logical replication slot and receives committed outbox rows in commit order. The slot remembers how far it has read.', pros: ['Only committed rows, in commit order.', 'No polling queries on the primary.', 'Resumes where it left off after a restart.'], cons: ['At least once: a restart may repeat a little.', 'The slot holds log on the primary until read, so watch the disk.'] },
         { name: 'Polling the outbox table', what: 'A worker queries the outbox for unsent rows every so often, publishes them and marks them sent.', pros: ['Simple, with no slot to manage.', 'Works on any database.'], cons: ['Can miss or reorder rows from concurrent commits.', 'Adds queries and writes to the primary.'] },
         { name: 'Logical decoding messages with no table', what: 'The stored function emits a logical decoding message instead of inserting a row. The relay reads it through the same slot.', pros: ['No outbox table to clear out.', 'The same atomicity and commit order.'], cons: ['Postgres-specific.', 'No table to query when checking what was sent.'] },
+      ],
+      examples: [
+        {
+          title: 'The outbox row as the relay receives it',
+          lang: 'json',
+          code: `{
+  "op": "c",
+  "before": null,
+  "after": {
+    "id": 5512930,
+    "txn_id": 900418,
+    "account_id": 81442,
+    "payload": "<the event as JSON text: see ledger-events>"
+  },
+  "source": {
+    "connector": "postgresql",
+    "table": "outbox",
+    "lsn": 249113864
+  }
+}`,
+          note: 'op "c" is an insert; lsn is the position in the write-ahead log, which the relay copies into the event.',
+        },
       ],
     },
     {
@@ -619,6 +917,39 @@ export const ledger: Design = {
         { name: 'One topic per event type', what: 'Separate topics for, say, holds placed, payments posted and holds voided. Each consumer subscribes only to what it needs.', pros: ['Consumers skip what they do not need.', 'Each topic can have its own retention and schema.'], cons: ['No order across topics: a void can be read before its hold.', 'More topics to run and keep in step.'] },
         { name: 'A managed stream (Kinesis, Pub/Sub)', what: 'A cloud provider\'s stream in place of a Kafka cluster, with the account as the key that keeps order.', pros: ['Nothing to run.', 'Replay within the service\'s retention.'], cons: ['Ties the ledger\'s events to one cloud.', 'Ordering and retention rules differ by product; check them before relying on replay.'] },
       ],
+      examples: [
+        {
+          title: 'Topic and key',
+          lang: 'text',
+          code: `topic       ledger-events
+key         "81442"   Bright Bakery's account
+partition   chosen by hashing the key, so every event for
+            81442 lands in one partition, in commit order`,
+          note: 'The key keeps one account\'s events in order; there is no order across accounts, and none is needed.',
+        },
+        {
+          title: 'Message value',
+          lang: 'json',
+          code: `{
+  "type": "transaction.posted",
+  "txn_id": 900418,
+  "pending_txn_id": 900417,
+  "reference": "pay_3fK9",
+  "account_id": 81442,
+  "currency": "GBP",
+  "entries": [
+    { "account_id": 81442, "direction": "debit", "amount": 120020 },
+    { "account_id": 2017, "direction": "credit", "amount": 120000 },
+    { "account_id": 3017, "direction": "credit", "amount": 20 }
+  ],
+  "posted": 721980,
+  "available": 721980,
+  "lsn": 249113864,
+  "committed_at": "2026-11-12T10:41:03.118Z"
+}`,
+          note: 'lsn is what lets a reader drop a repeat: anything at or below the last lsn it applied for 81442.',
+        },
+      ],
     },
     {
       id: 'notify', from: 'kafka', to: 'consumers', d: 'M1120,475 H975', label: 'events',
@@ -630,6 +961,31 @@ export const ledger: Design = {
         { name: 'Kafka', chosen: true, what: 'Each consumer group reads ledger-events at its own pace: notifications within seconds, the warehouse in batches. Each keeps its own position.', pros: ['A slow consumer builds lag, not payment latency.', 'Each can replay from its own position.'], cons: ['At least once: each keeps the last position per account and skips anything older.', 'Lag to watch per group.'] },
         { name: 'Webhooks pushed to partners from a dedicated consumer', what: 'One consumer reads the topic and pushes events to partners\' URLs, retrying until they accept.', pros: ['Partners get events without access to Kafka.', 'A failing partner only slows that one consumer.'], cons: ['Partners\' endpoints fail, so retries and backoff are needed.', 'Events must be signed so partners can trust them.'] },
         { name: 'The ledger calls each service', what: 'After each commit, the ledger calls every downstream service directly.', pros: ['Immediate.', 'No log to run.'], cons: ['The ledger waits on, and fails with, every downstream service.', 'A crash between commit and call drops the notice.'] },
+      ],
+      examples: [
+        {
+          title: 'What the notifications consumer does',
+          lang: 'text',
+          code: `group         notifications
+reads         ledger-events, the partition holding key "81442"
+
+last applied  lsn 249071520 for 81442 (the reserve, 900417)
+this event    lsn 249113864, txn 900418, transaction.posted
+              -> newer: send the push, store 249113864
+
+same event again after a relay restart
+              lsn 249113864, not newer -> skip`,
+          note: 'The check is per account, so a repeat is skipped without a lookup of every event ever seen.',
+        },
+        {
+          title: 'Push sent to the owner',
+          lang: 'json',
+          code: `{
+  "to": "<the owner's device token>",
+  "title": "Payment sent",
+  "body": "£1,200.00 paid, reference INV 3318. Fee 20p."
+}`,
+        },
       ],
     },
     {
@@ -643,6 +999,25 @@ export const ledger: Design = {
         { name: 'Reading the replicas at the end of each day', what: 'At the end of each day, reconciliation queries a replica of each shard for the day\'s totals per settlement account.', pros: ['Reads the record itself, not a copy.', 'No consumer to keep running.'], cons: ['Heavy queries across 16 shards every night.', 'Must allow for replica lag at the day\'s cut-off.'] },
         { name: 'From the data warehouse', what: 'Reconciliation queries the data warehouse, which is fed from the same topic.', pros: ['SQL over all history, which finance already uses.', 'No load on the ledger at all.'], cons: ['Another hop, with its own lag.', 'A loading bug in the warehouse looks like a ledger break.'] },
       ],
+      examples: [
+        {
+          title: 'Reconciliation\'s own running total',
+          lang: 'sql',
+          code: `-- In reconciliation's own database, not the ledger's,
+-- for event txn 900418 (credit 120000 to 2017):
+BEGIN;
+INSERT INTO seen_txns (txn_id) VALUES (900418)
+ON CONFLICT (txn_id) DO NOTHING;
+-- 0 rows: a repeat; roll back and skip it
+
+-- 2017 is sub-account 17 of FPS settlement, main 2000
+UPDATE settlement_totals
+SET total = total + 120000, txns = txns + 1
+WHERE account_id = 2000 AND day = '2026-11-12';
+COMMIT;`,
+          note: 'The transaction id is the dedupe key here, and the totals are kept per main account, summing its 32 sub-accounts.',
+        },
+      ],
     },
     {
       id: 'files', from: 'files', to: 'recon', d: 'M1200,62 V168', label: 'statements',
@@ -654,6 +1029,32 @@ export const ledger: Design = {
         { name: 'SFTP', chosen: true, what: 'Daily bank statements and scheme settlement reports arrive as files over SFTP. Each is checksummed and loaded once, and a missing file raises an alert.', pros: ['Every bank and scheme can send files.', 'Complete and final for the day.'], cons: ['A day\'s delay before an outside error shows.', 'A parser per file format.'] },
         { name: 'Intraday statement feeds by API', what: 'The bank\'s API serves statement lines during the day, and reconciliation matches them as they arrive.', pros: ['Breaks found within the hour.', 'Fixes the same day.'], cons: ['Not every bank or scheme offers it.', 'Another integration per bank.'] },
         { name: 'Manual upload by finance', what: 'Someone in finance downloads each statement from the bank\'s portal and uploads it.', pros: ['No integration to build.', 'Works with any bank.'], cons: ['A human step every business day, which will be missed.', 'Harder to show the file was not altered on the way.'] },
+      ],
+      examples: [
+        {
+          title: 'The file',
+          lang: 'text',
+          code: `host     sftp.bank.example
+path     /outbound/2026-11-12/fps-settlement.csv
+on load  SHA-256 recorded; a file already loaded is skipped
+missing  no file by the agreed time raises an alert
+
+account,date,direction,amount_pence,reference
+FPS-SETTLE,2026-11-12,DR,120000,pay_3fK9
+FPS-SETTLE,2026-11-12,TOTAL,41380750,`,
+          note: 'The column layout is illustrative; each bank and scheme has its own, and each needs its own parser.',
+        },
+        {
+          title: 'The comparison, and the break',
+          lang: 'text',
+          code: `account 2000 (FPS settlement), 2026-11-12
+ledger total        41380250p   from ledger-events
+statement total     41380750p   from the bank file
+difference               500p   a £5 break
+
+-> break brk_1127 raised with an owner, the amount
+   and the lines on each side that do not match`,
+        },
       ],
     },
     {
@@ -672,6 +1073,32 @@ export const ledger: Design = {
         how: 'Up to 50 entries and a cursor for the next page.',
         delivery: 'Cursor pagination: new entries arriving do not shift or repeat a page.',
       },
+      examples: [
+        {
+          title: 'First page and next page',
+          lang: 'sql',
+          code: `-- On an asynchronous replica: newest 50 entries for 81442
+SELECT id, txn_id, direction, amount, status, created_at
+FROM entries
+WHERE account_id = 81442
+ORDER BY id DESC
+LIMIT 50;
+
+-- Next page: older than the last id seen, 7730512
+SELECT id, txn_id, direction, amount, status, created_at
+FROM entries
+WHERE account_id = 81442 AND id < 7730512
+ORDER BY id DESC
+LIMIT 50;`,
+          note: 'The page continues from an id, not an offset, so new entries arriving do not shift or repeat a page.',
+        },
+        {
+          title: 'Reply',
+          lang: 'text',
+          code: `up to 50 rows, newest first
+cursor for the next page: the id of the last row returned`,
+        },
+      ],
     },
     {
       id: 'correct', from: 'recon', to: 'ledger', d: 'M1150,168 V90 Q1150,80 1140,80 H560 Q550,80 550,90 V172', label: 'correcting entry',
@@ -684,6 +1111,24 @@ export const ledger: Design = {
         { name: 'A reviewed bulk migration', what: 'For a large incident, a job builds all the correcting transactions, shows their effect, and runs once approved. Stripe corrects this way.', pros: ['Thousands of fixes in one reviewed step.', 'The effect is seen before anything posts.'], cons: ['A powerful tool that must itself be tested.', 'A mistake in it is a mistake at scale.'] },
         { name: 'Direct SQL on the database', what: 'An engineer changes the wrong rows in the database by hand.', pros: ['Fastest to do.', 'No tooling needed.'], cons: ['Breaks the rule that no role may UPDATE or DELETE entries.', 'No record of the mistake, or of who fixed it.', 'Balance rows and entries can disagree afterwards.'] },
       ],
+      examples: [
+        {
+          title: 'Example call, after a second person approves',
+          lang: 'text',
+          code: `CreateTransaction
+{ "idempotency_key": "brk_1127", "status": "POSTED",
+  "currency": "GBP", "reference": "break brk_1127",
+  "entries": [
+    { "account": "2000", "direction": "debit", "amount": 500 },
+    { "account": "4000", "direction": "credit", "amount": 500 }
+  ] }
+-> { "txn_id": 901733, "status": "POSTED" }
+
+Approved twice: the same call with key brk_1127
+-> the same reply; posted once`,
+          note: 'The other leg depends on the cause; 4000 here is a suspense account holding the £5 until it is traced.',
+        },
+      ],
     },
     {
       id: 'export', from: 'replicas', to: 'archive', d: 'M760,400 V465 Q760,475 750,475 H615', label: 'old months',
@@ -695,6 +1140,42 @@ export const ledger: Design = {
         { name: 'Export', chosen: true, what: 'Monthly, the oldest partition of entries is exported from a replica to Parquet with its row count and sums, then detached on the primary once they match.', pros: ['No export load on the primary.', 'Counts and sums prove the file is complete.'], cons: ['A monthly job to watch.', 'Old statements are read from files.'] },
         { name: 'Logical backups kept for the retention period', what: 'Keep logical dumps of the database for as long as records must be kept, instead of monthly exports.', pros: ['Uses backup tooling the team already runs.', 'Restores the data exactly as it was.'], cons: ['Not queryable: an old statement means restoring a dump.', 'The live tables still grow unless partitions are dropped.'] },
         { name: 'Export from the primary', what: 'Run the monthly export on the shard\'s primary instead of a replica.', pros: ['No replica needed for exports.', 'One fewer machine in the path.'], cons: ['Reading a month, about 65 GB a day × 30 ÷ 16 shards = about 120 GB a shard, competes with payments.', 'A slow export on the primary can hold back cleanup of old row versions.'] },
+      ],
+      examples: [
+        {
+          title: 'Count and sum, then detach',
+          lang: 'sql',
+          code: `-- In November 2026, September 2025 passes 13 months old.
+-- On a replica: what the exported files must match
+SELECT count(*) AS entries,
+  sum(amount) FILTER (WHERE direction = 'debit')  AS debits,
+  sum(amount) FILTER (WHERE direction = 'credit') AS credits
+FROM entries_2025_09;
+--  entries 487512904, debits = credits
+
+-- On the primary, only after the files' counts match
+ALTER TABLE entries DETACH PARTITION entries_2025_09;`,
+          note: 'Debits must equal credits in the export as in the database; a mismatch stops the detach.',
+        },
+        {
+          title: 'Objects written',
+          lang: 'http',
+          code: `PUT /ledger-archive/shard-07/entries/2025-09/part-0000.parquet
+PUT /ledger-archive/shard-07/entries/2025-09/part-0001.parquet
+  (and so on: the month's entries for shard 7, as Parquet)
+
+PUT /ledger-archive/shard-07/entries/2025-09/manifest.json
+{
+  "partition": "entries_2025_09",
+  "entries": 487512904,
+  "debits": 9418265530112,
+  "credits": 9418265530112,
+  "files": [
+    { "name": "part-0000.parquet", "sha256": "9c1e...e04a" }
+  ]
+}`,
+          note: 'The manifest carries the counts, the sums and a checksum per file, so the archive can be checked later without the database.',
+        },
       ],
     },
   ],

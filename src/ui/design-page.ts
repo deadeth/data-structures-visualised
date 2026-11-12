@@ -735,17 +735,27 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   const explainBox = h('section.note.wide.hld-card.hld-explain', { hidden: true, 'aria-labelledby': `${design.id}-explain` });
   const renderExplain = (i: number): void => {
     const st = design.tour[i];
-    if (i < 0 || !st?.explain?.length) {
+    if (i < 0 || !(st?.explain?.length || st?.story)) {
       explainBox.hidden = true;
       explainBox.replaceChildren();
       return;
     }
     explainBox.hidden = false;
-    explainBox.replaceChildren(
+    const parts: (HTMLElement | null)[] = [
       h('h2', { id: `${design.id}-explain`, tabIndex: -1 }, `Step ${i + 1} explained: ${st.title}`),
       h('p.hld-explain-text', null, st.text),
-      h('dl.hld-qa', null, st.explain.map((e) => h('div', null, h('dt', null, e.q), h('dd', null, e.a)))),
-    );
+      st.story
+        ? h(
+            'dl.hld-story', null,
+            ([['Where we are', st.story.context], ['The problem', st.story.problem], ['If nothing is done', st.story.consequence], ['What this design does', st.story.fix]] as const).map(([k, v]) =>
+              h('div', null, h('dt', null, k), h('dd', null, v)),
+            ),
+          )
+        : null,
+      st.explain?.length ? h('h3', null, 'Words and actors in this step') : null,
+      st.explain?.length ? h('dl.hld-qa', null, st.explain.map((e) => h('div', null, h('dt', null, e.q), h('dd', null, e.a)))) : null,
+    ];
+    explainBox.replaceChildren(...parts.filter((x): x is HTMLElement => !!x));
   };
   const page = h('article.design', null, h('header.page-head', null, h('h1', null, design.name), h('p.lede', null, design.blurb), ex?.links), notFound, stage, status, explainBox, detail, notes);
   host.append(page);
@@ -1149,6 +1159,10 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
           'div', null,
           h('h4', null, 'What it does'), h('p.hld-first', null, c.what),
           h('h4', null, 'Why it is its own box'), h('p', null, c.why),
+          c.built?.length ? h('h4', null, 'Built with') : null,
+          c.built?.length
+            ? h('dl.hld-built', null, c.built.map((b) => h('div', null, h('dt', null, b.name), h('dd', null, b.what), h('dd', null, h('span.hld-k', null, 'Why here: '), b.why))))
+            : null,
           c.numbers?.length ? h('h4', null, 'Numbers') : null,
           c.numbers?.length
             ? h('ul.hld-figures', null, c.numbers.map((n) => (typeof n === 'string' ? h('li', null, n) : h('li', null, n.text, h('p.hld-from', null, h('span.hld-k', null, 'Where it comes from: '), n.from)))))
@@ -1653,7 +1667,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     // A step with no trip says so, so the line is always there to read.
     const line: (string | HTMLElement)[] = [h('span.hld-k', null, 'Travels by: '), ways.length ? ways.join(', then ') : `nothing this step; it waits in the ${nameOf(s.focus[0])}`];
     // The step's terms are spelled out under the stage; this takes the reader there and stops the tour moving on meanwhile.
-    if (s.explain?.length) {
+    if (s.explain?.length || s.story) {
       line.push(
         ' ',
         h('button.hld-explain-link', {
