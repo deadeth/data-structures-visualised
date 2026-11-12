@@ -161,7 +161,7 @@ export const webCrawler: Design = {
       id: 'parser',
       name: 'Parser',
       tech: 'sandboxed',
-      x: 867, y: 328, w: 130, h: 56, kind: 'node',
+      x: 897, y: 328, w: 130, h: 56, kind: 'node',
       what: 'Pulls the text and the links out of each page, then computes two fingerprints: an exact hash of the content, and a SimHash that stays close when two pages differ only slightly.',
       why: 'Parsing uses the processor and handles hostile input, so it runs in a sandbox apart from the fetchers. Raw pages are stored first, which means a parser bug is fixed by reprocessing stored pages and never by fetching again.',
       numbers: ['10 to 20 milliseconds of processor time per page.', 'About 50 links per page, so about 20,000 URL-seen checks a second.'],
@@ -266,7 +266,7 @@ export const webCrawler: Design = {
       id: 'meta',
       name: 'Metadata store',
       tech: 'Cassandra, ScyllaDB',
-      x: 760, y: 535, w: 170, h: 70, kind: 'store',
+      x: 790, y: 535, w: 170, h: 70, kind: 'store',
       what: 'The durable record of every URL and host: state, last status, ETag, content hashes, next fetch time. Everything else in the crawler can be rebuilt from it.',
       why: 'The workload is tens of thousands of small writes a second by known key, and almost no joins. Writes are upserts keyed by URL, so doing one twice is harmless. That is what makes at-least-once delivery safe everywhere upstream.',
       numbers: ['10 billion URLs at about 300 bytes each is about 3 TB, or 9 TB with three replicas.'],
@@ -305,7 +305,7 @@ export const webCrawler: Design = {
       name: 'Link graph, events',
       tech: 'Parquet, event topic',
       short: 'Link graph',
-      x: 955, y: 535, w: 164, h: 70, kind: 'store',
+      x: 985, y: 535, w: 164, h: 70, kind: 'store',
       what: 'One event per crawled page and a table of links between pages, for whoever uses the crawl: an indexer, a ranking job, a training pipeline.',
       why: 'It keeps the crawler ignorant of its consumers. They read events and files, not the crawler\'s own tables.',
       fails: 'A slow consumer must not slow the crawl. Events go to a log it reads at its own pace.',
@@ -393,14 +393,14 @@ export const webCrawler: Design = {
       alts: ['One PUT per page.', 'Appending to a log first and archiving from it later.'],
     },
     {
-      id: 'page', from: 'fetcher', to: 'parser', d: 'M600,206 V268 Q600,278 610,278 H880 Q890,278 890,288 V300', label: 'page',
+      id: 'page', from: 'fetcher', to: 'parser', d: 'M600,206 V268 Q600,278 610,278 H910 Q920,278 920,288 V300', label: 'page',
       mode: 'local', via: 'pipe', chip: 0.57,
       how: 'The fetched bytes are handed over a pipe to a sandboxed parser process on the same node, straight from memory. There is no network hop and no read from storage on the hot path, and a crash in the parser cannot take the fetcher down.',
       delivery: 'Retried from the stored raw page. A page that fails three times is quarantined.',
       alts: ['A pages-fetched topic that parser workers consume, so parsing scales apart from fetching.', 'A queue of page ids, with the bytes read back from the object store.'],
     },
     {
-      id: 'replay', from: 'blob', to: 'parser', d: 'M1105,314 H932', label: 'reprocess',
+      id: 'replay', from: 'blob', to: 'parser', d: 'M1105,314 H962', label: 'reprocess',
       mode: 'call', via: 'S3 GET', chip: 0.6, cold: true,
       how: 'Off the hot path. When a parser bug is fixed or a new extractor ships, a job reads stored WARC batches back with ranged GETs and feeds every page to the parser again, so the web is never asked twice. Pages the render pool has rendered come back the same way. On the hot path the parser gets each page in memory from the fetcher on the same node.',
       delivery: 'Read-only and repeatable. Reprocessing a page writes the same upserts again, which changes nothing.',
@@ -419,7 +419,7 @@ export const webCrawler: Design = {
       },
     },
     {
-      id: 'render', from: 'parser', to: 'render', d: 'M932,338 H1078 Q1088,338 1088,348 V525 Q1088,535 1098,535 H1106', label: 'needs scripts',
+      id: 'render', from: 'parser', to: 'render', d: 'M962,338 H1078 Q1088,338 1088,348 V525 Q1088,535 1098,535 H1106', label: 'needs scripts',
       mode: 'async', via: 'Kafka render', chip: 0.6, chipY: 470,
       how: 'A render-requests topic. The parser publishes the URL, and a small pool of headless browsers consumes it at its own pace.',
       delivery: 'At-least-once. A slow pool builds up lag, and never pushes back on the crawl.',
@@ -433,15 +433,15 @@ export const webCrawler: Design = {
       alts: ['Returning the rendered HTML on a results topic the parser consumes.', 'A direct call back to the parser, which couples the pool to the crawl.'],
     },
     {
-      id: 'events', from: 'parser', to: 'downstream', d: 'M905,356 V500', label: 'events',
+      id: 'events', from: 'parser', to: 'downstream', d: 'M935,356 V500', label: 'events',
       mode: 'async', via: 'Kafka events', chip: 0.2, chipY: 389,
       how: 'One event per crawled page on a crawl.pages topic, and link tables written as Parquet files. Consumers read at their own pace and can replay.',
       delivery: 'At-least-once. Events carry the URL and content hash, so consumers can drop repeats.',
       alts: ['Notifications from the object store.', 'Consumers polling the metadata store.'],
     },
     {
-      id: 'links', from: 'parser', to: 'filter', d: 'M802,328 H684', label: 'links',
-      mode: 'local', via: 'in-process', chip: 0.4928,
+      id: 'links', from: 'parser', to: 'filter', d: 'M832,328 H684', label: 'links',
+      mode: 'local', via: 'in-process', chip: 0.4223,
       how: 'A function call inside the node. The parser passes each batch of extracted links to the filter.',
       delivery: 'Cannot be lost short of the process dying, in which case the page is parsed again.',
       alts: ['A topic of extracted links, if filtering ran as its own service.'],
@@ -475,14 +475,14 @@ export const webCrawler: Design = {
       alts: ['Consumer groups, which are simpler, but two consumers can briefly hold one partition during a rebalance.'],
     },
     {
-      id: 'state', from: 'parser', to: 'meta', d: 'M812,356 V500', label: 'status, next fetch',
+      id: 'state', from: 'parser', to: 'meta', d: 'M842,356 V500', label: 'status, next fetch',
       mode: 'write', via: 'upsert', chip: 0.7, chipY: 455,
       how: 'One write per page, keyed by URL: status, hashes, ETag and next fetch time. Writes are batched and carry a timestamp.',
       delivery: 'Safe to repeat. Writing the same outcome twice changes nothing, which is what makes at-least-once safe everywhere upstream.',
       alts: ['Publishing results to a topic and letting a sink write them.', 'Conditional writes that reject an update older than the stored one.'],
     },
     {
-      id: 'again', from: 'meta', to: 'recrawl', d: 'M760,570 V574 Q760,584 750,584 H80 Q70,584 70,574 V242', label: 'due URLs',
+      id: 'again', from: 'meta', to: 'recrawl', d: 'M790,570 V574 Q790,584 780,584 H80 Q70,584 70,574 V242', label: 'due URLs',
       mode: 'call', via: 'range read', chip: 0.8, chipY: 420,
       how: 'The scheduler reads URLs by time bucket: every URL whose next fetch time falls in the current window. The table is keyed so that this is a range read, not a full scan.',
       delivery: 'Read-only and repeatable.',
@@ -588,7 +588,7 @@ export const webCrawler: Design = {
     },
     {
       title: 'A new owner takes over',
-      text: 'The new owner reads the last snapshot of the frontier from the object store with an S3 GET. Then it replays the discovered-urls topic from the offsets saved with the snapshot. It waits out the old lease before it fetches, so a host never has two fetchers.',
+      text: 'The new owner reads the frontier\'s last snapshot with an S3 GET, then replays the discovered-urls topic from the offsets saved with it. Before it fetches, it waits a further margin for clock drift. By then the old owner has certainly stopped, so a host never has two fetchers.',
       focus: ['blob', 'frontier', 'kafka', 'seen'],
       path: ['restore', 'inbound', 'new'],
       labels: ['snapshot', 'replay', 'URL'],
@@ -681,6 +681,10 @@ export const webCrawler: Design = {
     { label: 'Heydon and Najork, Mercator: A Scalable, Extensible Web Crawler (1999)', href: 'https://doi.org/10.1023/A:1019213109274', note: 'Per-host queues for politeness, and the DNS finding. The front and back queue design is from the authors\' later work.' },
     { label: 'RFC 9309, Robots Exclusion Protocol (2022)', href: 'https://www.rfc-editor.org/rfc/rfc9309', note: 'Matching rules, caching for at most 24 hours, and what to do on errors.' },
     { label: 'Manku, Jain and Das Sarma, Detecting Near-Duplicates for Web Crawling (2007)', href: 'https://doi.org/10.1145/1242572.1242592', note: 'SimHash at web scale.' },
+  ],
+
+  keyNotes: [
+    { mode: 'local', text: 'A "pipe" chip is the same kind of hop, to a sandboxed process on the same node.' },
   ],
 
   glossary: [

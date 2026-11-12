@@ -448,10 +448,12 @@ main:has(> .design) {
   max-width: none;
 }
 
-/* The overview button sits in a slim strip under the tour's canvas, never over the diagram. */
+/* The overview button sits in a slim strip of its own under the tour's canvas, never over the diagram: a plain band, ruled off. */
 .hld.cam .hld-panbar {
   justify-content: flex-end;
   padding: 4px 10px;
+  border-top-color: var(--rule-strong);
+  background: var(--paper);
 }
 
 .hld.cam .hld-pan-hint {
@@ -916,10 +918,30 @@ main:has(> .design) {
   visibility: hidden;
 }
 
-/* Where the key runs across the stage, the switch and its notes sit at the right of their row, never mid-row. */
+.hld-cold-room {
+  display: none;
+}
+
+/*
+ * Where the key runs across the stage, the switch and its notes sit at the right of their row, never mid-row. The room
+ * kept for the words a recovery step adds goes before the box, not after its label, so the box and label stay beside
+ * the notes; the width is the same either way, so nothing rewraps.
+ */
 @media (min-width: 900px) and (max-width: 1799px) {
   .hld-cold-toggle {
     margin-left: auto;
+  }
+
+  .hld-cold-room:not([hidden]) {
+    display: inline;
+    margin-right: -8px;
+    font-weight: 400;
+    white-space: pre;
+    visibility: hidden;
+  }
+
+  .hld-cold-why[hidden] {
+    display: none;
   }
 }
 
@@ -970,6 +992,11 @@ main:has(> .design) {
 .hld-key-notes dt {
   font-weight: 650;
   color: var(--ink);
+}
+
+/* A design's own extra line under a note stays in the notes' column. */
+.hld-key-notes dd + dd {
+  grid-column: -2;
 }
 
 .hld-key-notes[open] {
@@ -1421,6 +1448,16 @@ main:has(> .design) {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px 14px;
+}
+
+/* The name and what it is wrap within their own part, so where there is room Back stays on the first row beside them. */
+.hld-detail-title {
+  display: flex;
+  flex: 1 1 20rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  min-width: 0;
 }
 
 .hld-detail-glyph {
