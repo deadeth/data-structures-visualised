@@ -731,7 +731,23 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   /** A link to something that is not on the diagram: said above the diagram, where the reader is looking, until they go anywhere else. */
   const notFound = h('p.hld-missing.hld-notfound', { tabIndex: -1, role: 'alert' });
   notFound.hidden = true;
-  const page = h('article.design', null, h('header.page-head', null, h('h1', null, design.name), h('p.lede', null, design.blurb), ex?.links), notFound, stage, status, detail, notes);
+  // The current step's terms and actors, spelled out as questions and answers. Sits right under the stage, so its heading shows below the diagram while touring.
+  const explainBox = h('section.note.wide.hld-card.hld-explain', { hidden: true, 'aria-labelledby': `${design.id}-explain` });
+  const renderExplain = (i: number): void => {
+    const st = design.tour[i];
+    if (i < 0 || !st?.explain?.length) {
+      explainBox.hidden = true;
+      explainBox.replaceChildren();
+      return;
+    }
+    explainBox.hidden = false;
+    explainBox.replaceChildren(
+      h('h2', { id: `${design.id}-explain`, tabIndex: -1 }, `Step ${i + 1} explained: ${st.title}`),
+      h('p.hld-explain-text', null, st.text),
+      h('dl.hld-qa', null, st.explain.map((e) => h('div', null, h('dt', null, e.q), h('dd', null, e.a)))),
+    );
+  };
+  const page = h('article.design', null, h('header.page-head', null, h('h1', null, design.name), h('p.lede', null, design.blurb), ex?.links), notFound, stage, status, explainBox, detail, notes);
   host.append(page);
 
   // ---- state ---------------------------------------------------------------------
@@ -1189,7 +1205,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
               'div.hld-examples', null,
               h('h4', null, 'What it looks like'),
               h('p.hld-ex-lead', null, 'An example with the names this page uses. It shows the shape of the call, not a real system\'s API.'),
-              fl.examples.map((ex, i) => {
+              h('div.hld-ex-grid', null, fl.examples.map((ex, i) => {
                 const id = `${design.id}-ex-${fl.id}-${i}`;
                 const langs = { sql: 'SQL', json: 'JSON', proto: 'Protocol Buffers', http: 'HTTP', text: 'Text' } as const;
                 return h(
@@ -1199,7 +1215,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
                   h('pre', { tabIndex: 0, role: 'region', 'aria-labelledby': id }, h('code', null, ex.code)),
                   ex.note ? h('p.hld-ex-note', null, ex.note) : null,
                 );
-              }),
+              })),
             )
           : null,
         fl.ways?.length
@@ -1635,7 +1651,22 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       return kind.startsWith(via.toLowerCase()) ? `${kind}${missed}` : `${via}${missed} (${kind})`;
     }))];
     // A step with no trip says so, so the line is always there to read.
-    return [h('span.hld-k', null, 'Travels by: '), ways.length ? ways.join(', then ') : `nothing this step; it waits in the ${nameOf(s.focus[0])}`];
+    const line: (string | HTMLElement)[] = [h('span.hld-k', null, 'Travels by: '), ways.length ? ways.join(', then ') : `nothing this step; it waits in the ${nameOf(s.focus[0])}`];
+    // The step's terms are spelled out under the stage; this takes the reader there and stops the tour moving on meanwhile.
+    if (s.explain?.length) {
+      line.push(
+        ' ',
+        h('button.hld-explain-link', {
+          type: 'button',
+          onclick: () => {
+            if (playing) pause(false);
+            explainBox.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+            explainBox.querySelector<HTMLElement>('h2')?.focus();
+          },
+        }, 'Explain this step'),
+      );
+    }
+    return line;
   }
 
   /** Find the tallest readout of all the steps at the current width. */
@@ -3751,6 +3782,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     countLong.textContent = `Step ${i + 1} of ${design.tour.length}`;
     countShort.textContent = `${i + 1}/${design.tour.length}`;
     measureReserve();
+    renderExplain(i);
     openBeat = 0;
     marks.replaceChildren();
     dock.replaceChildren();
@@ -3873,6 +3905,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     delete stage.dataset.phase;
     if (wasIn) leftAt = step < design.tour.length - 1 ? step : -1;
     step = -1;
+    renderExplain(-1);
     hideToken();
     hideToken(branchTok);
     hideToken(ghost);

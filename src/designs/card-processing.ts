@@ -1091,6 +1091,34 @@ export const cardProcessing: Design = {
       how: 'The terminal sends the purchase, with the chip\'s cryptogram, to the acquirer, which adds the merchant details and sends an authorisation request to the network.',
       delivery: 'Someone else\'s systems. Terminals retry, and send a reversal when they lose the answer.',
       alts: ['An online checkout, which arrives with a 3-D Secure result.', 'A wallet payment, which carries a network token in place of the card number.'],
+      examples: [
+        {
+          title: 'What the till and the acquirer send',
+          lang: 'text',
+          code: `At the till (we never see this leg)
+  amount       €42.00
+  card         5xxx xxxx xxxx 1234 (masked here)
+  entry        contactless, phone
+  cryptogram   ARQC 1A2B3C4D5E6F7081, made for this purchase only
+The acquirer adds
+  merchant     Restaurant, Dublin, IE (id M-IE-30417)
+  category     5812, restaurants
+and sends it to Mastercard, which routes it to us as an 0100.`,
+          note: 'Illustrative fields, not one message format: the till and the acquirer speak their own protocols.',
+        },
+        {
+          title: 'Back to the till',
+          lang: 'text',
+          code: `  answer       approved (field 39: 00)
+  auth code    K7Q2M9 (field 38)
+  cryptogram   ARPC 9F8E7D6C5B4A3928, for the phone to check
+
+If the till never gets the answer:
+  the terminal sends an 0400 reversal, which releases the hold,
+  or nothing comes and the £36.40 hold lapses at its window's end.`,
+          note: 'The ARPC lets the phone check that the answer came from us.',
+        },
+      ],
       ways: [
         {
           name: 'Through the acquirer', chosen: true,
@@ -1123,6 +1151,55 @@ export const cardProcessing: Design = {
       how: 'An 0100 authorisation request on a long-lived TCP connection, length-prefixed. It carries the card number, amount and currency, merchant category, entry mode, chip data, and the trace and reference numbers that identify it.',
       delivery: 'The network waits a few seconds, then answers for us by stand-in. A retry carries the same identifiers, so the gateway returns the first answer.',
       alts: ['An HTTPS webhook from an issuer processor, with 2 to 3 seconds to answer.', 'ISO 20022, which the UK\'s CHAPS adopted in 2023; card networks still use ISO 8583.'],
+      examples: [
+        {
+          title: 'MTI 0100, authorisation request',
+          lang: 'text',
+          code: `length prefix, then:
+MTI 0100
+bitmap        which numbered fields follow
+card number   5xxx xxxx xxxx 1234 (masked here)
+amount        42.00 EUR
+field 11      STAN 004217
+field 18      MCC 5812 (restaurants)
+field 37      RRN 631612004217
+entry mode    contactless
+chip data     ARQC 1A2B3C4D5E6F7081 and the data it covers
+merchant      Restaurant, Dublin, IE
+
+idempotency key = card token + date + STAN + RRN
+  tok_8f3a91e2|2026-11-12|004217|631612004217`,
+          note: 'Fields without a number are described in words only. A retry carries the same 11 and 37, so it makes the same key.',
+        },
+        {
+          title: 'MTI 0110, the answer',
+          lang: 'text',
+          code: `MTI 0110
+field 11      STAN 004217          (as in the request)
+field 37      RRN 631612004217     (the network matches on this)
+field 38      auth code K7Q2M9
+field 39      response code 00, approved
+chip data     ARPC 9F8E7D6C5B4A3928
+
+Other codes: 05 do not honour, 51 not sufficient funds.`,
+          note: 'It may go back on any live connection: field 37 ties it to its request.',
+        },
+        {
+          title: 'MTI 0120, an advice after stand-in',
+          lang: 'text',
+          code: `A later purchase on the same card, while our ledger failed over
+(illustrative amount):
+MTI 0120
+amount        12.50 GBP
+field 11      STAN 004391
+field 37      RRN 631613004391
+field 38      auth code from stand-in
+field 39      00, approved by stand-in on our parameters
+
+We post it as a hold, keyed the same way. We never decide again.`,
+          note: 'An advice reports a decision already made: we apply it, once.',
+        },
+      ],
       ways: [
         {
           name: 'ISO 8583', chosen: true,
@@ -1155,6 +1232,33 @@ export const cardProcessing: Design = {
       how: 'Inside the PCI zone: the gateway looks up the token for the card number, usually from its own cache.',
       delivery: 'A read, safe to repeat, with a 5 ms deadline.',
       alts: ['A provider\'s vault over HTTPS.', 'A hash of the card number as the key, which still leaves the number in every system.'],
+      examples: [
+        {
+          title: 'Service definition',
+          lang: 'proto',
+          code: `syntax = "proto3";
+
+service Vault {
+  rpc Tokenise(TokeniseRequest) returns (TokeniseReply);
+}
+
+message TokeniseRequest {
+  bytes pan = 1;          // the card number: inside the PCI zone only
+}
+
+message TokeniseReply {
+  string card_token = 1;  // random, meaningless outside the vault
+}`,
+        },
+        {
+          title: 'Example call',
+          lang: 'text',
+          code: `deadline 5 ms (most lookups hit the gateway's cache first)
+-> Tokenise { pan: 5xxx xxxx xxxx 1234 (masked here) }
+<- TokeniseReply { card_token: "tok_8f3a91e2" }`,
+          note: 'From here on the card is tok_8f3a91e2 everywhere: authoriser, ledger, events and app.',
+        },
+      ],
       ways: [
         {
           name: 'gRPC', chosen: true,
@@ -1187,6 +1291,21 @@ export const cardProcessing: Design = {
       how: 'A command to verify the chip\'s ARQC (or the PIN block, or the card security code) and to produce the ARPC for the answer.',
       delivery: 'Stateless and safe to repeat; tried on a second module in the same site if the first does not answer.',
       alts: ['A cloud HSM.', 'Have the network verify on our behalf, where it offers that.'],
+      examples: [
+        {
+          title: 'Command and reply',
+          lang: 'text',
+          code: `-> verify ARQC, produce ARPC
+   key      the issuer key, named by reference, never in the clear
+   card     5xxx xxxx xxxx 1234 (masked here)
+   arqc     1A2B3C4D5E6F7081
+   data     what the chip signed: amount 42.00 EUR, country,
+            date, the terminal's random number, the chip's counter
+<- result   pass
+   arpc     9F8E7D6C5B4A3928`,
+          note: 'A generic command, not any vendor\'s command set: the key is named, never sent, and a fail is a decline.',
+        },
+      ],
       ways: [
         {
           name: 'HSM API', chosen: true,
@@ -1219,6 +1338,54 @@ export const cardProcessing: Design = {
       how: 'The parsed request, with the token in place of the card number, the verification results, and the time left on its deadline.',
       delivery: 'Idempotent: keyed by the network\'s identifiers, so a repeat returns the stored decision.',
       alts: ['A queue between them, which adds latency to a path that must answer in milliseconds.', 'One process doing both, which pulls the authoriser into PCI scope.'],
+      examples: [
+        {
+          title: 'Service definition',
+          lang: 'proto',
+          code: `service Authoriser {
+  rpc Authorise(AuthoriseRequest) returns (Decision);
+}
+
+message AuthoriseRequest {
+  string auth_key = 1;      // card token|date|STAN|RRN
+  string card_token = 2;    // never the card number
+  int64 amount_minor = 3;   // 4200
+  string currency = 4;      // EUR
+  int64 billing_pence = 5;  // 3640: €42.00 at 0.8667
+  string mcc = 6;
+  string merchant_id = 7;
+  string country = 8;
+  string entry_mode = 9;
+  bool cryptogram_ok = 10;  // the HSM's result
+}
+
+message Decision {
+  bool approved = 1;
+  string response_code = 2; // field 39: 00, 05, 51
+  int64 approved_pence = 3; // may be less than asked
+  string auth_code = 4;     // field 38
+  string hold_id = 5;
+}`,
+        },
+        {
+          title: 'Example call',
+          lang: 'text',
+          code: `deadline: about 980 ms left (1 s from arrival, less 21 ms
+          for link, parse, vault and HSM)
+-> Authorise {
+     auth_key: "tok_8f3a91e2|2026-11-12|004217|631612004217",
+     card_token: "tok_8f3a91e2", amount_minor: 4200,
+     currency: "EUR", billing_pence: 3640, mcc: "5812",
+     merchant_id: "M-IE-30417", country: "IE",
+     entry_mode: "contactless", cryptogram_ok: true }
+<- Decision { approved: true, response_code: "00",
+     approved_pence: 3640, auth_code: "K7Q2M9",
+     hold_id: "hold_5521907" }
+
+The retry: same auth_key, so the stored Decision comes back.`,
+          note: 'The decision is stored under auth_key before it is returned, so a repeat gets the same answer.',
+        },
+      ],
       ways: [
         {
           name: 'gRPC', chosen: true,
@@ -1251,6 +1418,29 @@ export const cardProcessing: Design = {
       how: 'Read the card by token: status, expiry, account and controls.',
       delivery: 'From the primary or a cache cleared on write, with a 5 ms deadline.',
       alts: ['Card state carried in the request from the gateway.', 'A replica read, which can miss a freeze made a moment ago.'],
+      examples: [
+        {
+          title: 'Statement',
+          lang: 'sql',
+          code: `-- On the primary, or from a cache cleared on every write.
+SELECT status, expires, account_id, blocked_mccs,
+       contactless_on, foreign_on, per_purchase_limit_pence
+  FROM cards
+ WHERE card_token = 'tok_8f3a91e2';`,
+        },
+        {
+          title: 'Row returned',
+          lang: 'text',
+          code: `status                    active
+expires                   2029-08
+account_id                acc_7731
+blocked_mccs              {7995}  (gambling)
+contactless_on            true
+foreign_on                true
+per_purchase_limit_pence  50000   (£500)`,
+          note: 'Active, not expired, and 5812 is not blocked, so the checks pass on to fraud.',
+        },
+      ],
       ways: [
         {
           name: 'Read from the primary or a cleared cache', chosen: true,
@@ -1283,6 +1473,39 @@ export const cardProcessing: Design = {
       how: 'The purchase and the card\'s recent features, scored by a model.',
       delivery: 'A hard timeout of 50 ms. Late means rules only.',
       alts: ['Scoring after approval, from the log.', 'A vendor\'s scoring service.'],
+      examples: [
+        {
+          title: 'Request (timeout 50 ms)',
+          lang: 'json',
+          code: `{
+  "auth_key": "tok_8f3a91e2|2026-11-12|004217|631612004217",
+  "card_token": "tok_8f3a91e2",
+  "billing_pence": 3640,
+  "mcc": "5812",
+  "country": "IE",
+  "channel": "contactless",
+  "features": {
+    "purchases_last_hour": 1,
+    "new_country": true,
+    "amount_vs_card_median": 1.1,
+    "used_abroad_before": true
+  }
+}`,
+          note: 'The features are kept up to date from the card events log, so scoring is a lookup and a model call.',
+        },
+        {
+          title: 'Response',
+          lang: 'json',
+          code: `{
+  "score": 0.04,
+  "band": "low",
+  "reasons": ["new country", "normal amount and time",
+              "card used abroad before"],
+  "model_ms": 12
+}`,
+          note: 'Had nothing come back by 50 ms, the authoriser would decide on rules and record that the model did not answer.',
+        },
+      ],
       ways: [
         {
           name: '50 ms hard timeout', chosen: true,
@@ -1315,6 +1538,46 @@ export const cardProcessing: Design = {
       how: 'One database transaction: lock the account, check available funds and the daily limit, insert the hold, insert the outbox event. The key is the network\'s identifiers for this authorisation.',
       delivery: 'A repeat finds the key and returns the first result. Nothing is written twice.',
       alts: ['A reservation in a cache, written to the ledger later, which can approve money that is not there.', 'A distributed transaction across services, which is slow and fragile.'],
+      examples: [
+        {
+          title: 'One transaction',
+          lang: 'sql',
+          code: `-- PostgreSQL syntax. Amounts in pence. holds.auth_key is UNIQUE.
+BEGIN;
+SELECT balance_pence, held_pence, spent_today_pence,
+       daily_limit_pence
+  FROM accounts WHERE account_id = 'acc_7731' FOR UPDATE;
+-- A retry finds its key here: return that hold, write nothing.
+SELECT hold_id FROM holds
+ WHERE auth_key = 'tok_8f3a91e2|2026-11-12|004217|631612004217';
+-- In code: balance - held >= 3640 and spent_today + 3640 <= limit,
+-- else ROLLBACK and answer 51.
+INSERT INTO holds (hold_id, auth_key, account_id, card_token,
+  amount_pence, txn_amount_minor, txn_currency, auth_code,
+  merchant_id, status)
+VALUES ('hold_5521907',
+  'tok_8f3a91e2|2026-11-12|004217|631612004217', 'acc_7731',
+  'tok_8f3a91e2', 3640, 4200, 'EUR', 'K7Q2M9', 'M-IE-30417', 'open');
+UPDATE accounts SET held_pence = held_pence + 3640,
+       spent_today_pence = spent_today_pence + 3640
+ WHERE account_id = 'acc_7731';
+INSERT INTO outbox (event_id, card_token, type, payload)
+VALUES ('evt_01JC9W3K2T', 'tok_8f3a91e2', 'authorised',
+  '{"hold_id": "hold_5521907", "amount_pence": 3640}');
+COMMIT;`,
+          note: 'The row lock on the account makes two taps queue, and the key is checked after the lock, so two copies of one request cannot both pass.',
+        },
+        {
+          title: 'Reply',
+          lang: 'text',
+          code: `held      hold_5521907
+available £4,812.20 before, £4,775.80 after (illustrative)
+
+or, if balance - held < 3640:
+not sufficient funds -> the authoriser answers 51`,
+          note: 'Available balance is the posted balance less open holds.',
+        },
+      ],
       ways: [
         {
           name: 'One ledger transaction', chosen: true,
@@ -1353,6 +1616,48 @@ export const cardProcessing: Design = {
       how: 'A relay reads new rows from the outbox table and publishes them to the card events log, keyed by card.',
       delivery: 'At-least-once and in order per card. The relay marks rows sent only after the log acknowledges them.',
       alts: ['Change data capture from the database log.', 'Publishing straight after the commit, which can lose events.'],
+      examples: [
+        {
+          title: 'The relay',
+          lang: 'sql',
+          code: `SELECT seq, event_id, card_token, type, payload
+  FROM outbox
+ WHERE sent_at IS NULL
+ ORDER BY seq
+ LIMIT 500;
+-- Publish each to card-events, key = card_token, and wait for
+-- the log's acknowledgement. Only then:
+UPDATE outbox SET sent_at = now()
+ WHERE seq IN (88123401, 88123402);`,
+          note: 'A relay that stops between publishing and the UPDATE sends those rows again: at-least-once.',
+        },
+        {
+          title: 'Topic and key',
+          lang: 'text',
+          code: `topic   card-events
+key     card_token, here tok_8f3a91e2
+        Kafka keeps order within a partition, and one key always
+        goes to one partition, so each card's events stay in order.`,
+        },
+        {
+          title: 'Message value',
+          lang: 'json',
+          code: `{
+  "event_id": "evt_01JC9W3K2T",
+  "type": "authorised",
+  "card_token": "tok_8f3a91e2",
+  "account_id": "acc_7731",
+  "hold_id": "hold_5521907",
+  "amount_pence": 3640,
+  "original": { "amount_minor": 4200, "currency": "EUR" },
+  "merchant": { "name": "Restaurant", "city": "Dublin",
+                "mcc": "5812" },
+  "card_last4": "1234",
+  "occurred_at": "2026-11-12T12:41:07Z"
+}`,
+          note: 'event_id is what every consumer uses to drop a repeat.',
+        },
+      ],
       ways: [
         {
           name: 'Outbox relay', chosen: true,
@@ -1380,6 +1685,31 @@ export const cardProcessing: Design = {
       how: 'Each consumer reads the log in its own group and keeps its own offset.',
       delivery: 'At-least-once. Consumers drop repeats by event id.',
       alts: ['A queue per consumer.', 'Direct calls, which put them on the hot path.'],
+      examples: [
+        {
+          title: 'Consumer groups on card-events',
+          lang: 'text',
+          code: `group           what it does with evt_01JC9W3K2T
+notifications   pushes "£36.40 at Restaurant" to the owner
+alerts          the suspicious-transaction alerts service
+rewards         cashback
+accounting      partner integrations
+analytics       reporting
+
+Each group keeps its own offset and reads at its own pace.`,
+        },
+        {
+          title: 'Dropping a repeat',
+          lang: 'sql',
+          code: `-- In the consumer's own database, in the same transaction
+-- as its own work.
+INSERT INTO seen_events (event_id)
+VALUES ('evt_01JC9W3K2T')
+ON CONFLICT (event_id) DO NOTHING;
+-- 0 rows inserted: a repeat. Skip it and commit the offset.`,
+          note: 'At-least-once delivery plus this check gives each consumer the effect of once.',
+        },
+      ],
       ways: [
         {
           name: 'Kafka consumer groups', chosen: true,
@@ -1407,6 +1737,42 @@ export const cardProcessing: Design = {
       how: 'A push notification through Apple\'s and Google\'s services: amount, merchant and the card used.',
       delivery: 'Best effort. The app reads the ledger when it opens.',
       alts: ['SMS.', 'An in-app feed only.'],
+      examples: [
+        {
+          title: 'To Apple (APNs)',
+          lang: 'http',
+          code: `POST /3/device/<device token>
+apns-push-type: alert
+apns-topic: <the app's bundle id>
+
+{
+  "aps": {
+    "alert": {
+      "title": "£36.40 at Restaurant",
+      "body": "Card ending 1234. Pending: €42.00 in Dublin."
+    }
+  },
+  "hold_id": "hold_5521907"
+}`,
+        },
+        {
+          title: 'To Google (FCM)',
+          lang: 'http',
+          code: `POST /v1/projects/<project>/messages:send
+
+{
+  "message": {
+    "token": "<device token>",
+    "notification": {
+      "title": "£36.40 at Restaurant",
+      "body": "Card ending 1234. Pending: €42.00 in Dublin."
+    },
+    "data": { "hold_id": "hold_5521907" }
+  }
+}`,
+          note: 'Only the last four digits travel. hold_id lets the app open on the purchase, and the app reads the ledger for the balance.',
+        },
+      ],
       ways: [
         {
           name: 'APNs and FCM', chosen: true,
@@ -1434,6 +1800,31 @@ export const cardProcessing: Design = {
       how: 'The network delivers clearing files in cycles through the day: one record per purchase with the final amount, the currency conversion and fees, and records for refunds.',
       delivery: 'Each file has an id and record counts. Processing is idempotent per record, so a file can be run again.',
       alts: ['An issuer processor\'s clearing webhooks, one per record.', 'A single-message network, where the authorisation itself moves the money.'],
+      examples: [
+        {
+          title: 'File header',
+          lang: 'text',
+          code: `file id          clr-2026-11-13-02 (the second cycle we take)
+settlement date  2026-11-13
+records          241,806
+total            as the file states, checked against the records`,
+          note: 'The file id and record counts make a rerun safe and a short file visible.',
+        },
+        {
+          title: 'One record',
+          lang: 'text',
+          code: `record no         118,442
+type              purchase
+field 38          auth code K7Q2M9
+card              5xxx xxxx xxxx 1234 (masked here)
+merchant          Restaurant, Dublin, IE (M-IE-30417)
+field 18          MCC 5812
+amount            42.00 EUR
+cardholder amount 36.55 GBP at 0.8702
+fees              interchange as the record states (not shown)`,
+          note: 'Generic fields, not the network\'s file layout. The final amount is £36.55, not the £36.40 held.',
+        },
+      ],
       ways: [
         {
           name: 'Clearing files', chosen: true,
@@ -1461,6 +1852,49 @@ export const cardProcessing: Design = {
       how: 'One transaction per record: post the final amount, release the matched hold, write the outbox event.',
       delivery: 'Keyed by file and record number, so a rerun posts nothing twice.',
       alts: ['Post and release as two writes, which can leave money both held and posted.'],
+      examples: [
+        {
+          title: 'Match the record to its hold',
+          lang: 'sql',
+          code: `-- No single linking field: auth code, card, merchant, amount.
+-- The amount matched is the original €42.00, which did not move.
+SELECT hold_id, account_id, amount_pence
+  FROM holds
+ WHERE auth_code = 'K7Q2M9'
+   AND card_token = 'tok_8f3a91e2'
+   AND merchant_id = 'M-IE-30417'
+   AND txn_amount_minor = 4200 AND txn_currency = 'EUR'
+   AND status = 'open';
+-- -> hold_5521907, acc_7731, 3640`,
+          note: 'No row means no hold: an offline tap or a forced post, posted all the same and sent for review.',
+        },
+        {
+          title: 'Post and release, one transaction',
+          lang: 'sql',
+          code: `BEGIN;
+SELECT balance_pence, held_pence FROM accounts
+ WHERE account_id = 'acc_7731' FOR UPDATE;
+-- UNIQUE (file_id, record_no): a rerun inserts nothing.
+INSERT INTO postings (file_id, record_no, hold_id,
+  debit_account, credit_account, amount_pence, currency,
+  settlement_date)
+VALUES ('clr-2026-11-13-02', 118442, 'hold_5521907',
+  'acc_7731', 'mastercard_settlement', 3655, 'GBP', '2026-11-13')
+ON CONFLICT (file_id, record_no) DO NOTHING
+RETURNING posting_id;
+-- No row returned: ROLLBACK, already posted.
+UPDATE holds SET status = 'released'
+ WHERE hold_id = 'hold_5521907' AND status = 'open';
+UPDATE accounts SET balance_pence = balance_pence - 3655,
+       held_pence = held_pence - 3640
+ WHERE account_id = 'acc_7731';
+INSERT INTO outbox (event_id, card_token, type, payload)
+VALUES ('evt_01JCB7Q5ZD', 'tok_8f3a91e2', 'cleared',
+  '{"hold_id": "hold_5521907", "amount_pence": 3655}');
+COMMIT;`,
+          note: 'The £36.40 hold comes off and £36.55 goes on in one commit, so the money is never both held and posted.',
+        },
+      ],
       ways: [
         {
           name: 'One transaction per record', chosen: true,
@@ -1488,6 +1922,19 @@ export const cardProcessing: Design = {
       how: 'Once a working day the network collects our net position from the settlement account and sends an advisement of the amounts.',
       delivery: 'The network\'s own process. We forecast it and check it the next day.',
       alts: ['A sponsor bank settling on our behalf.'],
+      examples: [
+        {
+          title: 'Settlement advisement',
+          lang: 'text',
+          code: `settlement date     2026-11-13 (Friday)
+currency            GBP
+spent by our cards  £30,512,840.15  (includes the £36.55 lunch)
+less refunds          -£412,006.30
+less interchange      -£261,904.11  (owed to us)
+net debit           £29,838,929.74  from the settlement account`,
+          note: 'Illustrative figures, generic layout: one net movement for the day, not one per purchase.',
+        },
+      ],
       ways: [
         {
           name: 'Net debit by the network', chosen: true,
@@ -1509,6 +1956,28 @@ export const cardProcessing: Design = {
       how: 'Off the hot path. Once a day reconciliation reads the day\'s postings, totalled by currency and settlement date.',
       delivery: 'Read only, from a replica.',
       alts: ['A daily export to the data warehouse.'],
+      examples: [
+        {
+          title: 'Statement',
+          lang: 'sql',
+          code: `-- On a replica, once the day is complete there.
+SELECT currency, settlement_date,
+       COUNT(*) AS postings,
+       -- owed to the network counts plus; refunds and fees minus
+       SUM(CASE WHEN credit_account = 'mastercard_settlement'
+                THEN amount_pence ELSE -amount_pence END) AS net_pence
+  FROM postings
+ WHERE settlement_date = '2026-11-13'
+ GROUP BY currency, settlement_date;`,
+        },
+        {
+          title: 'Result',
+          lang: 'text',
+          code: `currency  settlement_date  postings   net_pence
+GBP       2026-11-13       1,204,118  2,983,892,974`,
+          note: 'Illustrative totals; the lunch\'s 3655 is one of those postings.',
+        },
+      ],
       ways: [
         {
           name: 'SQL on a replica', chosen: true,
@@ -1536,6 +2005,31 @@ export const cardProcessing: Design = {
       how: 'Off the hot path. The totals and record counts of each clearing file, and the records still unmatched.',
       delivery: 'Read only.',
       alts: ['Read the raw files again.'],
+      examples: [
+        {
+          title: 'Statements',
+          lang: 'sql',
+          code: `SELECT file_id, record_count, net_pence
+  FROM clearing_files
+ WHERE settlement_date = '2026-11-13';
+
+SELECT file_id, record_no, reason
+  FROM clearing_records
+ WHERE settlement_date = '2026-11-13'
+   AND status = 'unmatched';`,
+        },
+        {
+          title: 'Result',
+          lang: 'text',
+          code: `file_id            record_count  net_pence
+clr-2026-11-13-01  287,310       ...
+clr-2026-11-13-02  241,806       ...
+(four files; together 2,983,892,974)
+
+unmatched: posted with no hold, each waiting for a person`,
+          note: 'Illustrative figures: the files\' total must equal the ledger\'s net for the same day.',
+        },
+      ],
       ways: [
         {
           name: 'SQL', chosen: true,
@@ -1557,6 +2051,27 @@ export const cardProcessing: Design = {
       how: 'Off the hot path. The settlement bank\'s statement of what actually moved, and the network\'s settlement advisement.',
       delivery: 'Daily, and checked for gaps in its sequence.',
       alts: ['A banking API polled through the day.'],
+      examples: [
+        {
+          title: 'Statement line',
+          lang: 'text',
+          code: `settlement account statement, sequence 0318 (0317 came before)
+date        2026-11-13
+debit       £29,838,934.74
+reference   Mastercard settlement 2026-11-13`,
+          note: 'Generic layout. A gap in the sequence numbers means a missing statement.',
+        },
+        {
+          title: 'The three-way check',
+          lang: 'text',
+          code: `2026-11-13, GBP                    net
+ledger postings (replica)     £29,838,929.74
+clearing file totals          £29,838,929.74
+settlement account            £29,838,934.74
+break                                £5.00  -> an owner and evidence`,
+          note: 'Illustrative: the drill "£5 too much settled". Each source can be right by its own lights and still disagree.',
+        },
+      ],
       ways: [
         {
           name: 'Daily batch', chosen: true,
