@@ -209,22 +209,6 @@ function announce(text: string): void {
   }, 700);
 }
 
-/** The query as the site itself writes it: the first entry title, other name or text that has it, in that order. */
-function casing(q: string, docs: Doc[]): string {
-  const want = fold(q);
-  const esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`(^|[^\\p{L}\\p{N}])(${esc})(?![\\p{L}\\p{N}])`, 'iu');
-  for (const pick of [(d: Doc) => [d.title], (d: Doc) => d.also, (d: Doc) => [d.text]]) {
-    for (const d of docs) {
-      for (const t of pick(d)) {
-        const m = re.exec(t);
-        if (m && fold(m[2]) === want) return m[2];
-      }
-    }
-  }
-  return q;
-}
-
 const has = (s: string, words: string[]) => {
   const f = fold(s);
   return words.some((w) => f.includes(w));
@@ -259,10 +243,8 @@ export async function mountSearch(host: HTMLElement, query: string, returning = 
       .slice(0, 40);
     summary.textContent = hits.length ? `${hits.length === 40 ? 'The best 40 matches' : hits.length === 1 ? '1 match' : `${hits.length} matches`} across the glossary, the system design and the data structures.` : `Nothing matches "${q}". Check the spelling, or try a shorter word.`;
     announce(summary.textContent);
-    // The heading and the window's title show the term as the site writes it ("SimHash", not "simhash").
-    const shown = casing(q, hits.map((x) => x.d));
-    heading.textContent = `Search: ${shown}`;
-    document.title = `Search: ${shown} | Data structures, visualised`;
+    // The heading and the window's title echo the query as it was typed: the reader's words, not the site's spelling of them.
+    document.title = `Search: ${q} | Data structures, visualised`;
     // Results are grouped by where they live, best match first within each group, and the groups in the order of their best match.
     // An entry whose title is exactly the search comes first, whatever kind it is: the SimHash page above MinHash and near-duplicates.
     const exact = (d: Doc) => fold(d.title) === words.join(' ');

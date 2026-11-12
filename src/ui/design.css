@@ -11,6 +11,8 @@ main:has(> .design) {
 }
 
 .hld {
+  /* The quiet slate for lines and outlines not on the tour's step: 3.35 to 1 on #eef1f6, 3.8 to 1 on white. */
+  --hld-quiet: #75849a;
   overflow-anchor: none;
   margin-top: 16px;
   border: 1px solid var(--rule);
@@ -138,15 +140,21 @@ main:has(> .design) {
 }
 
 /*
- * On a phone, More unfolds the step's words over the top of the canvas from
- * where they start, so the canvas and everything under it stay where they are.
+ * On a phone, More unfolds the step's words under the transport, over the top
+ * of the canvas, so the canvas and everything under it stay where they are and
+ * every transport button can still be pressed. On a very short screen it is
+ * capped and scrolls inside.
  */
 .hld.phone.more .hld-step-body {
   position: absolute;
+  top: 100%;
   left: 0;
   right: 0;
   z-index: 6;
-  padding: 0 16px 14px;
+  max-height: max(96px, calc(100vh - 100% - 24px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 16px 14px;
   background: var(--ink);
   box-shadow: 0 8px 16px rgb(15 27 45 / 0.28);
 }
@@ -185,8 +193,11 @@ main:has(> .design) {
   width: 40px;
 }
 
-.hld-icon:hover:not(:disabled):not([aria-disabled='true']) {
-  background: #e4eaf4;
+/* Hover tints only where there is a real pointer: on touch a tap would leave the button tinted. */
+@media (hover: hover) {
+  .hld-icon:hover:not(:disabled):not([aria-disabled='true']) {
+    background: #e4eaf4;
+  }
 }
 
 .hld-icon:disabled,
@@ -269,8 +280,10 @@ main:has(> .design) {
   cursor: pointer;
 }
 
-.hld-speed button:hover {
-  background: #e4eaf4;
+@media (hover: hover) {
+  .hld-speed button:hover {
+    background: #e4eaf4;
+  }
 }
 
 .hld-speed button[aria-pressed='true'] {
@@ -613,18 +626,21 @@ main:has(> .design) {
 .hld-flow.mode-call {
   stroke: var(--ink-2);
   stroke-width: 1.9;
+  marker-end: url(#hld-arrow-ink2);
 }
 
 .hld-flow.mode-async {
   stroke: var(--ink);
   stroke-width: 2.3;
   stroke-dasharray: 9 5;
+  marker-end: url(#hld-arrow-ink);
 }
 
 .hld-flow.mode-write {
   stroke: var(--ink-2);
   stroke-width: 1.9;
   stroke-dasharray: 14 4 2 4;
+  marker-end: url(#hld-arrow-ink2);
 }
 
 .hld-flow.mode-external {
@@ -632,11 +648,22 @@ main:has(> .design) {
   stroke-width: 2.3;
   stroke-dasharray: 1 6;
   stroke-linecap: round;
+  marker-end: url(#hld-arrow-ink);
 }
 
-/* A line that carries a request and its reply has an arrowhead at each end. */
+/* A line that carries a request and its reply has an arrowhead at each end, in the line's own colour. */
 .hld-flow.two-way {
   marker-start: url(#hld-arrow);
+}
+
+.hld-flow.two-way.mode-call,
+.hld-flow.two-way.mode-write {
+  marker-start: url(#hld-arrow-ink2);
+}
+
+.hld-flow.two-way.mode-async,
+.hld-flow.two-way.mode-external {
+  marker-start: url(#hld-arrow-ink);
 }
 
 .hld-flow.two-way.mode-local {
@@ -854,8 +881,10 @@ main:has(> .design) {
   color: var(--ink-2);
 }
 
+/* Its room is kept when it is not shown, so the key does not rewrap and jolt the page on the step that shows it. */
 .hld-cold-why[hidden] {
-  display: none;
+  display: inline;
+  visibility: hidden;
 }
 
 /* Where the key runs across the stage, the switch and its notes sit at the right of their row, never mid-row. */
@@ -930,6 +959,14 @@ main:has(> .design) {
 
 .hld-tip.quiet {
   fill: #75849a;
+}
+
+.hld-tip.ink {
+  fill: var(--ink);
+}
+
+.hld-tip.ink2 {
+  fill: var(--ink-2);
 }
 
 .hld-tip.live {
@@ -1143,10 +1180,11 @@ main:has(> .design) {
 
 /*
  * While touring, everything not on the step steps back, so the step stands
- * out: lines, outlines and marks to 45 per cent, words to a solid slate that
- * still reads at 4.5 to 1 on its fill (never opacity on text, which would
- * fail). The frame and its words do not step back. Not in forced colours,
- * which has no half tones.
+ * out. No opacity: lines, outlines, caps and marks take a solid quiet slate
+ * (#75849a) that still measures 3 to 1 on white and on the pale fills, so a
+ * line not on the step can still be read. Words take a solid slate that reads
+ * at 4.5 to 1 on its fill. The step's own path keeps its blue and its heavier
+ * stroke. The frame and its words do not step back. Not in forced colours.
  */
 @media (forced-colors: none) {
   .hld-svg .hld-flow,
@@ -1157,29 +1195,43 @@ main:has(> .design) {
   .hld-svg .hld-shelf,
   .hld-svg .hld-cap,
   .hld-chip-glyph {
-    transition: opacity 0.15s, stroke-opacity 0.15s, fill-opacity 0.15s, fill 0.15s;
+    transition: stroke 0.15s, fill 0.15s;
   }
 
-  .hld.touring:not(.reading) .hld-svg .hld-flow:not(.live):not(.peek) {
-    opacity: 0.45;
+  .hld.touring:not(.reading) .hld-svg .hld-flow:not(.live):not(.peek):not(.failed) {
+    stroke: var(--hld-quiet);
+    marker-end: url(#hld-arrow-quiet);
+  }
+
+  .hld.touring:not(.reading) .hld-svg .hld-flow.two-way:not(.live):not(.peek):not(.failed) {
+    marker-start: url(#hld-arrow-quiet);
+  }
+
+  /* A thick ink line steps down in weight too, so a quiet line never outweighs the lit one. */
+  .hld.touring:not(.reading) .hld-svg .hld-flow.mode-async:not(.live):not(.peek):not(.failed),
+  .hld.touring:not(.reading) .hld-svg .hld-flow.mode-external:not(.live):not(.peek):not(.failed) {
+    stroke-width: 2;
   }
 
   /* Boxes and chips keep a solid fill, so no line shows through them: their outlines and words step back instead. */
   .hld.touring:not(.reading) .hld-node.quiet:not(:focus-visible) .hld-box,
-  .hld.touring:not(.reading) .hld-chip.show:not(.live):not(.peek):not(:focus-visible) .hld-chip-box {
-    stroke-opacity: 0.45;
+  .hld.touring:not(.reading) .hld-chip.show:not(.live):not(.peek):not(.failed):not(:focus-visible) .hld-chip-box {
+    stroke: var(--hld-quiet);
   }
 
   .hld.touring:not(.reading) .hld-node.quiet:not(:focus-visible) text,
-  .hld.touring:not(.reading) .hld-chip.show:not(.live):not(.peek):not(:focus-visible) text,
-  .hld.touring:not(.reading) .hld-chip.show:not(.live):not(.peek):not(:focus-visible) .hld-chip-glyph {
+  .hld.touring:not(.reading) .hld-chip.show:not(.live):not(.peek):not(.failed):not(:focus-visible) text,
+  .hld.touring:not(.reading) .hld-chip.show:not(.live):not(.peek):not(.failed):not(:focus-visible) .hld-chip-glyph {
     fill: var(--ink-3);
   }
 
-  .hld.touring:not(.reading) .hld-node.quiet:not(:focus-visible) .hld-bar,
   .hld.touring:not(.reading) .hld-node.quiet:not(:focus-visible) .hld-shelf,
   .hld.touring:not(.reading) .hld-node.quiet:not(:focus-visible) .hld-cap {
-    opacity: 0.45;
+    stroke: var(--hld-quiet);
+  }
+
+  .hld.touring:not(.reading) .hld-node.quiet:not(:focus-visible) .hld-bar {
+    fill: var(--hld-quiet);
   }
 
   .hld.touring:not(.reading) .hld-node.quiet.kind-shared .hld-box,
@@ -1758,6 +1810,23 @@ main:has(> .design) {
   }
 }
 
+/*
+ * The stage meets the screen's edge here, so the diagram keeps 12px in from
+ * it: the leftmost boxes are not drawn against the glass. design-page.ts reads
+ * --hld-edge when it sizes the diagram. Not on a phone's tour, where the
+ * camera frames each step.
+ */
+@media (min-width: 600px) and (max-width: 1099px) and (min-height: 501px) {
+  .hld-canvas {
+    --hld-edge: 12px;
+  }
+
+  .hld-svg {
+    margin-left: var(--hld-edge);
+    width: calc(100% - var(--hld-edge));
+  }
+}
+
 @media (max-width: 899px) {
   .hld-detail-grid,
   .hld-framings,
@@ -2309,7 +2378,7 @@ main:has(> .design) {
 @media (min-width: 1800px) {
   .hld {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 272px;
+    grid-template-columns: minmax(0, 1fr) 336px;
     align-items: start;
   }
 
@@ -2333,6 +2402,33 @@ main:has(> .design) {
     padding: 14px 16px;
     border-top: 0;
     border-left: 1px solid var(--rule);
+    /* As tall as the diagram, never taller: its notes scroll inside it. */
+    contain: size;
+    overflow-y: auto;
+  }
+
+  /* Its parts keep their height: the column scrolls rather than squeeze them. */
+  .hld-legend > *,
+  .hld-key-row > * {
+    flex-shrink: 0;
+  }
+
+  .hld-cold-toggle {
+    align-items: flex-start;
+  }
+
+  .hld-cold-toggle input {
+    margin-top: 1px;
+  }
+
+  /* The switch's words on one line; why a step shows the paths goes under them, its room kept. */
+  .hld-cold-toggle label {
+    white-space: nowrap;
+  }
+
+  .hld-cold-why,
+  .hld-cold-why[hidden] {
+    display: block;
   }
 
   .hld-key-notes dl {
@@ -2429,8 +2525,10 @@ main:has(> .design) {
     color: #7d8ca2;
   }
 
-  .hld-transport .hld-icon:hover:not(:disabled):not([aria-disabled='true']) {
-    background: #26354d;
+  @media (hover: hover) {
+    .hld-transport .hld-icon:hover:not(:disabled):not([aria-disabled='true']) {
+      background: #26354d;
+    }
   }
 
   .hld-transport .hld-play {
