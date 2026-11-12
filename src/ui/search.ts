@@ -47,7 +47,7 @@ function build(): Promise<Doc[]> {
         kind: 'Connection',
         title: `${name(f.from)} to ${name(f.to)}`,
         also: [f.via, mode, ...(f.label ? [f.label] : []), ...(f.travels ? [f.travels] : [])],
-        text: [f.how, f.delivery, ...f.alts, ...(f.ways ?? []).flatMap((w) => [w.name, w.what, ...w.pros, ...w.cons])].join(' '),
+        text: [f.how, f.delivery, ...f.alts, ...(f.ways ?? []).flatMap((w) => [w.name, w.what, ...w.pros, ...w.cons]), ...(f.examples ?? []).flatMap((e) => [e.title, e.code, e.note ?? ''])].join(' '),
         href: `${base}/f/${f.id}`,
         where: `${d.name}: connection by ${f.via}`,
         from: d.name,

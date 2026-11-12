@@ -22,6 +22,18 @@ export interface Figure {
   from: string;
 }
 
+/** What a call or message looks like on the wire: a statement, a request, a schema or one example message. */
+export interface Example {
+  /** What this block is: "Request", "Response", "Topic and key", "Message value", "Statement", "Service definition". */
+  title: string;
+  /** Names the notation in the block's label. Nothing is highlighted. */
+  lang: 'sql' | 'json' | 'proto' | 'http' | 'text';
+  /** The text itself, lines at most 72 characters, about 25 lines at most. */
+  code: string;
+  /** One sentence under the block: what to notice in it. */
+  note?: string;
+}
+
 /** One way two boxes could talk, on a connection's detail panel. Exactly one in a list is `chosen`: the one the diagram draws. */
 export interface Way {
   name: string;
@@ -129,6 +141,8 @@ export interface Flow {
   alts: string[];
   /** The same choice in full, the chosen way first. When present the page shows these instead of `alts`. */
   ways?: Way[];
+  /** What travels on this line, written out: the SQL, the request and response, the topic's message. Shown on the connection's panel. */
+  examples?: Example[];
 }
 
 /** Which side of its line the token's label sits on, for a leg where the place worked out from the diagram reads poorly. */
