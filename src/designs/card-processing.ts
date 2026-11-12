@@ -30,14 +30,59 @@ export const cardProcessing: Design = {
       what: 'The card reader at the till and the merchant\'s bank, the acquirer, which connects it to the card network. The chip or phone adds a one-time cryptogram to each purchase, and the acquirer turns it into an authorisation request.',
       why: 'We do not run it, but its habits shape our design. Terminals time out, retry and send reversals when they lose their link. Some purchases are approved offline by the card itself, so we first hear of them in clearing.',
       numbers: [
-        'Acquirers and terminals wait longer than the issuer is allowed: 25 seconds or more at a till (Visa patent background).',
-        'An unused card-present hold lapses after 2 days on Mastercard and about 5 on Visa (Stripe\'s published windows).',
+        {
+          text: 'Acquirers and terminals wait longer than the issuer is allowed: 25 seconds or more at a till (Visa patent background).',
+          from: 'Not a sum. Taken from a source cited on the page: the background section of Visa patent US12118555. Visa and Mastercard publish no figure, so this is a patent\'s description of common practice, not a scheme rule.',
+        },
+        {
+          text: 'An unused card-present hold lapses after 2 days on Mastercard and about 5 on Visa (Stripe\'s published windows).',
+          from: 'Not a sum. Taken from a source cited on the page: Stripe\'s guide to placing a hold, which lists authorisation windows by network. They are Stripe\'s published windows, not the networks\' rule books.',
+        },
       ],
       fails: 'The terminal loses its link after we approve. It sends a reversal, or nothing at all. A reversal releases the hold at once, and the hold\'s expiry is the backstop when nothing comes.',
       alternatives: [
-        { name: 'Card present, authorised online by the issuer', chosen: true, good: 'Every purchase asks us, so controls and balance are exact.', cost: 'We have to be up. When we are not, the network answers for us.' },
-        { name: 'Offline approval by the chip', good: 'Works with no connection, as on some transit and in-flight purchases. The card\'s own counters cap the risk.', cost: 'We learn of it only in clearing, and must post it even if the balance no longer covers it.' },
-        { name: 'Card not present, with 3-D Secure', good: 'An online purchase arrives with the result of strong customer authentication, and the merchant is protected from liability for fraud when it is used.', cost: 'An extra step for the cardholder, and the issuer must answer the authentication request as well.' },
+        {
+          name: 'Card present, authorised online by the issuer', chosen: true, good: 'Every purchase asks us, so controls and balance are exact.', cost: 'We have to be up. When we are not, the network answers for us.',
+          what: "The chip or phone makes a cryptogram for this purchase, and the acquirer sends it through Mastercard to our gateway as an 0100. Every tap meets the authoriser's checks before a hold is placed. It is the case the tour follows.",
+          pros: [
+            'A freeze or a limit set in the app takes effect on the next tap.',
+            'The hold is placed at the moment of purchase, so the available balance is exact.',
+            'The cryptogram, checked in the HSM, makes a copied card hard to use.',
+          ],
+          cons: [
+            'We must answer every request in time, from either site, at any hour.',
+            'When we cannot, the network answers for us by stand-in, on parameters set in advance.',
+            'Terminals retry and reverse, so every request must be safe to receive twice.',
+          ],
+        },
+        {
+          name: 'Offline approval by the chip', good: 'Works with no connection, as on some transit and in-flight purchases. The card\'s own counters cap the risk.', cost: 'We learn of it only in clearing, and must post it even if the balance no longer covers it.',
+          what: 'The chip decides on its own, within limits and counters the issuer wrote to it, and the terminal stores the purchase. Nothing reaches our gateway. The first we hear is a clearing record with no hold, which clearing posts anyway.',
+          pros: [
+            'Works with no connection at all, as on some transit and in-flight purchases.',
+            "The card's own counters cap how much can be spent before it must go online.",
+            'Adds no load to the authorisation path.',
+          ],
+          cons: [
+            'We learn of the purchase only in clearing.',
+            'It must be posted even if the balance no longer covers it, so the account can go negative.',
+            'A freeze or a control set in the app cannot stop it at the till.',
+          ],
+        },
+        {
+          name: 'Card not present, with 3-D Secure', good: 'An online purchase arrives with the result of strong customer authentication, and the merchant is protected from liability for fraud when it is used.', cost: 'An extra step for the cardholder, and the issuer must answer the authentication request as well.',
+          what: 'An online checkout first asks the issuer to authenticate the cardholder, by app, code or biometrics. The 0100 then arrives with the result, and the authoriser takes it as one more check before controls, fraud and funds.',
+          pros: [
+            'Strong customer authentication rules in the UK and EEA can require it, so it must be supported anyway.',
+            'The merchant is protected from liability for fraud when it is used.',
+            'A passed check is a strong sign the real cardholder is paying.',
+          ],
+          cons: [
+            'An extra step for the cardholder at checkout.',
+            'The issuer must answer the authentication request as well as the authorisation.',
+            'No chip cryptogram, so the authoriser leans more on the fraud score.',
+          ],
+        },
       ],
       say: 'I would draw the four parties first: cardholder, merchant and acquirer, network, issuer. Then say which one we are. Here we are the issuer: the network asks, and we must answer in time.',
     },
@@ -50,15 +95,63 @@ export const cardProcessing: Design = {
       what: 'Routes each authorisation from the acquirer to the issuer by the card\'s number range, carries clearing files between them in batches, and works out every bank\'s net position for settlement. If the issuer does not answer in time, it answers on the issuer\'s behalf: stand-in processing.',
       why: 'Each bank connects once, to the network, rather than to every other bank. The network sets the rules: message formats (dialects of ISO 8583), time limits, dispute rules and fees.',
       numbers: [
-        'Visa gives VisaNet a capacity of over 65,000 transaction messages a second (Visa, 2019).',
-        'Mastercard runs clearing six times a day; issuers may take all six, but four or five are usually enough (Paymentology).',
-        'Visa Research gives a stand-in approval rate of 67 per cent against 93 per cent when issuers answer, and proposes a model of each issuer\'s decisions (Smarter STIP).',
+        {
+          text: 'Visa gives VisaNet a capacity of over 65,000 transaction messages a second (Visa, 2019).',
+          from: 'Not a sum. Taken from a source cited on the page: Visa\'s July 2019 fact sheet. It is capacity, not traffic, and it is Visa\'s figure; this design is on Mastercard. Compare our own yearly peak of about 135 messages a second.',
+        },
+        {
+          text: 'Mastercard runs clearing six times a day; issuers may take all six, but four or five are usually enough (Paymentology).',
+          from: 'Not a sum. Taken from a source cited on the page: Paymentology\'s guide to clearing, settlement and reconciliation.',
+        },
+        {
+          text: 'Visa Research gives a stand-in approval rate of 67 per cent against 93 per cent when issuers answer, and proposes a model of each issuer\'s decisions (Smarter STIP).',
+          from: 'Not a sum. Taken from a source cited on the page: Visa Research, Smarter Stand-In Processing. The rates are from Visa\'s study of its own network, not from Mastercard.',
+        },
       ],
       fails: 'When we are slow or down, stand-in decides using parameters we set in advance: limits per card and per day, merchant categories to refuse. It then sends us advices so we can post what it approved. Those parameters are product decisions, made and reviewed before the outage.',
       alternatives: [
-        { name: 'Connect to the network directly', chosen: true, good: 'Full control of the messages, the time budget and the customer experience. Monzo moved card processing in-house on its own Mastercard link after its outsourced processor failed in 2017.', cost: 'Scheme certification, equipment in your own data centres and round-the-clock operations.' },
-        { name: 'Use an issuer processor (Marqeta, Lithic, Stripe Issuing, Adyen)', good: 'Live in weeks. They hold the network link and send you each request with 2 to 3 seconds to answer (Lithic allows 6).', cost: 'Their outage is yours, and your budget is a slice of theirs.' },
-        { name: 'A single-message network', good: 'Authorisation and the movement of money are one message, so there is no clearing file to match.', cost: 'A duplicate is a double debit unless it is caught, and you lose the gap in which to adjust the amount.' },
+        {
+          name: 'Connect to the network directly', chosen: true, good: 'Full control of the messages, the time budget and the customer experience. Monzo moved card processing in-house on its own Mastercard link after its outsourced processor failed in 2017.', cost: 'Scheme certification, equipment in your own data centres and round-the-clock operations.',
+          what: 'Our gateways in both data centres hold their own connections to Mastercard, speak its ISO 8583 dialect and take the clearing files. We set the time budget (under a second) and the stand-in parameters ourselves.',
+          pros: [
+            'The whole budget is ours: about 100 ms typically, against a network that waits a few seconds.',
+            'We set the stand-in parameters and receive every advice directly.',
+            "No one else's outage sits between the network and us. Monzo moved in-house after its processor failed in 2017.",
+          ],
+          cons: [
+            'Scheme certification before going live.',
+            'Network equipment and a PCI zone in our own data centres.',
+            'Round-the-clock operations, plus clearing files and settlement to run ourselves.',
+          ],
+        },
+        {
+          name: 'Use an issuer processor (Marqeta, Lithic, Stripe Issuing, Adyen)', good: 'Live in weeks. They hold the network link and send you each request with 2 to 3 seconds to answer (Lithic allows 6).', cost: 'Their outage is yours, and your budget is a slice of theirs.',
+          what: 'The processor holds the network link, the PCI zone and clearing. It sends each authorisation to us as a webhook with 2 to 3 seconds to answer (Lithic allows 6). Our design shrinks to the authoriser, the ledger and events.',
+          pros: [
+            'Live in weeks, with no scheme certification or network equipment of our own.',
+            'No card numbers, HSMs or clearing files to run.',
+            "The page's own call when launching fast or while small.",
+          ],
+          cons: [
+            "Their outage is ours: Monzo's 2017 outage was at its processor.",
+            'Our budget is a slice of theirs, and it crosses HTTP.',
+            'Their clearing match rate and their reports become what we reconcile against.',
+          ],
+        },
+        {
+          name: 'A single-message network', good: 'Authorisation and the movement of money are one message, so there is no clearing file to match.', cost: 'A duplicate is a double debit unless it is caught, and you lose the gap in which to adjust the amount.',
+          what: 'On a single-message network the authorisation also moves the money. The ledger would post at once, with no hold to place and no clearing record to match it to later.',
+          pros: [
+            'No clearing step, so no matching of records to holds.',
+            'The cardholder sees the final amount straight away.',
+            'Fewer states in the life of a purchase.',
+          ],
+          cons: [
+            'A duplicate is a double debit unless it is caught.',
+            'No gap in which to adjust the amount, as for a tip or a hotel bill.',
+            "This design's purchases are authorised and cleared as separate messages, as the tour shows.",
+          ],
+        },
       ],
       say: 'Stand-in is not just a failure I hope never happens. It is a product I configure: what the network may approve for my customers while I cannot answer.',
     },
@@ -71,14 +164,72 @@ export const cardProcessing: Design = {
       what: 'Holds long-lived TCP connections to the network from both data centres, frames and parses ISO 8583 messages, checks them, catches repeats, and turns each into an internal request. It is inside the PCI zone: it swaps the card number for a token at the vault and has the cryptogram or PIN checked by the HSM before anything else sees the request.',
       why: 'The network speaks one dialect over persistent sockets and matches each answer to its request by reference number. Keeping that protocol, the card number and the clock in one small service keeps PCI scope small, and everything behind it speaks plain internal calls.',
       numbers: [
-        'On Visa, each message has a length prefix on a long-lived TCP connection, and an answer may return on any live connection, matched by field 37 (Increase).',
-        'Our budget: parse and check in about 1 ms; the whole answer in about 100 ms typically and 300 ms at the 99th percentile (design targets).',
+        {
+          text: 'On Visa, each message has a length prefix on a long-lived TCP connection, and an answer may return on any live connection, matched by field 37 (Increase).',
+          from: 'Not a sum. Taken from sources cited on the page: Increase\'s articles on Visa redundancy and on ISO 8583. They describe Visa; the page assumes Mastercard\'s link works alike in these respects.',
+        },
+        {
+          text: 'Our budget: parse and check in about 1 ms; the whole answer in about 100 ms typically and 300 ms at the 99th percentile (design targets).',
+          from: 'Design targets from the latency budget in "Numbers to have ready": network link 10 + parse 1 + vault 5 + HSM 5 + card 5 + fraud 50 + hold 20 + reply 10 = 106 ms, about 100 ms. The 300 ms is a target with room for slow calls and retries inside a site, not a sum.',
+        },
       ],
       fails: 'If the gateway in one site dies, the network sends on its connections to the other. Requests in flight are lost; the network retries or stands in, and the advice tells us what it decided. The gateway also owns a deadline: past it, it stops waiting and answers decline, so a slow core never leaves the network guessing.',
       alternatives: [
-        { name: 'Own gateway, live in both data centres', chosen: true, good: 'Either site can answer any request, so losing one costs only what was in flight.', cost: 'Two sites of network equipment, and every request must be safe to process in either.' },
-        { name: 'An issuer processor\'s webhook', good: 'No ISO 8583, no scheme connection, no PCI zone of our own.', cost: 'A 2-second budget set by someone else, and HTTP between us and the network.' },
-        { name: 'One live gateway with a warm standby', good: 'Simpler to reason about: one place holds the connections.', cost: 'Failover takes seconds, and every purchase in those seconds goes to stand-in.' },
+        {
+          name: 'Own gateway, live in both data centres', chosen: true, good: 'Either site can answer any request, so losing one costs only what was in flight.', cost: 'Two sites of network equipment, and every request must be safe to process in either.',
+          what: 'A small service in each data centre holds TCP connections to Mastercard, parses each 0100, swaps the card number for a token, has the HSM check the cryptogram and stamps a deadline. The network sends to both sites, so either can answer.',
+          pros: [
+            'Losing one site costs only the requests in flight there.',
+            'Protocol, card numbers and clock sit in one small service, so PCI scope stays small.',
+            'It owns the deadline: past it, it answers decline rather than leave the network guessing.',
+          ],
+          cons: [
+            'Network equipment and circuits in two sites.',
+            "Every request must be safe to process in either site, so the key is the network's identifiers, never anything local.",
+            'An ISO 8583 dialect to parse, test and certify.',
+          ],
+        },
+        {
+          name: 'An issuer processor\'s webhook', good: 'No ISO 8583, no scheme connection, no PCI zone of our own.', cost: 'A 2-second budget set by someone else, and HTTP between us and the network.',
+          what: 'A processor holds the network link and sends us an HTTPS request for each authorisation. We answer the webhook, and the processor builds the reply to the network.',
+          pros: [
+            'No ISO 8583, no scheme connection, no PCI zone of our own.',
+            'Fewer moving parts to run day and night.',
+          ],
+          cons: [
+            'A budget of about 2 seconds, set by someone else.',
+            "HTTP between us and the network, and the processor's outage is ours.",
+            'At about 1.2 million cards the page chooses a direct link.',
+          ],
+        },
+        {
+          name: 'One live gateway with a warm standby', good: 'Simpler to reason about: one place holds the connections.', cost: 'Failover takes seconds, and every purchase in those seconds goes to stand-in.',
+          what: 'One site holds the live connections and answers everything. The other is kept ready and takes over when the first fails.',
+          pros: [
+            'Simpler to reason about: one place holds the connections.',
+            'No question of which site answered a request while both are healthy.',
+          ],
+          cons: [
+            'Failover takes seconds, and every purchase in those seconds goes to stand-in.',
+            'The standby is not proved by live traffic until it is needed.',
+            'The network already sends to both sites, so a standby wastes that.',
+          ],
+        },
+        {
+          name: 'A bought payment switch',
+          good: 'The network dialect and connection handling come ready-made.',
+          cost: 'A vendor inside the PCI zone, and our deadline and idempotency rules still need fitting to it.',
+          what: "Run a vendor's switch software in our own sites in place of our gateway code. It speaks the network's dialect and hands each request to the authoriser over an internal interface.",
+          pros: [
+            'The ISO 8583 dialect and connection handling come ready-made.',
+            "The vendor follows the network's message changes for us.",
+          ],
+          cons: [
+            'A licence and a vendor to depend on, inside the PCI zone.',
+            'The deadline, tokenising and idempotency rules still have to fit our design.',
+            'The gateway is meant to be small, so owning it is not a large build.',
+          ],
+        },
       ],
       say: 'The gateway owns the clock. Each request gets a deadline when it arrives, and every call behind it gets only what is left.',
       see: [
@@ -95,14 +246,57 @@ export const cardProcessing: Design = {
       what: 'The only place card numbers are kept, encrypted, each mapped to a random token. Everything outside the PCI zone, from the authoriser and the ledger to events and the app, knows a card only by its token.',
       why: 'PCI DSS applies to every system that stores, processes or transmits card data, and to anything that can affect their security. A vault and tokens shrink that to three parts: the gateway, the vault and the HSM.',
       numbers: [
-        'About 1.2 million cards (assumption): at most a few hundred megabytes, small enough to cache on every gateway.',
-        'Lookup in under 5 ms (design target).',
+        {
+          text: 'About 1.2 million cards (assumption): at most a few hundred megabytes, small enough to cache on every gateway.',
+          from: '1.2 million cards from "Numbers to have ready" (about 900,000 UK members, some with several cards). If an entry is about 200 bytes (an encrypted card number, its token and a key reference; an assumption), 1.2 million × 200 bytes = 240 MB.',
+        },
+        {
+          text: 'Lookup in under 5 ms (design target).',
+          from: 'Design target: the vault\'s 5 ms share of the 106 ms latency budget in "Numbers to have ready". Most lookups hit the gateway\'s own cache and take far less.',
+        },
       ],
       fails: 'It is read on every authorisation, so it is replicated to both sites and cached on each gateway. If it cannot be read the card cannot be found: decline, and let stand-in carry the load if it lasts.',
       alternatives: [
-        { name: 'Own vault, random tokens, keys held in the HSM', chosen: true, good: 'The smallest PCI scope we control, and no outside call on the hot path.', cost: 'We run it to PCI standard and rotate its keys.' },
-        { name: 'A vault run by a provider', good: 'Card numbers never touch our systems.', cost: 'A network hop and an outside dependency on every purchase.' },
-        { name: 'Encrypt the card number in each service', good: 'No extra service.', cost: 'Every service, log and backup that touches it is in PCI scope.' },
+        {
+          name: 'Own vault, random tokens, keys held in the HSM', chosen: true, good: 'The smallest PCI scope we control, and no outside call on the hot path.', cost: 'We run it to PCI standard and rotate its keys.',
+          what: 'A small store inside the PCI zone maps each card number, encrypted under keys held in the HSM, to a random token. The gateway asks it on every 0100, usually from its own cache, and nothing past the gateway sees the number.',
+          pros: [
+            'PCI scope shrinks to three parts: gateway, vault and HSM.',
+            'No outside call on the hot path; a lookup fits inside 5 ms.',
+            'Random tokens mean nothing outside the vault, so logs, events and the ledger can carry them freely.',
+          ],
+          cons: [
+            'We run it to PCI standard and rotate its keys.',
+            'Read on every authorisation, so it must be replicated to both sites.',
+            'If it cannot be read, the card cannot be found and the answer is decline.',
+          ],
+        },
+        {
+          name: 'A vault run by a provider', good: 'Card numbers never touch our systems.', cost: 'A network hop and an outside dependency on every purchase.',
+          what: 'A specialist provider stores the card numbers and hands back tokens. Our systems would keep only tokens, and the gateway would ask the provider over HTTPS.',
+          pros: [
+            'No card numbers stored in our systems.',
+            'The provider runs the vault to PCI standard and rotates its keys.',
+          ],
+          cons: [
+            'A network hop and an outside dependency on every purchase, against a 5 ms target.',
+            "The provider's outage stops every authorisation.",
+            'A gateway on a direct network link still receives each card number before it can ask.',
+          ],
+        },
+        {
+          name: 'Encrypt the card number in each service', good: 'No extra service.', cost: 'Every service, log and backup that touches it is in PCI scope.',
+          what: 'No vault: each service that needs the card keeps the number encrypted, with keys from the HSM. The authoriser, the ledger and events would carry the encrypted number in place of a token.',
+          pros: [
+            'No extra service and no extra hop.',
+            'A service can decrypt when it truly needs the number.',
+          ],
+          cons: [
+            'Every service, log and backup that touches it is in PCI scope.',
+            'Many more systems need keys, and every key rotation touches all of them.',
+            'Gives up the rule this page is built on: card numbers stop at the gateway.',
+          ],
+        },
       ],
       say: 'Card numbers stop at the gateway. Past it a card is a token, so logs, events and the ledger are out of PCI scope.',
       see: [{ id: 'hash-table', label: 'Hash table' }],
@@ -115,12 +309,72 @@ export const cardProcessing: Design = {
       x: 335, y: 350, w: 150, h: 56, kind: 'shared',
       what: 'Tamper-resistant devices that hold the issuer\'s keys and do the cryptography: check the chip\'s authorisation request cryptogram (ARQC), produce the response cryptogram (ARPC), check PINs and card security codes, and protect the vault\'s keys. Keys never leave them in the clear.',
       why: 'Checking the cryptogram is what makes a chip or phone payment hard to copy: each purchase carries a fresh code that only the real card or device could compute. The check needs the issuer\'s keys, and those must never sit in application memory.',
-      numbers: ['One or two operations per authorisation, a few milliseconds each (design target).', 'At least two per site, so one can fail or be patched.'],
+      numbers: [
+        {
+          text: 'One or two operations per authorisation, a few milliseconds each (design target).',
+          from: 'Verify the ARQC and produce the ARPC, or check a PIN or security code: one or two commands. "A few milliseconds" is the HSM\'s 5 ms share of the latency budget in "Numbers to have ready". At the yearly peak of about 135 messages a second, 135 × 2 = 270 commands a second at most.',
+        },
+        {
+          text: 'At least two per site, so one can fail or be patched.',
+          from: 'A design choice, not a sum. One module per site is a single point of failure, and cryptography must not cross sites on the hot path, so each site needs its own spare.',
+        },
+      ],
       fails: 'Without it the gateway cannot verify the chip, so it declines. Keep a pool in each site and never send cryptography across sites on the hot path.',
       alternatives: [
-        { name: 'HSMs in each data centre', chosen: true, good: 'Lowest latency, and keys stay in hardware we control.', cost: 'Hardware to buy, certify and run.' },
-        { name: 'A cloud HSM service', good: 'No hardware to manage.', cost: 'Another hop and another provider in every authorisation.' },
-        { name: 'Keys in software', good: 'Easy to build.', cost: 'Not acceptable for issuer keys.' },
+        {
+          name: 'HSMs in each data centre', chosen: true, good: 'Lowest latency, and keys stay in hardware we control.', cost: 'Hardware to buy, certify and run.',
+          what: 'Each data centre has its own pool of payment HSMs. The gateway sends a command to verify the ARQC (or PIN block, or security code) and gets back pass or fail and the ARPC. A second module in the site steps in if needed.',
+          pros: [
+            'Lowest latency: a call inside the site, within the 5 ms target.',
+            'Keys stay in tamper-resistant hardware we control.',
+            "Each site verifies on its own, so one site's trouble does not spread.",
+          ],
+          cons: [
+            'Hardware to buy, certify and run: at least two per site.',
+            'Key ceremonies and key management by a few trusted people.',
+            "If a site's whole pool is down, that site cannot verify chips and is taken out of service.",
+          ],
+        },
+        {
+          name: 'A cloud HSM service', good: 'No hardware to manage.', cost: 'Another hop and another provider in every authorisation.',
+          what: "A cloud provider's payment cryptography service holds the keys and verifies the ARQC through an API. AWS Payment Cryptography, cited on this page, is one. The gateway would call it in place of local modules.",
+          pros: [
+            'No hardware to buy, rack or patch.',
+            'Capacity and replication come as a service.',
+          ],
+          cons: [
+            'Another hop and another provider in every authorisation.',
+            'The 5 ms target is harder to keep across a network.',
+            'Our own data centres would depend on a cloud region for every purchase.',
+          ],
+        },
+        {
+          name: 'Keys in software', good: 'Easy to build.', cost: 'Not acceptable for issuer keys.',
+          what: 'Hold the issuer keys in application memory or a software key store, and compute the cryptograms in code.',
+          pros: [
+            'Easy to build and to test.',
+            'No hardware and no extra hop.',
+          ],
+          cons: [
+            'Not acceptable for issuer keys: anyone who can read memory or a backup can take them.',
+            'With copied keys, someone could make the cryptograms only a real card should, which defeats the chip.',
+          ],
+        },
+        {
+          name: 'Let the network verify on our behalf',
+          good: 'No cryptography call of our own for the purchases it covers.',
+          cost: 'The network must hold our keys, and we still need HSMs for the rest.',
+          what: 'Where the network offers it, it checks the cryptogram before passing the request on and puts the result in the 0100. The gateway would read that result in place of calling the HSM.',
+          pros: [
+            'One less call on the hot path for the purchases it covers.',
+            'Less hardware to size for the peak.',
+          ],
+          cons: [
+            'The network must hold our keys to do it.',
+            "We still need HSMs for whatever it does not cover, and for the vault's keys.",
+            'Depends on what the network offers; this page has not checked the details.',
+          ],
+        },
       ],
       say: 'The chip proves the card is real with a cryptogram on every purchase. The HSM checks it with keys no engineer can read.',
     },
@@ -133,15 +387,60 @@ export const cardProcessing: Design = {
       what: 'Runs the checks in a fixed order and stops at the first that fails: card active, not frozen, not expired; the cryptogram, PIN or 3-D Secure result from the gateway; the owner\'s controls (blocked merchant categories, contactless limit, per-purchase limit, countries); the fraud score; then funds. It approves by asking the ledger to place a hold, and answers approve or decline with a reason code.',
       why: 'Cheap, certain checks go first, so most declines cost almost nothing. Funds go last because the hold is the only step that changes anything, and nothing after it may fail without undoing it.',
       numbers: [
-        'Reason codes: 00 approved, 05 do not honour, 51 not sufficient funds (ISO 8583).',
-        'Budget: card read 5 ms, fraud score 50 ms, ledger hold 20 ms (design targets).',
-        'Since 19 March 2026 UK firms set their own contactless limits; most large banks said they would keep £100 for now (FStech).',
+        {
+          text: 'Reason codes: 00 approved, 05 do not honour, 51 not sufficient funds (ISO 8583).',
+          from: 'Not a sum. Taken from a source cited on the page: the ISO 8583 response codes (Wikipedia: ISO 8583). Each network adds its own codes to these.',
+        },
+        {
+          text: 'Budget: card read 5 ms, fraud score 50 ms, ledger hold 20 ms (design targets).',
+          from: 'Design targets: three of the eight shares in the latency budget in "Numbers to have ready", which sum to 106 ms. The fraud score gets the largest share because a model call takes longest; the card read is one row by key, and the hold a few small writes and a commit.',
+        },
+        {
+          text: 'Since 19 March 2026 UK firms set their own contactless limits; most large banks said they would keep £100 for now (FStech).',
+          from: 'Not a sum. Taken from a source cited on the page: FStech, a trade news report, not the FCA itself.',
+        },
       ],
       fails: 'It keeps no state, so any instance in either site can serve any request. If the fraud service is late it decides on rules alone. If the ledger cannot answer it declines rather than approve without a hold.',
       alternatives: [
-        { name: 'Ordered checks in one service, with a deadline on every call', chosen: true, good: 'Predictable latency, and the order is explicit and testable.', cost: 'Changing a rule is a deploy, unless limits live in data.' },
-        { name: 'A rules engine run by the risk team', good: 'Risk can change controls without engineers.', cost: 'Harder to test, and the order and timing still need code.' },
-        { name: 'Run every check in parallel', good: 'Lower latency for approvals.', cost: 'More work for requests a cheap check would have declined, and the hold still has to come last.' },
+        {
+          name: 'Ordered checks in one service, with a deadline on every call', chosen: true, good: 'Predictable latency, and the order is explicit and testable.', cost: 'Changing a rule is a deploy, unless limits live in data.',
+          what: "One stateless service runs the checks in a fixed order: card state, the gateway's verification results, the owner's controls, the fraud score, then funds. Each call carries the time left on the deadline, and the first failure ends it with a reason code.",
+          pros: [
+            'Predictable latency: each call has its share of the 106 ms budget.',
+            'The order is explicit and testable, and most declines cost almost nothing.',
+            'Stateless, so any instance in either site can serve any request.',
+          ],
+          cons: [
+            'Changing a rule is a deploy, unless limits live in data.',
+            'The risk team needs engineers to change the order or add a check.',
+          ],
+        },
+        {
+          name: 'A rules engine run by the risk team', good: 'Risk can change controls without engineers.', cost: 'Harder to test, and the order and timing still need code.',
+          what: 'Controls and fraud rules live in a rules engine that the risk team edits, and the authoriser asks it for a verdict. The funds check and the hold stay in code.',
+          pros: [
+            'Risk can change controls without engineers or a deploy.',
+            'Rule changes can be reviewed and rolled back as data.',
+          ],
+          cons: [
+            'Harder to test: a rule change can alter outcomes with no code review.',
+            'The order and timing still need code.',
+            "Another call inside the budget, unless the engine runs in the authoriser's process.",
+          ],
+        },
+        {
+          name: 'Run every check in parallel', good: 'Lower latency for approvals.', cost: 'More work for requests a cheap check would have declined, and the hold still has to come last.',
+          what: 'Start the card read and the fraud score at once and combine the answers. The hold still comes last, once the others agree.',
+          pros: [
+            'Lower latency for approvals: the 5 ms card read overlaps the 50 ms score.',
+            'The slowest call sets the time, not the sum.',
+          ],
+          cons: [
+            'More work for requests a cheap check would have declined, such as fraud calls for frozen cards.',
+            'The hold still has to come last, so the saving is a few milliseconds.',
+            'At about 106 ms against a target of under a second, latency is not the problem to solve.',
+          ],
+        },
       ],
       say: 'Cheap checks first, the fraud score inside a fixed budget, and the hold last, because the hold is the only step that changes anything.',
       see: [{ id: 'token-bucket', label: 'Token bucket (velocity limits)' }],
@@ -153,12 +452,58 @@ export const cardProcessing: Design = {
       x: 585, y: 96, w: 160, h: 70, kind: 'store',
       what: 'Each card\'s state by token: status (active, frozen, lost), expiry, the account it draws on, and the controls the business owner set: limits, blocked categories, contactless on or off.',
       why: 'Read on every authorisation and written when someone freezes a card in the app. A freeze must work on the very next tap, so reads go to the primary or to a cache cleared on every write, never to a lagging replica.',
-      numbers: ['About 1.2 million cards (assumption): small enough to cache in full.', 'Reads in under 5 ms (design target).'],
+      numbers: [
+        {
+          text: 'About 1.2 million cards (assumption): small enough to cache in full.',
+          from: '1.2 million cards from "Numbers to have ready". If a card record is about 500 bytes (status, expiry, account and a handful of controls; an assumption), 1.2 million × 500 bytes = 600 MB, which fits in memory on one machine.',
+        },
+        {
+          text: 'Reads in under 5 ms (design target).',
+          from: 'Design target: the card read\'s 5 ms share of the 106 ms latency budget in "Numbers to have ready".',
+        },
+      ],
       fails: 'The primary fails over to its replica in the other site. A freeze is acknowledged only once it is on both, so a failover cannot lose it.',
       alternatives: [
-        { name: 'Relational database, synchronous replica, cache cleared on write', chosen: true, good: 'Exact and simple at a million rows.', cost: 'Failover is a step to rehearse.' },
-        { name: 'A key-value store (DynamoDB, Cassandra)', good: 'Scales without thought.', cost: 'Scale is not the problem here, and freshness on read needs care.' },
-        { name: 'Card state inside the ledger database', good: 'One transaction can read the card and place the hold.', cost: 'Ties a product feature to the money store.' },
+        {
+          name: 'Relational database, synchronous replica, cache cleared on write', chosen: true, good: 'Exact and simple at a million rows.', cost: 'Failover is a step to rehearse.',
+          what: 'A table of about 1.2 million cards keyed by token, with a synchronous replica in the other site. Reads go to the primary or to a cache cleared on every write, so a freeze works on the next tap.',
+          pros: [
+            'Exact and simple at a million rows.',
+            'A freeze is acknowledged only once it is on both sites, so a failover cannot lose it.',
+            "Controls are rows, so the owner's changes need no deploy.",
+          ],
+          cons: [
+            'Failover is a step to rehearse.',
+            'Synchronous replication adds a cross-site round trip to each write, though writes are rare.',
+            'The cache must be cleared on every write, or a freeze can be missed.',
+          ],
+        },
+        {
+          name: 'A key-value store (DynamoDB, Cassandra)', good: 'Scales without thought.', cost: 'Scale is not the problem here, and freshness on read needs care.',
+          what: 'Store each card as one item keyed by token. The authoriser reads it by key, and nothing here needs a join.',
+          pros: [
+            'Scales without thought, far past 1.2 million cards.',
+            'Reads by key are fast, and copies across sites are part of the product.',
+          ],
+          cons: [
+            'Scale is not the problem here: the whole table fits in memory.',
+            'Freshness on read needs care: a read from a lagging copy can miss a freeze.',
+            "Another kind of database to run beside the ledger's.",
+          ],
+        },
+        {
+          name: 'Card state inside the ledger database', good: 'One transaction can read the card and place the hold.', cost: 'Ties a product feature to the money store.',
+          what: 'Keep the card table in the same database as the ledger. The hold transaction could then read the card and place the hold in one go.',
+          pros: [
+            'One transaction can read the card and place the hold.',
+            'One less database to run and fail over.',
+          ],
+          cons: [
+            'Ties a product feature to the money store: app changes share its load and its schema changes.',
+            'Card reads land on the one database the authoriser cannot do without.',
+            'The card check comes before the fraud score, so one transaction would not cover the checks between anyway.',
+          ],
+        },
       ],
       say: 'A frozen card must decline on the next tap, so card state is read from the primary or from a cache that is cleared on write.',
       see: [
@@ -173,12 +518,73 @@ export const cardProcessing: Design = {
       x: 585, y: 350, w: 150, h: 56, kind: 'shared',
       what: 'Scores each authorisation against the card\'s recent history: how fast it is being used, a new merchant or country, the amount against normal, the channel. Returns a score and its reasons inside a fixed budget.',
       why: 'A decline at authorisation stops the money leaving. After approval the best you can do is alert and dispute. A score that arrives late is worth nothing, so keeping the budget matters more than squeezing the model.',
-      numbers: ['50 ms at the 99th percentile, of about 300 ms for the whole answer (design targets).', 'Features are kept up to date from the event stream, so scoring is a lookup and a model call.'],
+      numbers: [
+        {
+          text: '50 ms at the 99th percentile, of about 300 ms for the whole answer (design targets).',
+          from: 'Design targets from "Numbers to have ready": fraud has 50 of the 106 ms typical budget, and the whole answer has 300 ms at the 99th percentile. The 50 ms is also the hard timeout, so the score can never take more.',
+        },
+        {
+          text: 'Features are kept up to date from the event stream, so scoring is a lookup and a model call.',
+          from: 'A design choice, not a sum. A consumer of the card events log keeps each card\'s recent counts and amounts, so nothing is computed from history at scoring time. The 12 ms answer in the tour is an example.',
+        },
+      ],
       fails: 'Slow or down: the authoriser stops waiting at 50 ms and decides on rules alone (velocity, amount, country), and records that it did. The model never blocks the authorisation path.',
       alternatives: [
-        { name: 'Score inline with a hard timeout and a rules fallback', chosen: true, good: 'Stops fraud before money is committed.', cost: 'A model that must answer in tens of milliseconds.' },
-        { name: 'Score after approval only', good: 'Nothing added to the hot path.', cost: 'Fraud is found after the money has gone.' },
-        { name: 'A vendor\'s score', good: 'Quick to start, trained on more data than ours.', cost: 'An outside call inside a 50 ms budget.' },
+        {
+          name: 'Score inline with a hard timeout and a rules fallback', chosen: true, good: 'Stops fraud before money is committed.', cost: 'A model that must answer in tens of milliseconds.',
+          what: "The authoriser sends the purchase and the card's recent features to a model and waits at most 50 ms. If it is late or down, the authoriser decides on rules alone (velocity, amount, country) and records that the model did not answer.",
+          pros: [
+            'Stops fraud before money is committed.',
+            'The rules fallback means the model never blocks an authorisation.',
+            'Each score is logged with the decision, so the model can be judged later.',
+          ],
+          cons: [
+            'A model that must answer in tens of milliseconds, which limits how big it can be.',
+            'Features must be kept up to date from the event stream ahead of time.',
+            'Decisions made without a score need watching: alert on their share.',
+          ],
+        },
+        {
+          name: 'Score after approval only', good: 'Nothing added to the hot path.', cost: 'Fraud is found after the money has gone.',
+          what: 'Approve on controls and funds alone, then score each purchase from the card events log. A high score alerts the owner and can freeze the card for next time.',
+          pros: [
+            'Nothing added to the hot path.',
+            'The model can be as large and slow as it needs.',
+            'Reads the same log the alerts consumer already reads.',
+          ],
+          cons: [
+            'Fraud is found after the money has gone.',
+            'The best left is an alert and a dispute.',
+            'A decline at authorisation is the cheapest place to stop fraud, so this design scores inline.',
+          ],
+        },
+        {
+          name: 'A vendor\'s score', good: 'Quick to start, trained on more data than ours.', cost: 'An outside call inside a 50 ms budget.',
+          what: 'Send each purchase to an outside scoring service and use its score in the authoriser, with the same 50 ms timeout and rules fallback.',
+          pros: [
+            'Quick to start, trained on more data than ours.',
+            'Can see patterns across many issuers that we cannot.',
+          ],
+          cons: [
+            'An outside call inside a 50 ms budget.',
+            'Purchase data leaves our systems on every authorisation.',
+            "We cannot change the model, and may not see all of its reasons.",
+          ],
+        },
+        {
+          name: 'Rules only, no model',
+          good: 'Fast, explainable, and nothing to train.',
+          cost: 'Misses patterns a model would catch, and the rules need constant tuning.',
+          what: 'Velocity, amount and country rules in the authoriser, with no model at all. It is what this design falls back to when the model is late.',
+          pros: [
+            'Fast and explainable; nothing to train or serve.',
+            'No extra call: the rules read features the authoriser already has.',
+          ],
+          cons: [
+            'Misses patterns a model would catch.',
+            'Rules need constant tuning, and tight rules decline good customers.',
+          ],
+        },
       ],
       say: 'Fraud gets 50 milliseconds. If it is late I decide on rules and record that the model did not answer.',
     },
@@ -190,15 +596,77 @@ export const cardProcessing: Design = {
       what: 'The double-entry record of money. An approval writes a pending entry, the hold, which lowers the available balance. Clearing writes the posted entry and releases the hold. Available balance is the posted balance less open holds. For a credit card it is the credit limit less what is posted and held. The Ledger service design on this site goes inside it.',
       why: 'The hold must be exact under concurrency: two taps at once against the last £10 must not both succeed. So the funds check and the hold are one transaction on the account, keyed by the network\'s identifiers so a retry finds the first result. Daily limits are checked against the same account\'s totals in that transaction.',
       numbers: [
-        'About 1.2 million holds and 1.2 million postings a day (assumption); holds peak near 100 a second, postings come in bursts.',
-        'An unused hold lapses after the network\'s window: 7 days is typical (Lithic); card present on Mastercard, 2 days (Stripe).',
-        'Credit cards: a statement closes each month, and the minimum payment and interest are worked out from posted entries, never from holds.',
+        {
+          text: 'About 1.2 million holds and 1.2 million postings a day (assumption); holds peak near 100 a second, postings come in bursts.',
+          from: '1.2 million purchases a day from "Numbers to have ready". One hold per approval and one posting per clearing record gives about 1.2 million of each (counting every authorisation as approved, a slight overcount). Peak: 10 per cent of 1.2 million in the busiest hour is 120,000 ÷ 3,600 = about 33 a second; three times that on the busiest day of the year is about 100. Postings arrive a file at a time.',
+        },
+        {
+          text: 'An unused hold lapses after the network\'s window: 7 days is typical (Lithic); card present on Mastercard, 2 days (Stripe).',
+          from: 'Not a sum. Taken from sources cited on the page: Lithic\'s transaction flow (7 days typical) and Stripe\'s guide to placing a hold (2 days, card present, Mastercard).',
+        },
+        {
+          text: 'Credit cards: a statement closes each month, and the minimum payment and interest are worked out from posted entries, never from holds.',
+          from: 'Not a sum: how a credit account works. A hold can still be reversed, lapse or clear at another amount, so only posted entries are final enough to charge interest on.',
+        },
       ],
       fails: 'The one dependency the authoriser cannot do without. If it cannot answer, decline and let stand-in carry the load, because an approval with no hold breaks the balance. The primary replicates synchronously to the other site.',
       alternatives: [
-        { name: 'Relational database, one transaction per hold, partitioned by account', chosen: true, good: 'A lock on the account row makes the funds check exact, and it is easy to audit.', cost: 'A busy business with many cards queues on one row.' },
-        { name: 'Distributed SQL (Spanner, CockroachDB) across both sites', good: 'No failover step.', cost: 'Consensus adds a cross-site round trip to every hold.' },
-        { name: 'Event-sourced ledger', good: 'Complete history and replay.', cost: 'The available balance must still be derived exactly and fast.' },
+        {
+          name: 'Relational database, one transaction per hold, partitioned by account', chosen: true, good: 'A lock on the account row makes the funds check exact, and it is easy to audit.', cost: 'A busy business with many cards queues on one row.',
+          what: "A relational database partitioned by account, with a synchronous replica in the other site. Each hold is one transaction: lock the account row, check available funds and the daily limit, insert the hold and the outbox event, keyed by the network's identifiers.",
+          pros: [
+            'A lock on the account row makes the funds check exact: two taps on the last £10 cannot both succeed.',
+            'Easy to audit: double-entry rows, each with its key.',
+            'At about 100 holds a second at the yearly peak, one primary is plenty.',
+          ],
+          cons: [
+            'A busy business with many cards queues on one row.',
+            'A primary failover stalls holds for seconds, and stand-in carries those purchases.',
+            'Synchronous replication to the other site adds a round trip to every commit.',
+          ],
+        },
+        {
+          name: 'Distributed SQL (Spanner, CockroachDB) across both sites', good: 'No failover step.', cost: 'Consensus adds a cross-site round trip to every hold.',
+          what: 'A distributed SQL database spread over both sites, replicating each write by consensus. The hold is still one transaction, and replicas take over by themselves when a node fails.',
+          pros: [
+            'No failover step to run by hand.',
+            'Strong consistency across sites without our own replication set-up.',
+            'Splits data by key as it grows.',
+          ],
+          cons: [
+            'Consensus adds a cross-site round trip to every hold, as the synchronous replica does, and more when the leader for an account sits in the other site.',
+            'A majority needs three locations: with only two sites, losing one can stop writes.',
+            'One busy account is still serialised, so the hot-row queue remains.',
+          ],
+        },
+        {
+          name: 'Event-sourced ledger', good: 'Complete history and replay.', cost: 'The available balance must still be derived exactly and fast.',
+          what: 'Store only the events (hold placed, posted, released) and derive balances by replaying them. The funds check would read a projection of the available balance.',
+          pros: [
+            'Complete history and replay.',
+            'A natural fit with the card events log and with audit.',
+          ],
+          cons: [
+            'The available balance must still be derived exactly and fast, inside 20 ms.',
+            'The funds check still needs a lock or a version check on the account, so the hard part moves rather than goes.',
+            'A wrong event is fixed by another event, not an update.',
+          ],
+        },
+        {
+          name: 'Holds in a fast cache, written to the ledger later',
+          good: 'Faster holds, and less load on the ledger at peak.',
+          cost: 'Can approve money that is not there, and a crash loses holds.',
+          what: "Place the hold in an in-memory store that keeps each account's available balance, and write it to the ledger afterwards. The authoriser would check funds against the cache.",
+          pros: [
+            'Faster than a database transaction.',
+            'Takes load off the ledger at peak.',
+          ],
+          cons: [
+            'Can approve money that is not there: the cache and the ledger can disagree.',
+            'A crash between the cache and the ledger write loses holds.',
+            "Saves little: the ledger's 20 ms is well inside the budget, as the page's decision says.",
+          ],
+        },
       ],
       say: 'Strongly consistent where money is decided: the funds check and the hold are one transaction. Notifications, rewards and analytics can be eventually consistent.',
       see: [
@@ -216,15 +684,62 @@ export const cardProcessing: Design = {
       what: 'Reads the network\'s clearing files several times a day. For each record it finds the hold it belongs to, posts the final amount (which may differ), releases the hold, and applies fees and currency conversion as the record states. Records with no hold, such as offline taps, forced posts and refunds, are posted anyway. A dispute is a later event on the same purchase: raised through the network, with the money moving back through clearing and settlement.',
       why: 'Clearing, not authorisation, moves the money. The issuer must honour clearing records: the network does not stop forced posts, and the remedy for a wrong one is a dispute.',
       numbers: [
-        'No single field links a clearing record to its authorisation: match on authorisation code (field 38), card, merchant and amount (Paymentology).',
-        'Marqeta says it matches about 99 per cent, against an industry norm of about 88 per cent.',
-        'About 1.2 million records a day (assumption) in four to six files.',
+        {
+          text: 'No single field links a clearing record to its authorisation: match on authorisation code (field 38), card, merchant and amount (Paymentology).',
+          from: 'Not a sum. Taken from a source cited on the page: Paymentology\'s guide to clearing, settlement and reconciliation.',
+        },
+        {
+          text: 'Marqeta says it matches about 99 per cent, against an industry norm of about 88 per cent.',
+          from: 'Not a sum. Taken from a source cited on the page: Marqeta\'s blog on clearing and settlement. Both figures are Marqeta\'s own claims.',
+        },
+        {
+          text: 'About 1.2 million records a day (assumption) in four to six files.',
+          from: 'One record per purchase: 1.2 million purchases a day from "Numbers to have ready", leaving out refunds and offline taps. Mastercard runs six cycles a day and issuers usually take four or five (Paymentology), so four to six files. 1.2 million ÷ 6 = 200,000 and ÷ 4 = 300,000 records a file.',
+        },
       ],
       fails: 'A file processed twice must post nothing twice: every record is keyed by file and record number. A bad file is set aside and run again. Unmatched records go to a queue for people, and holds that are never cleared lapse when their window ends.',
       alternatives: [
-        { name: 'Batch per file, idempotent per record', chosen: true, good: 'Simple to rerun, and each file reconciles to its own totals.', cost: 'Posting lags the file by minutes.' },
-        { name: 'Stream records as they are parsed', good: 'Posted a little sooner.', cost: 'Files still arrive in batches, so little is gained.' },
-        { name: 'Leave clearing to an issuer processor', good: 'No file formats to learn.', cost: 'Their matching rate becomes yours.' },
+        {
+          name: 'Batch per file, idempotent per record', chosen: true, good: 'Simple to rerun, and each file reconciles to its own totals.', cost: 'Posting lags the file by minutes.',
+          what: 'Each clearing file is one job: parse it, check its counts, match each record to its hold on authorisation code, card, merchant and amount, and post it in one transaction. Records are keyed by file and record number, so a rerun posts nothing twice.',
+          pros: [
+            'Simple to rerun after a failure or a bad file.',
+            'Each file reconciles to its own totals and record counts.',
+            'Unmatched records from each file go to one queue for people.',
+          ],
+          cons: [
+            'Posting lags the file by minutes.',
+            'A file of 200,000 to 300,000 records arrives at once, so postings come in bursts.',
+            'With no single linking field, some records will always need people.',
+          ],
+        },
+        {
+          name: 'Stream records as they are parsed', good: 'Posted a little sooner.', cost: 'Files still arrive in batches, so little is gained.',
+          what: 'Parse each file into records on a log and let a consumer match and post each one as it arrives. The key stays the same: file and record number.',
+          pros: [
+            'Posted a little sooner.',
+            'Spreads the posting load rather than one burst per file.',
+            'Uses the same log as card events.',
+          ],
+          cons: [
+            'Files still arrive in batches, so little is gained.',
+            'Checking a whole file against its totals becomes a separate step.',
+            'More moving parts for a job that runs four to six times a day.',
+          ],
+        },
+        {
+          name: 'Leave clearing to an issuer processor', good: 'No file formats to learn.', cost: 'Their matching rate becomes yours.',
+          what: 'An issuer processor takes the clearing files, matches each record and sends it to us, often as a webhook. We post what it sends and reconcile against its reports.',
+          pros: [
+            'No file formats to learn.',
+            'One less job to run every day.',
+          ],
+          cons: [
+            'Their matching rate becomes yours: Marqeta claims about 99 per cent against an industry norm of about 88.',
+            'We still post forced posts and handle what they cannot match.',
+            'Fits only if the processor also holds the network link, which this design does not use.',
+          ],
+        },
       ],
       say: 'Authorisation is a promise. Clearing is the bill. I match each record to its hold, post the final amount, release the hold, and never assume the two are equal.',
       see: [{ id: 'hash-table', label: 'Hash table' }],
@@ -237,12 +752,53 @@ export const cardProcessing: Design = {
       x: 820, y: 474, w: 150, h: 64, kind: 'shared',
       what: 'Each day compares three records: our ledger postings, the totals in the clearing files, and the money that actually moved in the settlement account. Every difference is a break that someone must explain.',
       why: 'Each system can be right by its own lights and still disagree with the others. Reconciliation is the last line of defence, and it catches the bugs tests miss.',
-      numbers: ['Monzo compares ledger and settlement account daily; each break alerts an engineer, who must record evidence to close it.'],
+      numbers: [
+        {
+          text: 'Monzo compares ledger and settlement account daily; each break alerts an engineer, who must record evidence to close it.',
+          from: 'Not a sum. Taken from a source cited on the page: Monzo\'s 2022 blog, Processing payments safely at scale. Quoted as one bank\'s practice, not a rule.',
+        },
+      ],
       fails: 'If it stops running nothing fails at once, and errors build up unseen. Alert when a day is not reconciled by a fixed hour.',
       alternatives: [
-        { name: 'Daily three-way batch, plus checks on each payment\'s state', chosen: true, good: 'The batch catches everything; the per-payment checks catch most things sooner. Monzo runs both.', cost: 'Two systems to keep in step with the rules.' },
-        { name: 'Two-way only: ledger against clearing', good: 'Simpler.', cost: 'Misses the case where the money that moved is not what the files said.' },
-        { name: 'Spreadsheets in finance', good: 'Nothing to build at first.', cost: 'Does not scale, and leaves no audit trail.' },
+        {
+          name: 'Daily three-way batch, plus checks on each payment\'s state', chosen: true, good: 'The batch catches everything; the per-payment checks catch most things sooner. Monzo runs both.', cost: 'Two systems to keep in step with the rules.',
+          what: "Once a day compare our postings by currency and settlement date, the clearing files' totals, and the settlement bank's statement. Each difference is a break with an owner. Checks on each payment's state catch most problems sooner.",
+          pros: [
+            'The batch catches everything, including money that moved but was never in a file.',
+            'Per-payment checks catch most things sooner. Monzo runs both.',
+            'Each break has an owner and evidence that an auditor can follow.',
+          ],
+          cons: [
+            'Two systems to keep in step with the rules.',
+            'If it stops, nothing fails at once, so it needs its own alert: a day not reconciled by a fixed hour.',
+            'Breaks need people to explain them.',
+          ],
+        },
+        {
+          name: 'Two-way only: ledger against clearing', good: 'Simpler.', cost: 'Misses the case where the money that moved is not what the files said.',
+          what: 'Compare ledger postings with the clearing file totals only, and trust that settlement matched the files.',
+          pros: [
+            'Simpler: two internal records, no bank statement to load.',
+            'Still catches matching and posting bugs in clearing.',
+          ],
+          cons: [
+            'Misses the case where the money that moved is not what the files said.',
+            'A settlement error shows up only when the account runs short.',
+          ],
+        },
+        {
+          name: 'Spreadsheets in finance', good: 'Nothing to build at first.', cost: 'Does not scale, and leaves no audit trail.',
+          what: 'Finance downloads the reports each day and compares them by hand.',
+          pros: [
+            'Nothing to build at first.',
+            'Flexible while volumes are small and the rules still change.',
+          ],
+          cons: [
+            'Does not scale to about 1.2 million postings a day.',
+            'Leaves no audit trail of who checked what.',
+            'Slow, so errors build up between checks.',
+          ],
+        },
       ],
       say: 'I reconcile three ways every day: our ledger, the network\'s files and the bank statement. Each break gets an owner and evidence.',
       see: [{ id: 'stream-joins', label: 'Joins on a key' }],
@@ -256,14 +812,57 @@ export const cardProcessing: Design = {
       what: 'Our account at a settlement bank. Once a working day the network collects our net position from it: what our cardholders spent, less refunds, less the interchange owed to us.',
       why: 'Settlement is one net movement a day per currency, not one per purchase. The account must hold enough on each settlement day, so it is forecast from open holds and cleared totals.',
       numbers: [
-        'Settlement is typically one to three days after the purchase (Marqeta).',
-        'Settlement runs Monday to Friday; Saturday\'s clearing is netted into Monday (Paymentology).',
+        {
+          text: 'Settlement is typically one to three days after the purchase (Marqeta).',
+          from: 'Not a sum. Taken from a source cited on the page: Marqeta\'s blog on clearing and settlement.',
+        },
+        {
+          text: 'Settlement runs Monday to Friday; Saturday\'s clearing is netted into Monday (Paymentology).',
+          from: 'Not a sum. Taken from a source cited on the page: Paymentology\'s guide to clearing, settlement and reconciliation.',
+        },
       ],
       fails: 'Short of funds on a settlement day breaks scheme rules. Forecast each day\'s position and alert well before the cut-off.',
       alternatives: [
-        { name: 'Settle in pounds through one UK settlement bank', chosen: true, good: 'One account to forecast and reconcile.', cost: 'Foreign purchases are converted by the network at its rate.' },
-        { name: 'Accounts in several currencies', good: 'Hold euros and dollars to settle without conversion.', cost: 'More accounts to fund and reconcile.' },
-        { name: 'A sponsor bank settles for us', good: 'Needed when we are not a direct scheme member.', cost: 'Their cut-offs and fees.' },
+        {
+          name: 'Settle in pounds through one UK settlement bank', chosen: true, good: 'One account to forecast and reconcile.', cost: 'Foreign purchases are converted by the network at its rate.',
+          what: 'One account in pounds at one UK settlement bank. Once a working day the network collects our net position from it, and we forecast that amount from open holds and cleared totals.',
+          pros: [
+            'One account to forecast and reconcile.',
+            'One net movement a day, not one per purchase.',
+            'Matches a ledger kept in pounds.',
+          ],
+          cons: [
+            'Foreign purchases are converted by the network at its rate, as with the €42.00 lunch.',
+            "One bank's outage or cut-off is a single point of failure for settlement.",
+            'The account must hold enough on each settlement day, so forecasting is a job of its own.',
+          ],
+        },
+        {
+          name: 'Accounts in several currencies', good: 'Hold euros and dollars to settle without conversion.', cost: 'More accounts to fund and reconcile.',
+          what: 'Hold euro and dollar accounts too, and settle each currency from its own account.',
+          pros: [
+            'Settle without conversion.',
+            'Ready if we later offer cards in other currencies.',
+          ],
+          cons: [
+            'More accounts to fund and reconcile.',
+            'Our cardholders\' accounts are in pounds, so we would still convert, only at another point.',
+            "Outside this page's simplification of one currency.",
+          ],
+        },
+        {
+          name: 'A sponsor bank settles for us', good: 'Needed when we are not a direct scheme member.', cost: 'Their cut-offs and fees.',
+          what: 'A bank that is a direct scheme member settles with the network for us, and we settle with that bank.',
+          pros: [
+            'Needed when we are not a direct scheme member.',
+            "The sponsor deals with the network's settlement.",
+          ],
+          cons: [
+            'Their cut-offs and fees.',
+            'One more party to reconcile against.',
+            'This page assumes we settle with the network ourselves, through one settlement bank.',
+          ],
+        },
       ],
       say: 'Money moves once a day, net. The ledger moves per purchase. Reconciliation is what makes the two agree.',
     },
@@ -274,12 +873,68 @@ export const cardProcessing: Design = {
       x: 1060, y: 226, w: 130, h: 64, kind: 'queue',
       what: 'Every change in a card transaction (authorised, declined, reversed, cleared, refunded, disputed) as an event, keyed by card. Each is written to an outbox table in the same transaction as the ledger change, then relayed to the log.',
       why: 'The money and the event must never disagree. Writing both in one database transaction, then relaying, gives at-least-once delivery without a distributed transaction.',
-      numbers: ['About four events per purchase (assumption), so about 5 million a day.'],
+      numbers: [
+        {
+          text: 'About four events per purchase (assumption), so about 5 million a day.',
+          from: 'Four is an assumption: authorised and cleared on every purchase, plus reversals, advices, refunds and disputes on some, rounded up. 1.2 million purchases a day ("Numbers to have ready") × 4 = 4.8 million, about 5 million.',
+        },
+      ],
       fails: 'If the log is down, events wait in the outbox and the authorisation path carries on. Consumers drop repeats by event id.',
       alternatives: [
-        { name: 'Transactional outbox and a relay', chosen: true, good: 'Event and ledger change commit together.', cost: 'An extra table and a relay to run.' },
-        { name: 'Change data capture from the database log', good: 'No extra write in the transaction.', cost: 'Events shaped by table rows, and tied to database internals.' },
-        { name: 'Publish after commit', good: 'Simplest code.', cost: 'A crash between commit and publish loses the event.' },
+        {
+          name: 'Transactional outbox and a relay', chosen: true, good: 'Event and ledger change commit together.', cost: 'An extra table and a relay to run.',
+          what: 'The hold transaction also inserts a row in an outbox table. A relay reads new rows, publishes them to the card events log keyed by card, and marks them sent once the log acknowledges.',
+          pros: [
+            'Event and ledger change commit together, so they never disagree.',
+            'If the log is down, events wait in the table and authorisations carry on.',
+            'Keyed by card, so each card\'s events stay in order.',
+          ],
+          cons: [
+            'An extra table and a relay to run.',
+            'At-least-once: the relay can publish a row twice, so consumers drop repeats by event id.',
+            'An extra insert in every hold transaction.',
+          ],
+        },
+        {
+          name: 'Change data capture from the database log', good: 'No extra write in the transaction.', cost: 'Events shaped by table rows, and tied to database internals.',
+          what: "A connector reads the ledger database's own change log and turns each committed row change into an event. Nothing extra is written in the hold transaction.",
+          pros: [
+            'No extra write in the transaction.',
+            'Every committed change is captured, even ones made by hand.',
+          ],
+          cons: [
+            'Events shaped by table rows, and tied to database internals.',
+            'A schema change can break consumers.',
+            'Another component to keep in step through database failovers.',
+          ],
+        },
+        {
+          name: 'Publish after commit', good: 'Simplest code.', cost: 'A crash between commit and publish loses the event.',
+          what: 'Commit the hold, then publish the event from the same code.',
+          pros: [
+            'Simplest code.',
+            'No extra table or relay.',
+          ],
+          cons: [
+            'A crash between commit and publish loses the event.',
+            'A slow log slows the authorisation, unless the publish is dropped.',
+            'Money and events can disagree, which this design forbids.',
+          ],
+        },
+        {
+          name: 'One distributed transaction over database and log',
+          good: 'Both commit or neither does.',
+          cost: 'Slow and fragile, and a log outage would stop holds.',
+          what: 'Make the ledger write and the log write one atomic transaction across both systems, run by a coordinator.',
+          pros: [
+            'Both commit or neither does.',
+            'No relay and no rows waiting to be sent.',
+          ],
+          cons: [
+            'Slow and fragile: coordinator round trips inside the 20 ms hold.',
+            'The ledger cannot commit while the log is down, so a log outage stops authorisations.',
+          ],
+        },
       ],
       say: 'I never write to the database and the log as two steps. The event goes in an outbox in the same transaction, and a relay publishes it.',
       see: [
@@ -295,12 +950,68 @@ export const cardProcessing: Design = {
       x: 1060, y: 474, w: 150, h: 64, kind: 'shared',
       what: 'Independent readers of card events: push notifications and receipts, the suspicious-transaction alerts service (the Suspicious transaction alerts design on this site), cashback and rewards, accounting integrations, analytics.',
       why: 'None of them may slow an authorisation, and each reads at its own pace and can replay. A notification a second late is fine. A purchase a second late is a decline.',
-      numbers: ['Monzo (then Mondo) showed a notification in under 3 seconds in 2015.'],
+      numbers: [
+        {
+          text: 'Monzo (then Mondo) showed a notification in under 3 seconds in 2015.',
+          from: 'Not a sum. Taken from a source cited on the page: Monzo\'s 2015 blog, 3 Second Sandwich. An example of what is possible, not a target this page sets.',
+        },
+      ],
       fails: 'A consumer that falls behind sends late notifications. It never touches money.',
       alternatives: [
-        { name: 'Consumer groups on the log', chosen: true, good: 'Decoupled, replayable, each scales alone.', cost: 'Lag to watch on each.' },
-        { name: 'Call them from the authoriser', good: 'Simple to follow.', cost: 'Every one of them adds latency and a way to fail.' },
-        { name: 'Webhooks to outside systems', good: 'Right for accounting partners.', cost: 'Retries and signing to build, fed from the log anyway.' },
+        {
+          name: 'Consumer groups on the log', chosen: true, good: 'Decoupled, replayable, each scales alone.', cost: 'Lag to watch on each.',
+          what: 'Notifications, alerts, rewards, accounting and analytics each read the card events log in their own group and keep their own offset. About 5 million events a day is under 60 a second on average.',
+          pros: [
+            'Decoupled: none of them can slow an authorisation.',
+            'Replayable: a consumer can read again after a bug.',
+            'Each scales and fails alone.',
+          ],
+          cons: [
+            'Lag to watch on each.',
+            'At-least-once, so each must drop repeats by event id.',
+            'Order holds only per card, not across cards.',
+          ],
+        },
+        {
+          name: 'Call them from the authoriser', good: 'Simple to follow.', cost: 'Every one of them adds latency and a way to fail.',
+          what: 'After deciding, the authoriser calls the notification, alerts and rewards services itself.',
+          pros: [
+            'Simple to follow: one place shows everything that happens.',
+            'No log to run.',
+          ],
+          cons: [
+            'Every one of them adds latency and a way to fail.',
+            'A slow rewards service could turn a purchase into a decline.',
+            'No replay: a missed call is lost.',
+          ],
+        },
+        {
+          name: 'Webhooks to outside systems', good: 'Right for accounting partners.', cost: 'Retries and signing to build, fed from the log anyway.',
+          what: 'Send events to outside systems, such as accounting partners, as signed HTTPS calls. A consumer of the log does the sending.',
+          pros: [
+            'Right for accounting partners outside our network.',
+            'Partners need no access to our log.',
+          ],
+          cons: [
+            'Retries and signing to build.',
+            'Fed from the log anyway, so it adds to the log rather than replacing it.',
+          ],
+        },
+        {
+          name: 'A queue per consumer',
+          good: 'Each consumer gets its own copy, with acknowledgement and retries per message.',
+          cost: 'A message is gone once handled, so there is no replay.',
+          what: 'Copy each event into a separate queue for each consumer, which removes a message once it is handled.',
+          pros: [
+            'Acknowledgement and retries per message come built in.',
+            'One slow message need not hold up the rest, where order does not matter.',
+          ],
+          cons: [
+            'A message is gone once handled, so a consumer cannot replay after a bug.',
+            'A new consumer starts with no history.',
+            'Keeping order per card is harder.',
+          ],
+        },
       ],
       say: 'Everything after the decision reads the log. The only thing on the authorisation path is what decides it.',
       see: [{ id: 'realtime-push', label: 'Real-time push' }],
@@ -315,9 +1026,59 @@ export const cardProcessing: Design = {
       why: 'A pending purchase is shown from the hold, with the merchant name from the authorisation. The final amount replaces it when clearing posts.',
       fails: 'Push is best effort. The app reads the ledger when opened, so a lost notification never means a wrong balance.',
       alternatives: [
-        { name: 'Push through Apple and Google', chosen: true, good: 'Seconds, and free.', cost: 'No delivery guarantee.' },
-        { name: 'SMS', good: 'Reaches phones without the app.', cost: 'Costs per message and can be spoofed.' },
-        { name: 'Email', good: 'A record the owner can file.', cost: 'Too slow to stop fraud.' },
+        {
+          name: 'Push through Apple and Google', chosen: true, good: 'Seconds, and free.', cost: 'No delivery guarantee.',
+          what: "The notification consumer sends each event to Apple's and Google's push services, which deliver it to the owner's phone. The app reads the ledger when opened, so a lost push never means a wrong balance.",
+          pros: [
+            'Seconds, and free to send.',
+            'Carries the amount, the merchant and the card used.',
+            'The app can open straight onto the purchase.',
+          ],
+          cons: [
+            'No delivery guarantee.',
+            'Reaches only phones with the app installed and notifications on.',
+            'Two outside services in the path.',
+          ],
+        },
+        {
+          name: 'SMS', good: 'Reaches phones without the app.', cost: 'Costs per message and can be spoofed.',
+          what: 'Send a text message for each purchase through an SMS provider.',
+          pros: [
+            'Reaches phones without the app.',
+            'Works with no data connection.',
+          ],
+          cons: [
+            'Costs per message, at about 1.2 million purchases a day.',
+            'Can be spoofed, which helps fraudsters pose as the bank.',
+            'Plain text only.',
+          ],
+        },
+        {
+          name: 'Email', good: 'A record the owner can file.', cost: 'Too slow to stop fraud.',
+          what: 'Email a receipt for each purchase to the business owner.',
+          pros: [
+            'A record the owner can file.',
+            'Useful for accounts and expense receipts.',
+          ],
+          cons: [
+            'Too slow to stop fraud.',
+            'Easily lost in a busy inbox.',
+          ],
+        },
+        {
+          name: 'In-app feed only',
+          good: 'Nothing to send and nothing to lose.',
+          cost: 'No alert, so fraud goes unseen until the app is opened.',
+          what: "Show purchases only in the app's feed, read from the ledger, with no notification.",
+          pros: [
+            'Nothing to send, and nothing that can be lost.',
+            'The feed already reads from the ledger.',
+          ],
+          cons: [
+            'No alert, so a fraudulent purchase goes unseen until the owner opens the app.',
+            'The owner cannot freeze a card in the moment after a purchase they did not make.',
+          ],
+        },
       ],
       say: 'The phone hears within seconds, but it is told, not asked. The ledger stays the truth.',
     },
@@ -330,6 +1091,26 @@ export const cardProcessing: Design = {
       how: 'The terminal sends the purchase, with the chip\'s cryptogram, to the acquirer, which adds the merchant details and sends an authorisation request to the network.',
       delivery: 'Someone else\'s systems. Terminals retry, and send a reversal when they lose the answer.',
       alts: ['An online checkout, which arrives with a 3-D Secure result.', 'A wallet payment, which carries a network token in place of the card number.'],
+      ways: [
+        {
+          name: 'Through the acquirer', chosen: true,
+          what: "The terminal sends the purchase and the chip's cryptogram to the merchant's acquirer, which adds the merchant details and sends an authorisation request to Mastercard. We never see this leg, only the 0100 it produces.",
+          pros: ['The standard four-party path: each bank connects once, to the network.', 'The acquirer handles terminals, their retries and their reversals.'],
+          cons: ["Someone else's systems, with no guarantees to us.", 'If the answer never reaches the till, our hold stays until a reversal arrives or it lapses.'],
+        },
+        {
+          name: 'Online checkout with 3-D Secure',
+          what: "The cardholder pays on a website, and the merchant's provider first runs 3-D Secure with us. The 0100 then arrives carrying the result.",
+          pros: ['The authoriser gets a strong authentication result.', 'The merchant is protected from fraud liability when it is used.'],
+          cons: ['An extra step for the cardholder, and an authentication request for us to answer.', 'No chip cryptogram: the card is not present.'],
+        },
+        {
+          name: 'Wallet payment with a network token',
+          what: 'Apple Pay or Google Pay sends a network token in place of the card number, with a one-time cryptogram for the purchase. The merchant never sees the real number.',
+          pros: ['The card number never reaches the merchant.', 'A cryptogram on every purchase, as with the chip.'],
+          cons: ['The issuer decides whether each wallet token is created: another request to answer.', 'Another identifier to map to the card.'],
+        },
+      ],
       reply: {
         id: 'tapreply', label: 'approved',
         how: 'The answer goes back the same way, with the issuer\'s response cryptogram for the chip.',
@@ -342,6 +1123,26 @@ export const cardProcessing: Design = {
       how: 'An 0100 authorisation request on a long-lived TCP connection, length-prefixed. It carries the card number, amount and currency, merchant category, entry mode, chip data, and the trace and reference numbers that identify it.',
       delivery: 'The network waits a few seconds, then answers for us by stand-in. A retry carries the same identifiers, so the gateway returns the first answer.',
       alts: ['An HTTPS webhook from an issuer processor, with 2 to 3 seconds to answer.', 'ISO 20022, which the UK\'s CHAPS adopted in 2023; card networks still use ISO 8583.'],
+      ways: [
+        {
+          name: 'ISO 8583', chosen: true,
+          what: 'An 0100 on a long-lived TCP connection, each message length-prefixed. The 0110 answer may go back on any live connection and is matched by its reference number.',
+          pros: ["The network's own protocol: no translation and no extra hop.", 'Connections to both sites, so either can answer.', 'A retry carries the same identifiers, which make the idempotency key.'],
+          cons: ['A binary dialect with bitmaps to parse, test and certify.', 'The network waits only a few seconds, then stands in.'],
+        },
+        {
+          name: 'HTTPS webhook from an issuer processor',
+          what: 'An issuer processor holds the ISO 8583 link and sends us each request as an HTTPS call. We have 2 to 3 seconds to answer (6 at Lithic).',
+          pros: ['Plain HTTPS: easy to build, test and log.', 'No scheme certification of our own.'],
+          cons: ['A budget set by someone else, inside theirs.', "The processor's outage is ours.", 'At this size the page connects directly.'],
+        },
+        {
+          name: 'ISO 20022',
+          what: 'A newer, richer message standard; CHAPS moved to it in June 2023. Card networks still authorise in ISO 8583, so it is not an option on this link today.',
+          pros: ['Richer, structured data.', 'One standard shared with account-to-account payments.'],
+          cons: ['ISO 20022 for cards is discussed, not done.', 'We would still have to speak ISO 8583 to Mastercard.'],
+        },
+      ],
       reply: {
         id: 'authreply', label: '0110',
         how: 'An 0110 response with a two-digit reason code (00 approved) and an authorisation code.',
@@ -354,6 +1155,26 @@ export const cardProcessing: Design = {
       how: 'Inside the PCI zone: the gateway looks up the token for the card number, usually from its own cache.',
       delivery: 'A read, safe to repeat, with a 5 ms deadline.',
       alts: ['A provider\'s vault over HTTPS.', 'A hash of the card number as the key, which still leaves the number in every system.'],
+      ways: [
+        {
+          name: 'gRPC', chosen: true,
+          what: "Inside the PCI zone the gateway asks the vault for a card number's token, with a 5 ms deadline. It usually finds it in its own cache first, since a card's token never changes.",
+          pros: ['A typed internal call with a deadline on it.', 'A read, safe to repeat.', 'The cache makes most lookups local.'],
+          cons: ['The vault must be up and replicated to both sites.', 'The cache holds card numbers, so it must be protected like the vault.'],
+        },
+        {
+          name: "A provider's vault over HTTPS",
+          what: 'Send the card number over HTTPS to a provider that stores it and returns a token.',
+          pros: ['No vault of our own to run.', 'The provider handles key rotation.'],
+          cons: ['An outside hop against a 5 ms target.', "The provider's outage stops every authorisation."],
+        },
+        {
+          name: 'A hash of the card number as the key',
+          what: 'Use a hash of the card number as its identity everywhere, with no vault. The gateway computes it on each request.',
+          pros: ['No lookup at all.', 'The same card always gives the same key.'],
+          cons: ['Anything that needs the number itself still keeps it, so those systems stay in scope.', 'Card numbers are short and partly predictable, so a plain hash can be reversed by trying them.'],
+        },
+      ],
       reply: {
         id: 'token', label: 'token',
         how: 'The card\'s token, the only identity the rest of the system sees.',
@@ -366,6 +1187,26 @@ export const cardProcessing: Design = {
       how: 'A command to verify the chip\'s ARQC (or the PIN block, or the card security code) and to produce the ARPC for the answer.',
       delivery: 'Stateless and safe to repeat; tried on a second module in the same site if the first does not answer.',
       alts: ['A cloud HSM.', 'Have the network verify on our behalf, where it offers that.'],
+      ways: [
+        {
+          name: 'HSM API', chosen: true,
+          what: "The gateway sends a command to a module in its own site: verify the ARQC (or PIN block, or security code) and produce the ARPC. If the first module does not answer, it tries a second in the same site.",
+          pros: ['Keys never leave the hardware.', 'Stateless and safe to repeat.', 'Stays inside the site, within the 5 ms target.'],
+          cons: ["A vendor's command set to code against.", 'A site whose pool is down cannot verify chips and is taken out of service.'],
+        },
+        {
+          name: 'A cloud HSM',
+          what: "Call a cloud provider's payment cryptography service with the same commands, over the network.",
+          pros: ['No hardware to run.', 'Capacity comes as a service.'],
+          cons: ['Another hop and another provider in every authorisation.', 'Harder to keep within 5 ms.'],
+        },
+        {
+          name: 'The network verifies on our behalf',
+          what: 'Where the network offers it, it checks the cryptogram before passing the request on, and the 0100 carries the result.',
+          pros: ['No HSM call for those purchases.', 'Less hardware to size.'],
+          cons: ['The network must hold our keys.', 'Depends on what the network offers; this page has not checked the details.'],
+        },
+      ],
       reply: {
         id: 'verified', label: 'valid',
         how: 'Pass or fail, and the response cryptogram.',
@@ -378,6 +1219,26 @@ export const cardProcessing: Design = {
       how: 'The parsed request, with the token in place of the card number, the verification results, and the time left on its deadline.',
       delivery: 'Idempotent: keyed by the network\'s identifiers, so a repeat returns the stored decision.',
       alts: ['A queue between them, which adds latency to a path that must answer in milliseconds.', 'One process doing both, which pulls the authoriser into PCI scope.'],
+      ways: [
+        {
+          name: 'gRPC', chosen: true,
+          what: "The gateway sends the parsed request with the token, the verification results and the time left on its deadline. The authoriser stores its decision under the network's identifiers before replying, so a repeat gets the same answer.",
+          pros: ['A typed call that carries the time left on the deadline.', 'Keeps the authoriser out of PCI scope: it sees only tokens.', 'Any authoriser in either site can serve it.'],
+          cons: ['A network hop inside the budget.', 'The authoriser must honour the deadline it is given, or the gateway answers decline without it.'],
+        },
+        {
+          name: 'A queue between them',
+          what: 'The gateway puts each request on a queue, and the authoriser reads it and replies on another.',
+          pros: ['Absorbs bursts.', 'Either side can be deployed or restarted alone.'],
+          cons: ['Adds latency to a path that must answer in milliseconds.', 'The gateway still waits for the answer, so it is a call in disguise.'],
+        },
+        {
+          name: 'One process doing both',
+          what: 'Run the gateway and the authoriser in one process, calling each other in memory.',
+          pros: ['No hop and no serialisation.', 'One thing to deploy.'],
+          cons: ['Pulls the authoriser into PCI scope.', 'Protocol code and business rules must be released together.'],
+        },
+      ],
       reply: {
         id: 'decision', label: 'decision',
         how: 'Approve or decline, the reason code, and the amount approved, which may be less than asked.',
@@ -390,6 +1251,26 @@ export const cardProcessing: Design = {
       how: 'Read the card by token: status, expiry, account and controls.',
       delivery: 'From the primary or a cache cleared on write, with a 5 ms deadline.',
       alts: ['Card state carried in the request from the gateway.', 'A replica read, which can miss a freeze made a moment ago.'],
+      ways: [
+        {
+          name: 'Read from the primary or a cleared cache', chosen: true,
+          what: 'The authoriser reads the card by token: status, expiry, account and controls. It reads from the primary or from a cache cleared on every write, with a 5 ms deadline.',
+          pros: ['A freeze works on the very next tap.', 'At 1.2 million cards the whole table can be cached.'],
+          cons: ['A cache miss reads the primary, which may be in the other site.', 'Clearing the cache on write must never be skipped.'],
+        },
+        {
+          name: 'Card state carried in the request',
+          what: 'The gateway reads the card and puts its state in the request it sends to the authoriser.',
+          pros: ['One less call for the authoriser.', 'The card is read once, early.'],
+          cons: ['The gateway, in the PCI zone, takes on business data and logic.', 'Still a read; it has only moved.'],
+        },
+        {
+          name: 'A replica read',
+          what: 'Read the card from a replica, possibly the one in the local site.',
+          pros: ['Takes load off the primary.', 'A local read in either site.'],
+          cons: ['Can miss a freeze made a moment ago.', 'The page requires a freeze to work on the next tap.'],
+        },
+      ],
       reply: {
         id: 'cardinfo', label: 'controls',
         how: 'The card record.',
@@ -402,6 +1283,26 @@ export const cardProcessing: Design = {
       how: 'The purchase and the card\'s recent features, scored by a model.',
       delivery: 'A hard timeout of 50 ms. Late means rules only.',
       alts: ['Scoring after approval, from the log.', 'A vendor\'s scoring service.'],
+      ways: [
+        {
+          name: '50 ms hard timeout', chosen: true,
+          what: "The authoriser sends the purchase and the card's recent features, and waits at most 50 ms. Late means rules only, and the decision records that.",
+          pros: ['Bounded: never more than 50 ms of the budget.', 'Fraud is stopped before money is held.'],
+          cons: ['The model must answer in tens of milliseconds.', 'Some decisions are made without a score; watch their share.'],
+        },
+        {
+          name: 'Scoring after approval, from the log',
+          what: 'The scoring service reads the card events log and scores each purchase after the answer has gone.',
+          pros: ['Nothing on the hot path.', 'Bigger models are possible.'],
+          cons: ['The money has gone by the time it scores.', 'It can only alert, freeze the card and dispute.'],
+        },
+        {
+          name: "A vendor's scoring service",
+          what: 'Call an outside scoring service, with the same 50 ms timeout and rules fallback.',
+          pros: ['Quick to start.', 'Trained on more data than ours.'],
+          cons: ['An outside call inside 50 ms.', 'Purchase data leaves our systems.'],
+        },
+      ],
       reply: {
         id: 'score', label: 'score',
         how: 'A risk score and the reasons behind it.',
@@ -414,6 +1315,32 @@ export const cardProcessing: Design = {
       how: 'One database transaction: lock the account, check available funds and the daily limit, insert the hold, insert the outbox event. The key is the network\'s identifiers for this authorisation.',
       delivery: 'A repeat finds the key and returns the first result. Nothing is written twice.',
       alts: ['A reservation in a cache, written to the ledger later, which can approve money that is not there.', 'A distributed transaction across services, which is slow and fragile.'],
+      ways: [
+        {
+          name: 'One ledger transaction', chosen: true,
+          what: "One transaction locks the account, checks available funds and the daily limit, and inserts the hold and the outbox event. It is keyed by the network's identifiers, so a repeat returns the first result.",
+          pros: ['Exact under concurrency.', 'Safe to retry: nothing is written twice.', 'The event and the hold commit together.'],
+          cons: ['A busy account queues on its row.', 'Takes 20 ms of the budget, and the authoriser cannot work without it.'],
+        },
+        {
+          name: 'A reservation in a cache',
+          what: 'Reserve the amount in a fast cache and write the hold to the ledger later.',
+          pros: ['Faster than a database transaction.', 'Spares the ledger at peak.'],
+          cons: ['Can approve money that is not there.', 'A crash loses reservations.'],
+        },
+        {
+          name: 'A distributed transaction across services',
+          what: 'The hold, the event and any other service writes as one transaction across services, run by a coordinator.',
+          pros: ['All or nothing across services.', 'No outbox needed.'],
+          cons: ['Slow and fragile.', 'A coordinator that fails at the wrong moment can leave locks held.'],
+        },
+        {
+          name: 'Optimistic: check a version, retry on conflict',
+          what: 'Read the balance with its version, write the hold only if the version has not changed, and retry on a conflict. Still one transaction, with no lock held while checking.',
+          pros: ['No lock held during the check.', 'Fine when an account rarely sees two purchases at once.'],
+          cons: ['A busy business with many cards retries often, and retries eat the 20 ms.', 'The saving over a row lock is small at about 100 holds a second.'],
+        },
+      ],
       reply: {
         id: 'held', label: 'held',
         how: 'The hold id and the new available balance, or not sufficient funds.',
@@ -426,6 +1353,26 @@ export const cardProcessing: Design = {
       how: 'A relay reads new rows from the outbox table and publishes them to the card events log, keyed by card.',
       delivery: 'At-least-once and in order per card. The relay marks rows sent only after the log acknowledges them.',
       alts: ['Change data capture from the database log.', 'Publishing straight after the commit, which can lose events.'],
+      ways: [
+        {
+          name: 'Outbox relay', chosen: true,
+          what: 'A relay reads new rows from the outbox table and publishes them to the card events log, keyed by card. It marks a row sent only after the log acknowledges it.',
+          pros: ['At-least-once, and in order per card.', 'A log outage does not touch authorisations.'],
+          cons: ['A row can be sent twice if the relay stops after publishing but before marking it.', 'A relay to run and watch.'],
+        },
+        {
+          name: 'Change data capture from the database log',
+          what: "A connector reads the database's change log and publishes the changes as events. It can read the outbox table itself, so the events keep our shape.",
+          pros: ['No polling of a table.', 'Every committed change is seen.'],
+          cons: ['Tied to database internals and to failover.', 'Another component to run.'],
+        },
+        {
+          name: 'Publish straight after the commit',
+          what: 'The code that committed the hold publishes the event itself.',
+          pros: ['Simplest code.', 'No relay.'],
+          cons: ['A crash between commit and publish loses the event.', 'A slow log slows the authorisation.'],
+        },
+      ],
     },
     {
       id: 'consume', from: 'events', to: 'consumers', d: 'M1060,258 V442', label: 'events',
@@ -433,6 +1380,26 @@ export const cardProcessing: Design = {
       how: 'Each consumer reads the log in its own group and keeps its own offset.',
       delivery: 'At-least-once. Consumers drop repeats by event id.',
       alts: ['A queue per consumer.', 'Direct calls, which put them on the hot path.'],
+      ways: [
+        {
+          name: 'Kafka consumer groups', chosen: true,
+          what: "Each consumer reads the card events log in its own group and keeps its own offset. Events are keyed by card, and Kafka keeps order within a partition, so each card's events arrive in order.",
+          pros: ['Replay after a bug.', 'Each consumer reads at its own pace.', 'Order per card.'],
+          cons: ['At-least-once: drop repeats by event id.', 'Lag to watch on each group.'],
+        },
+        {
+          name: 'A queue per consumer',
+          what: 'Copy each event into a queue for each consumer, which removes it once handled.',
+          pros: ['Acknowledgement and retries per message.', 'Simple for one consumer.'],
+          cons: ['No replay once handled.', 'Order per card is harder to keep.'],
+        },
+        {
+          name: 'Direct calls',
+          what: 'The ledger side calls each consumer in turn after the commit.',
+          pros: ['Simple to trace.', 'No log to run.'],
+          cons: ['Puts them on the hot path.', 'A missed call is lost.'],
+        },
+      ],
     },
     {
       id: 'push', from: 'consumers', to: 'app', d: 'M1135,474 H1160 Q1170,474 1170,464 V128', label: 'notification',
@@ -440,6 +1407,26 @@ export const cardProcessing: Design = {
       how: 'A push notification through Apple\'s and Google\'s services: amount, merchant and the card used.',
       delivery: 'Best effort. The app reads the ledger when it opens.',
       alts: ['SMS.', 'An in-app feed only.'],
+      ways: [
+        {
+          name: 'APNs and FCM', chosen: true,
+          what: "The notification consumer sends a push through Apple's and Google's services: amount, merchant and the card used. The app reads the ledger when it opens.",
+          pros: ['Within seconds, and free.', 'The owner need not have the app open.'],
+          cons: ['Best effort, with no delivery guarantee.', 'Two outside services in the path.'],
+        },
+        {
+          name: 'SMS',
+          what: 'Send a text for each purchase through an SMS provider.',
+          pros: ['Reaches phones without the app.', 'Works with no data connection.'],
+          cons: ['Costs per message.', 'Can be spoofed.'],
+        },
+        {
+          name: 'An in-app feed only',
+          what: "Show purchases in the app's feed, with no notification.",
+          pros: ['Nothing to send or lose.', 'The feed already reads from the ledger.'],
+          cons: ['Fraud goes unseen until the app is opened.', 'No prompt to freeze a card at once.'],
+        },
+      ],
     },
     {
       id: 'files', from: 'network', to: 'clearing', d: 'M110,258 V410 Q110,420 120,420 H700 Q710,420 710,410 V360 Q710,350 720,350 H740', label: 'clearing file',
@@ -447,6 +1434,26 @@ export const cardProcessing: Design = {
       how: 'The network delivers clearing files in cycles through the day: one record per purchase with the final amount, the currency conversion and fees, and records for refunds.',
       delivery: 'Each file has an id and record counts. Processing is idempotent per record, so a file can be run again.',
       alts: ['An issuer processor\'s clearing webhooks, one per record.', 'A single-message network, where the authorisation itself moves the money.'],
+      ways: [
+        {
+          name: 'Clearing files', chosen: true,
+          what: 'The network delivers clearing files in cycles through the day, and we take four to six. Each file has an id and record counts, and processing is idempotent per record.',
+          pros: ['Safe to run again.', 'Totals per file to reconcile against.'],
+          cons: ['Postings lag the purchase, by a day in the tour.', 'Bursts of 200,000 to 300,000 records a file.'],
+        },
+        {
+          name: "An issuer processor's clearing webhooks",
+          what: 'An issuer processor takes the files and sends each record to us as a webhook, one per record.',
+          pros: ['No file formats to learn.', 'Records arrive spread out.'],
+          cons: ['Their matching becomes ours.', 'Only with a processor, which this design does not use.'],
+        },
+        {
+          name: 'A single-message network',
+          what: 'The authorisation itself moves the money, so there is no separate clearing record.',
+          pros: ['Nothing to match.', 'The final amount is known at once.'],
+          cons: ['No gap in which to adjust the amount.', "Not how the tour's purchase works: it clears a day later."],
+        },
+      ],
     },
     {
       id: 'post', from: 'clearing', to: 'ledger', d: 'M810,322 V262', label: 'post, release',
@@ -454,6 +1461,26 @@ export const cardProcessing: Design = {
       how: 'One transaction per record: post the final amount, release the matched hold, write the outbox event.',
       delivery: 'Keyed by file and record number, so a rerun posts nothing twice.',
       alts: ['Post and release as two writes, which can leave money both held and posted.'],
+      ways: [
+        {
+          name: 'One transaction per record', chosen: true,
+          what: 'Post the final amount, release the matched hold and write the outbox event in one transaction. It is keyed by file and record number, so a rerun posts nothing twice.',
+          pros: ['Money is never both held and posted.', 'Safe to rerun.'],
+          cons: ['A transaction per record: about 1.2 million a day, in bursts.', 'Matching must finish before posting.'],
+        },
+        {
+          name: 'Post and release as two writes',
+          what: 'Post the final amount, then release the hold in a separate write.',
+          pros: ['Simpler code for each step.', 'Each write is smaller.'],
+          cons: ['A crash between them leaves money both held and posted.', 'Needs a repair job to find and fix those.'],
+        },
+        {
+          name: 'One transaction per file',
+          what: 'Post every record in a file in one large transaction.',
+          pros: ['All or nothing per file.', 'The file total and the postings agree at once.'],
+          cons: ['Locks on many accounts at once, while holds are being placed on them.', 'One bad record blocks the whole file.'],
+        },
+      ],
     },
     {
       id: 'settle', from: 'network', to: 'bank', d: 'M60,258 V464 Q60,474 70,474 H500', label: 'settlement',
@@ -461,6 +1488,20 @@ export const cardProcessing: Design = {
       how: 'Once a working day the network collects our net position from the settlement account and sends an advisement of the amounts.',
       delivery: 'The network\'s own process. We forecast it and check it the next day.',
       alts: ['A sponsor bank settling on our behalf.'],
+      ways: [
+        {
+          name: 'Net debit by the network', chosen: true,
+          what: 'Once a working day the network collects our net position from the settlement account and sends an advisement of the amounts. We forecast it and check it the next day.',
+          pros: ['One movement a day per currency.', 'The network does the netting.'],
+          cons: ['The account must be funded by the cut-off.', "The network's process: we can only forecast and check it."],
+        },
+        {
+          name: 'A sponsor bank settling on our behalf',
+          what: 'A bank that is a direct scheme member settles with the network, and we settle with that bank.',
+          pros: ['Needed when we are not a direct member.', 'The sponsor handles the network side.'],
+          cons: ['Their cut-offs and fees.', 'One more party to reconcile against.'],
+        },
+      ],
     },
     {
       id: 'readledger', from: 'ledger', to: 'recon', d: 'M880,252 H918 Q928,252 928,262 V464 Q928,474 918,474 H895', label: 'postings',
@@ -468,6 +1509,26 @@ export const cardProcessing: Design = {
       how: 'Off the hot path. Once a day reconciliation reads the day\'s postings, totalled by currency and settlement date.',
       delivery: 'Read only, from a replica.',
       alts: ['A daily export to the data warehouse.'],
+      ways: [
+        {
+          name: 'SQL on a replica', chosen: true,
+          what: "Once a day reconciliation reads the day's postings from a replica, totalled by currency and settlement date.",
+          pros: ['No load on the primary.', 'Totals straight from the ledger itself.'],
+          cons: ['A replica lags a little, so wait until the day is complete on it.', "Tied to the ledger's schema."],
+        },
+        {
+          name: 'A daily export to the data warehouse',
+          what: "Export the day's postings to the data warehouse and reconcile there.",
+          pros: ['No load on the ledger at all.', 'Easy to join with other data.'],
+          cons: ['Another copy that can itself be wrong.', 'Ready later.'],
+        },
+        {
+          name: 'Totals from the card events log',
+          what: 'Build the totals by reading posted events from the log.',
+          pros: ['No database access.', 'The same events every consumer sees.'],
+          cons: ['Checks the events, not the ledger, which is the record that must be right.', 'Repeats must be dropped exactly.'],
+        },
+      ],
     },
     {
       id: 'readclearing', from: 'clearing', to: 'recon', d: 'M810,378 V442', label: 'file totals',
@@ -475,6 +1536,20 @@ export const cardProcessing: Design = {
       how: 'Off the hot path. The totals and record counts of each clearing file, and the records still unmatched.',
       delivery: 'Read only.',
       alts: ['Read the raw files again.'],
+      ways: [
+        {
+          name: 'SQL', chosen: true,
+          what: "Read the totals and record counts of each processed file, and the records still unmatched, from clearing's tables.",
+          pros: ['Already parsed and counted.', 'The unmatched list is ready.'],
+          cons: ["Trusts clearing's own parsing.", "Tied to clearing's schema."],
+        },
+        {
+          name: 'Read the raw files again',
+          what: 'Parse the raw clearing files a second time for their totals.',
+          pros: ["An independent check on clearing's parser.", "No dependency on clearing's tables."],
+          cons: ['Two parsers to keep in step.', 'More work every day.'],
+        },
+      ],
     },
     {
       id: 'statement', from: 'bank', to: 'recon', d: 'M650,474 H745', label: 'statement',
@@ -482,6 +1557,20 @@ export const cardProcessing: Design = {
       how: 'Off the hot path. The settlement bank\'s statement of what actually moved, and the network\'s settlement advisement.',
       delivery: 'Daily, and checked for gaps in its sequence.',
       alts: ['A banking API polled through the day.'],
+      ways: [
+        {
+          name: 'Daily batch', chosen: true,
+          what: "The settlement bank's daily statement and the network's settlement advisement, loaded once a day and checked for gaps in their sequence.",
+          pros: ['Complete for the day.', 'Fits the daily reconciliation.'],
+          cons: ['A day behind.', "A missing statement holds up the day's reconciliation."],
+        },
+        {
+          name: 'A banking API polled through the day',
+          what: "Poll the bank's API for movements on the settlement account through the day.",
+          pros: ['See settlement soon after it lands.', 'Earlier warning of a shortfall.'],
+          cons: ['Data within the day can change, so the final statement is still needed.', 'Another integration to run.'],
+        },
+      ],
     },
   ],
 
