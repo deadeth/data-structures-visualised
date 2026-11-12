@@ -83,6 +83,11 @@ export interface Flow {
    * keyboard; an in-process chip is only drawn while the line is live or selected (open, pointed at or focused).
    */
   chip?: number;
+  /**
+   * The height the chip's centre sits at, in diagram units: the point on the path at this height nearest `chip`.
+   * Lets a row of chips on different lines share one baseline exactly.
+   */
+  chipY?: number;
   /** Off the hot path: used for recovery or reprocessing, not on every fetch. Hidden until asked for. */
   cold?: boolean;
   /** The reply on the same line: one two-way line, with an arrowhead at each end. */

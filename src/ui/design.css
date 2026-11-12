@@ -85,7 +85,7 @@ main:has(> .design) {
 .hld-more {
   flex: none;
   margin-left: auto;
-  min-height: 32px;
+  min-height: 40px;
   padding: 0 12px;
   border: 1.5px solid #8a99b0;
   border-radius: var(--radius-s);
@@ -118,6 +118,37 @@ main:has(> .design) {
 
 .hld.brief:not(.more) .hld-readout .hld-step-via {
   margin-top: 2px;
+}
+
+/* A phone held upright: the title, then the first two lines of the step, cut with an ellipsis until More is pressed. */
+.hld.two:not(.more) .hld-readout .hld-step-rest {
+  display: inline;
+}
+
+.hld.two:not(.more) .hld-readout .hld-step-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.hld.two:not(.more) .hld-readout .hld-step-via {
+  display: none;
+}
+
+/*
+ * On a phone, More unfolds the step's words over the top of the canvas from
+ * where they start, so the canvas and everything under it stay where they are.
+ */
+.hld.phone.more .hld-step-body {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 6;
+  padding: 0 16px 14px;
+  background: var(--ink);
+  box-shadow: 0 8px 16px rgb(15 27 45 / 0.28);
 }
 
 .hld-transport {
@@ -162,11 +193,6 @@ main:has(> .design) {
 .hld-icon[aria-disabled='true'] {
   color: #a9b4c3;
   cursor: default;
-}
-
-/* Back to the start means nothing at the start: hidden there, keeping its place so the row does not shift. */
-.hld-restart:disabled {
-  visibility: hidden;
 }
 
 .hld-play {
@@ -495,6 +521,31 @@ main:has(> .design) {
   bottom: 4px;
   left: var(--at);
   transform: translateX(-50%);
+}
+
+/* Signs with no clear place at the canvas's edges wait in the strip under it, left of the overview button. */
+.hld-dock {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.hld-dock:empty {
+  display: none;
+}
+
+.hld-mark.docked {
+  position: static;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: none;
+  box-shadow: none;
+}
+
+.hld.cam .hld-dock:not(:empty) + .hld-fit {
+  margin-left: 0;
 }
 
 /*
@@ -839,6 +890,15 @@ main:has(> .design) {
 
 .hld-key-notes summary::-webkit-details-marker {
   display: none;
+}
+
+/* Forced colours would paint the triangle's clear borders too, drawing a square: keep them clear, and the point in the text colour. */
+@media (forced-colors: active) {
+  .hld-key-notes summary::before {
+    forced-color-adjust: none;
+    border-left-color: CanvasText;
+    border-block-color: transparent;
+  }
 }
 
 .hld-key-notes dl {
@@ -2286,36 +2346,76 @@ main:has(> .design) {
 }
 
 /*
- * A phone on its side: the transport sits on the readout's title line, light
- * on dark, and the step's first sentence and how it travels run the full width
- * under it. The page's own heading is hidden (it stays for screen readers), so
- * the diagram has most of the height.
+ * A phone on its side: the title, More and the transport share one row, light
+ * on dark, each in a column of its own so none can sit on another; the step's
+ * first sentence and how it travels run the full width under them. The page's
+ * own heading is hidden (it stays for screen readers), so the diagram has most
+ * of the height.
  */
 @media (max-height: 500px) and (min-width: 600px) and (max-width: 1099px) {
+  .hld-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    column-gap: 8px;
+    padding: 3px 6px 5px 16px;
+    background: var(--ink);
+  }
+
+  .hld-readout,
+  .hld:not(.touring) .hld-readout,
+  .hld-title-row {
+    display: contents;
+  }
+
+  .hld-step-title {
+    grid-column: 1;
+    grid-row: 1;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+  }
+
+  .hld-more {
+    grid-column: 2;
+    grid-row: 1;
+    margin-left: 0;
+  }
+
+  .hld-step-body {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    color: #d6deea;
+  }
+
+  /* More opens the step's words under the row, over the top of the canvas. */
+  .hld.phone.more .hld-step-body {
+    top: 100%;
+    padding: 6px 16px 12px;
+  }
+
   .hld-transport {
-    position: absolute;
-    top: 0;
-    right: 0;
+    grid-column: 3;
+    grid-row: 1;
     flex-wrap: nowrap;
     gap: 4px;
-    min-height: 46px;
-    padding: 3px 10px;
+    padding: 0;
     border: 0;
     background: none;
   }
 
-  .hld-title-row {
-    min-height: 40px;
-    align-items: center;
-    padding-right: calc(var(--hld-tw, 340px) - 8px);
+  /* The count says "5/13" here (read out in full), so the title keeps room for two lines at most. */
+  .hld-count-long {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
-  .hld-readout {
-    padding: 3px 16px 7px;
-  }
-
-  .hld:not(.touring) .hld-readout {
-    padding-block: 3px;
+  .hld-count-short {
+    display: inline;
   }
 
   .hld-transport .hld-icon,

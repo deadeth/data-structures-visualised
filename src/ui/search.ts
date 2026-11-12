@@ -13,6 +13,8 @@ interface Doc {
   href: string;
   /** Shown under the title: where the entry lives. */
   where: string;
+  /** The design it belongs to, named in the link so two results with one title can be told apart. */
+  from?: string;
 }
 
 let index: Promise<Doc[]> | null = null;
@@ -26,7 +28,7 @@ function build(): Promise<Doc[]> {
     const base = `#/d/${d.id}`;
     const name = (id: string) => d.components.find((c) => c.id === id)!.name;
     for (const g of d.glossary) {
-      docs.push({ kind: 'Term', title: g.term, also: g.also ?? [], text: g.text, href: `${base}/g/${slug(g.term)}`, where: g.where ? `Glossary. Used in ${name(g.where)}.` : 'Glossary' });
+      docs.push({ kind: 'Term', title: g.term, also: g.also ?? [], text: g.text, href: `${base}/g/${slug(g.term)}`, where: g.where ? `Glossary. Used in ${name(g.where)}.` : 'Glossary', from: d.name });
     }
     for (const c of d.components) {
       docs.push({
@@ -36,6 +38,7 @@ function build(): Promise<Doc[]> {
         text: [c.what, c.why, c.fails, ...(c.numbers ?? []), ...c.alternatives.map((a) => `${a.name}. ${a.good} ${a.cost}`), c.say].join(' '),
         href: `${base}/c/${c.id}`,
         where: `${d.name}: component`,
+        from: d.name,
       });
     }
     for (const f of d.flows) {
@@ -47,6 +50,7 @@ function build(): Promise<Doc[]> {
         text: [f.how, f.delivery, ...f.alts].join(' '),
         href: `${base}/f/${f.id}`,
         where: `${d.name}: connection by ${f.via}`,
+        from: d.name,
       });
       // The reply on a two-way line is found on its own, and opens the same line.
       if (f.reply) {
@@ -57,14 +61,15 @@ function build(): Promise<Doc[]> {
           text: [f.reply.how, f.reply.delivery].join(' '),
           href: `${base}/f/${f.reply.id}`,
           where: `${d.name}: the reply on the ${f.via} line`,
+          from: d.name,
         });
       }
     }
-    d.tour.forEach((t, i) => docs.push({ kind: 'Tour step', title: t.title, also: [], text: t.text, href: `${base}/t/${i + 1}`, where: `${d.name}: tour step ${i + 1}` }));
-    for (const dec of d.decisions) docs.push({ kind: 'Decision', title: dec.choice, also: [], text: `${dec.a} ${dec.b} ${dec.call}`, href: base, where: `${d.name}: decisions worth defending` });
+    d.tour.forEach((t, i) => docs.push({ kind: 'Tour step', title: t.title, also: [], text: t.text, href: `${base}/t/${i + 1}`, where: `${d.name}: tour step ${i + 1}`, from: d.name }));
+    for (const dec of d.decisions) docs.push({ kind: 'Decision', title: dec.choice, also: [], text: `${dec.a} ${dec.b} ${dec.call}`, href: base, where: `${d.name}: decisions worth defending`, from: d.name });
     // Likely pushes from the design's interview extras, when written: each opens its question in the "Likely pushes" section.
     const ex = await entry.extras?.().catch(() => undefined);
-    ex?.pushes.forEach((p, i) => docs.push({ kind: 'Interview question', title: p.q, also: [], text: p.a.join(' '), href: `${base}/q/${i + 1}`, where: `${d.name}: likely pushes` }));
+    ex?.pushes.forEach((p, i) => docs.push({ kind: 'Interview question', title: p.q, also: [], text: p.a.join(' '), href: `${base}/q/${i + 1}`, where: `${d.name}: likely pushes`, from: d.name }));
     }
 
     await Promise.all(
@@ -88,19 +93,36 @@ function build(): Promise<Doc[]> {
 
 const fold = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '');
 
+/** Where a word is found in a text: at the start of one of its words (a whole word, or one being typed), only inside one, or not at all. */
+function found(hay: string, w: string): 'word' | 'inside' | null {
+  let i = hay.indexOf(w);
+  if (i < 0) return null;
+  for (; i >= 0; i = hay.indexOf(w, i + 1)) if (i === 0 || !/[\p{L}\p{N}]/u.test(hay[i - 1])) return 'word';
+  return 'inside';
+}
+
 function score(doc: Doc, words: string[]): number {
   const title = fold(doc.title);
   const also = fold(doc.also.join(' | '));
+  const first = fold(doc.also[0] ?? '');
   const text = fold(doc.text);
   let total = 0;
   for (const w of words) {
     let s = 0;
+    // A word found at the start of a word counts for far more than the same letters inside another ("lease" in "release").
+    const t = found(title, w);
+    const f = found(first, w);
+    const a = found(also, w);
+    const x = found(text, w);
     if (title === w) s = 120;
     else if (title.startsWith(w)) s = 90;
-    else if (title.includes(w)) s = 70;
-    else if (fold(doc.also[0] ?? '').includes(w)) s = 60;
-    else if (also.includes(w)) s = 45;
-    else if (text.includes(w)) s = 15;
+    else if (t === 'word') s = 70;
+    else if (f === 'word') s = 60;
+    else if (a === 'word') s = 45;
+    else if (x === 'word') s = 15;
+    else if (t) s = 12;
+    else if (f || a) s = 8;
+    else if (x) s = 4;
     // A text that keeps coming back to the word is more about it than one that mentions it once.
     if (s) s += Math.min(5, text.split(w).length - 1);
     // Every word must be found somewhere, or the entry is not a match.
@@ -263,7 +285,8 @@ export async function mountSearch(host: HTMLElement, query: string, returning = 
             'li', null,
             h('p.search-kind', null, h('span.search-pill', { class: `kind-${slug(d.kind)}` }, d.kind)),
             // The kind is read out with the title, so two results with one name (a term and a structure) can be told apart.
-            h('h3', null, h('a', { href: d.href, onclick: () => followed.set(q, d.href) }, excerpt(d.title, words, true), h('span.visually-hidden', null, `, ${d.kind.toLowerCase()}`))),
+            // Named in one string, so no stray space creeps in before the comma: its title, its kind and the design it is in.
+            h('h3', null, h('a', { href: d.href, 'aria-label': [d.title, d.kind.toLowerCase(), d.from].filter(Boolean).join(', '), onclick: () => followed.set(q, d.href) }, excerpt(d.title, words, true))),
             other ? h('p.search-also', null, 'Also: ', excerpt(other, words, true)) : null,
             h('p.search-text', null, excerpt(d.text, words, d.kind === 'Term')),
             h('p.search-where', null, d.where),
