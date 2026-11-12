@@ -733,6 +733,19 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   notFound.hidden = true;
   // The current step's terms and actors, spelled out as questions and answers. Sits right under the stage, so its heading shows below the diagram while touring.
   const explainBox = h('section.note.wide.hld-card.hld-explain', { hidden: true, 'aria-labelledby': `${design.id}-explain` });
+  // The reader can fold it away, so a component's panel shows right under the diagram. The choice is kept between steps and visits.
+  let explainShut = stored('dsv.explain') === 'shut';
+  const explainToggle = h('button.hld-explain-toggle', { type: 'button', 'aria-controls': `${design.id}-explain-body` });
+  const setExplainShut = (shut: boolean): void => {
+    explainShut = shut;
+    store('dsv.explain', shut ? 'shut' : 'open');
+    explainBox.classList.toggle('shut', shut);
+    explainToggle.setAttribute('aria-expanded', String(!shut));
+    explainToggle.textContent = shut ? 'Show' : 'Collapse';
+    const body = explainBox.querySelector<HTMLElement>('.hld-explain-body');
+    if (body) body.hidden = shut;
+  };
+  explainToggle.addEventListener('click', () => setExplainShut(!explainShut));
   const renderExplain = (i: number): void => {
     const st = design.tour[i];
     if (i < 0 || !(st?.explain?.length || st?.story)) {
@@ -742,7 +755,6 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     }
     explainBox.hidden = false;
     const parts: (HTMLElement | null)[] = [
-      h('h2', { id: `${design.id}-explain`, tabIndex: -1 }, `Step ${i + 1} explained: ${st.title}`),
       h('p.hld-explain-text', null, st.text),
       st.story
         ? h(
@@ -755,7 +767,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       st.explain?.length ? h('h3', null, 'Words and actors in this step') : null,
       st.explain?.length ? h('dl.hld-qa', null, st.explain.map((e) => h('div', null, h('dt', null, e.q), h('dd', null, e.a)))) : null,
     ];
-    explainBox.replaceChildren(...parts.filter((x): x is HTMLElement => !!x));
+    explainBox.replaceChildren(
+      h('div.hld-explain-head', null, h('h2', { id: `${design.id}-explain`, tabIndex: -1 }, `Step ${i + 1} explained: ${st.title}`), explainToggle),
+      h('div.hld-explain-body', { id: `${design.id}-explain-body` }, ...parts.filter((x): x is HTMLElement => !!x)),
+    );
+    setExplainShut(explainShut);
   };
   const page = h('article.design', null, h('header.page-head', null, h('h1', null, design.name), h('p.lede', null, design.blurb), ex?.links), notFound, stage, status, explainBox, detail, notes);
   host.append(page);
@@ -1275,7 +1291,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   function reveal(behavior: ScrollBehavior): void {
     const first = detailBody.querySelector('.hld-first') ?? detailBody;
     const headH = step >= 0 && !stage.classList.contains('reading') && !stage.classList.contains('unstick') ? head.offsetHeight : 0;
-    if (matchMedia(WIDE).matches) {
+    // With the step's explainer open between the diagram and the detail, the two cannot share the screen: go past it to the detail.
+    const pastExplain = !explainBox.hidden && !explainShut;
+    if (matchMedia(WIDE).matches && !pastExplain) {
       const c = canvas.getBoundingClientRect();
       const f = first.getBoundingClientRect();
       let dy = 0;
@@ -1674,6 +1692,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
           type: 'button',
           onclick: () => {
             if (playing) pause(false);
+            if (explainShut) setExplainShut(false);
             explainBox.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
             explainBox.querySelector<HTMLElement>('h2')?.focus();
           },
