@@ -184,7 +184,8 @@ function excerpt(text: string, words: string[], whole: boolean): (string | HTMLE
   let pos = 0;
   for (const [a, b] of marks) {
     if (a < pos) continue;
-    out.push(piece.slice(pos, a), h('mark', null, piece.slice(a, b)));
+    // A tint and nothing else: an underline reads as a link here (search.css draws one; this takes it off).
+    out.push(piece.slice(pos, a), h('mark', { style: 'text-decoration: none' }, piece.slice(a, b)));
     pos = b;
   }
   out.push(piece.slice(pos), after ? ' …' : '');
@@ -216,6 +217,40 @@ const has = (s: string, words: string[]) => {
 
 const SUGGEST = ['SimHash', 'Bloom filter', 'lease', 'Kafka', 'robots.txt', 'SSRF', 'WARC', 'idempotent', 'B+ tree', 'eviction'];
 
+/**
+ * Enter in the sidebar's search box opens the first result. The box and its keys live in main.ts, which moves focus to
+ * the first result; this listener, after it, follows that result. When the results are still on their way, the query
+ * is noted and the results page opens its first result as soon as it has drawn them.
+ */
+let enterFor: string | null = null;
+let enterAt = 0;
+/** Whether this module saw the Enter key go down. The first search of a visit loads it while the key is pressed. */
+let enterDown = false;
+const firstResult = () => document.querySelector<HTMLAnchorElement>('.search-page .search-results h3 a');
+const onEnter = (e: KeyboardEvent): void => {
+  const t = e.target as HTMLElement | null;
+  if (!(t instanceof HTMLInputElement) || t.id !== 'site-search' || e.key !== 'Enter' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  if (e.type === 'keydown') enterDown = true;
+  else if (enterDown) {
+    // Its key down was seen and handled: the key coming up is nothing new.
+    enterDown = false;
+    return;
+  }
+  const q = fold(t.value.trim()).split(/\s+/).filter(Boolean).join(' ');
+  if (!q) return;
+  const page = document.querySelector<HTMLElement>('.search-page');
+  if (page && page.dataset.q === q && page.dataset.ready === '1') {
+    enterFor = null;
+    firstResult()?.click();
+  } else {
+    enterFor = q;
+    enterAt = performance.now();
+  }
+};
+document.addEventListener('keydown', onEnter);
+// The first search of a visit: this module arrives while Enter is held, so only its key up is seen here.
+document.addEventListener('keyup', onEnter);
+
 /** The results page. The search box itself lives in the sidebar and drives this through the address. */
 /** The result last followed from each results page, so Back can put focus on it again. */
 const followed = new Map<string, string>();
@@ -231,7 +266,7 @@ export async function mountSearch(host: HTMLElement, query: string, returning = 
     'p.search-tries', null, 'Try: ',
     SUGGEST.flatMap((s, i) => [i ? ', ' : '', h('a', { href: `#/search/${encodeURIComponent(s)}` }, s)]),
   );
-  const page = h('article.search-page', null, h('header.page-head', null, heading), summary, list, tries);
+  const page = h('article.search-page', { 'data-q': words.join(' ') }, h('header.page-head', null, heading), summary, list, tries);
   host.append(page);
   // Down and Up move from one result to the next, as they did from the search box into the first; Up from the first goes back to the box.
   list.addEventListener('keydown', (e) => {
@@ -280,7 +315,8 @@ export async function mountSearch(host: HTMLElement, query: string, returning = 
         ol.append(
           h(
             'li', null,
-            h('p.search-kind', null, h('span.search-pill', { class: `kind-${slug(d.kind)}` }, d.kind)),
+            // A glossary term's tag is neutral like the rest: blue means visited on this site (ADR 0003).
+            h('p.search-kind', null, h('span.search-pill', { class: d.kind === 'Term' ? null : `kind-${slug(d.kind)}` }, d.kind)),
             // The kind is read out with the title, so two results with one name (a term and a structure) can be told apart.
             // Named in one string, so no stray space creeps in before the comma: its title, its kind and the design it is in.
             h('h3', null, h('a', { href: d.href, 'aria-label': [d.title, d.kind.toLowerCase(), d.from].filter(Boolean).join(', '), onclick: () => followed.set(q, d.href) }, excerpt(d.title, words, true))),
@@ -296,6 +332,13 @@ export async function mountSearch(host: HTMLElement, query: string, returning = 
     if (back) {
       const a = [...list.querySelectorAll('h3 a')].find((x) => x.getAttribute('href') === back) as HTMLElement | undefined;
       a?.focus({ preventScroll: true });
+    }
+    page.dataset.ready = '1';
+    // Enter was pressed for this search before its results were drawn: open the first one now.
+    if (enterFor === words.join(' ') && performance.now() - enterAt < 5000) {
+      enterFor = null;
+      const first = list.querySelector<HTMLAnchorElement>('h3 a');
+      if (first) setTimeout(() => first.isConnected && first.click(), 0);
     }
   } else announce(summary.textContent ?? '');
   return () => page.remove();

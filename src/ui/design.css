@@ -5,11 +5,6 @@ main:has(> .design) {
   max-width: 1600px;
 }
 
-/* A zero with a slash, so 0 and O never mix in the numbers. */
-.design {
-  font-variant-numeric: slashed-zero;
-}
-
 .hld {
   /* The quiet slate for lines and outlines not on the tour's step: 3.35 to 1 on #eef1f6, 3.8 to 1 on white. */
   --hld-quiet: #75849a;
@@ -222,7 +217,9 @@ main:has(> .design) {
   color: var(--ink-2);
   min-width: 9ch;
   white-space: nowrap;
-  font-variant-numeric: tabular-nums slashed-zero;
+  /* A counter is data: it keeps the slashed zero (see --sans-data). */
+  font-family: var(--sans-data);
+  font-variant-numeric: tabular-nums;
 }
 
 .hld-count-short {
@@ -276,8 +273,8 @@ main:has(> .design) {
   border: 0;
   border-radius: 7px;
   background: none;
-  font: 650 0.9rem var(--sans);
-  font-variant-numeric: tabular-nums slashed-zero;
+  font: 650 0.9rem var(--sans-data);
+  font-variant-numeric: tabular-nums;
   color: var(--ink-2);
   cursor: pointer;
 }
@@ -581,7 +578,7 @@ main:has(> .design) {
   margin-inline: auto;
   min-width: calc(var(--hld-w, 1280) * 0.788px);
   height: auto;
-  font-family: var(--sans);
+  font-family: var(--sans-data);
 }
 
 .hld-svg.fit {
@@ -744,6 +741,7 @@ main:has(> .design) {
 
 .hld-chip-glyph {
   fill: var(--ink);
+  fill-rule: evenodd;
 }
 
 .hld-chip.cold .hld-chip-glyph {
@@ -1319,7 +1317,7 @@ main:has(> .design) {
 }
 
 .hld-pill text {
-  font: 700 16.5px var(--sans);
+  font: 700 16.5px var(--sans-data);
   fill: #fff;
 }
 
@@ -1337,6 +1335,25 @@ main:has(> .design) {
 }
 
 .hld-token.branch .hld-pill text {
+  fill: var(--key);
+}
+
+/* A message never sent (a renewal missed): hollow and dashed, holding on the dead line where it would have set off. */
+.hld-token.missed .hld-dot {
+  fill: #fff;
+  stroke: var(--key);
+  stroke-width: 3;
+  stroke-dasharray: 3 2.4;
+}
+
+.hld-token.missed .hld-pill rect {
+  fill: #fff;
+  stroke: var(--key);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.hld-token.missed .hld-pill text {
   fill: var(--key);
 }
 
@@ -1642,6 +1659,63 @@ main:has(> .design) {
   width: 100%;
 }
 
+/*
+ * The design page's tables have four columns of sentences, too many to sit
+ * side by side below 800px (a 768px tablet, or a laptop at 200% zoom). There
+ * they take the phone's stacked layout from styles.css: each row a block, each
+ * cell under its own label. The rules repeat that layout from 600px up.
+ */
+@media (min-width: 600px) and (max-width: 799px) {
+  .design .table-wrap {
+    overflow: visible;
+  }
+
+  .design table.stack,
+  .design table.stack tbody,
+  .design table.stack tr,
+  .design table.stack th,
+  .design table.stack td {
+    display: block;
+  }
+
+  .design table.stack thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .design table.stack tr {
+    padding: 12px 16px;
+  }
+
+  .design table.stack tr > * {
+    border-top: 0;
+    padding: 0;
+  }
+
+  .design table.stack tbody tr + tr {
+    border-top: 1px solid #e6eaf0;
+  }
+
+  .design table.stack tbody th {
+    white-space: normal;
+    margin-bottom: 4px;
+  }
+
+  .design table.stack td {
+    margin-top: 4px;
+  }
+
+  .design table.stack td::before {
+    content: attr(data-label);
+    display: block;
+    font: 400 0.86rem/1.4 var(--sans-data);
+    color: var(--ink-2);
+  }
+}
+
 .hld-framings {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1809,7 +1883,8 @@ main:has(> .design) {
 /*
  * Headings and rows that the page moves focus to draw nothing for a pointer
  * or a link; after a key press they show a bar at their left edge, not a box
- * that looks like a text field.
+ * that looks like a text field. The tour's step title takes focus only from a
+ * link to a step (it is not a tab stop), and draws nothing at all.
  */
 .hld-detail-head h3:focus,
 .hld-gloss-row:focus,
@@ -1827,10 +1902,6 @@ main:has(> .design) {
 .hld-gloss-row:focus-visible,
 .hld-gloss-row:has(dt:focus-visible) {
   box-shadow: inset 4px 0 0 var(--path);
-}
-
-.hld-step-title:focus-visible:not(.by-link) {
-  box-shadow: -12px 0 0 -8px #fff;
 }
 
 
@@ -2313,16 +2384,20 @@ main:has(> .design) {
   }
 
   .hld-token.branch .hld-dot,
-  .hld-token.branch .hld-pill rect {
+  .hld-token.branch .hld-pill rect,
+  .hld-token.missed .hld-dot,
+  .hld-token.missed .hld-pill rect {
     fill: Canvas !important;
     stroke: Highlight !important;
   }
 
-  .hld-token.branch .hld-pill rect {
+  .hld-token.branch .hld-pill rect,
+  .hld-token.missed .hld-pill rect {
     stroke-width: 2.5px !important;
   }
 
-  .hld-svg .hld-token.branch .hld-pill text {
+  .hld-svg .hld-token.branch .hld-pill text,
+  .hld-svg .hld-token.missed .hld-pill text {
     fill: CanvasText !important;
   }
 
@@ -2556,6 +2631,42 @@ main:has(> .design) {
     color: #d6deea;
   }
 
+  /*
+   * With room to spare in the row (design-page.ts sets .peek), the step's
+   * first line sits beside the title, cut with an ellipsis; More still opens
+   * the whole step under the row.
+   */
+  .hld.peek .hld-head {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+  }
+
+  .hld.peek .hld-more {
+    grid-column: 3;
+  }
+
+  .hld.peek .hld-transport {
+    grid-column: 4;
+  }
+
+  .hld.peek:not(.more) .hld-step-body {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    padding-left: 6px;
+  }
+
+  .hld.peek:not(.more) .hld-readout .hld-step-text {
+    display: block;
+    margin: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .hld.peek:not(.more) .hld-readout .hld-step-rest {
+    display: inline;
+  }
+
   /* More opens the step's words under the row, over the top of the canvas. */
   .hld.phone.more .hld-step-body {
     max-height: max(64px, calc(100vh - 120px));
@@ -2642,5 +2753,6 @@ main:has(> .design) {
 
 /* The key column, where its notes run past its foot: a fade there until it is scrolled to the end. */
 .hld-legend.scrolls:not(.at-end) {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 48px), transparent);
+  /* --fade-end (design-page.ts) is the foot of the last whole line in view: the fade ends there, never across a line. */
+  mask-image: linear-gradient(to bottom, #000 calc(var(--fade-end, 100%) - 48px), transparent var(--fade-end, 100%));
 }

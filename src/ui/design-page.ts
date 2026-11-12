@@ -62,6 +62,10 @@ const BASE_SCALE = 0.788;
 const FIT_FROM = '(min-width: 1010px)';
 /** The largest scale: its smallest text is then 15.8px. Wider than that, the extra width is margin. Matches design.css. */
 const MAX_SCALE = 0.96;
+/** A phone on its side: the head is one row (design.css). Matches the media query there. */
+const SIDEWAYS = '(max-height: 500px) and (min-width: 600px) and (max-width: 1099px)';
+/** The least width, in px, the step's first line gets beside the title on a phone on its side; with less it stays behind More. */
+const PEEK_MIN = 160;
 /** The sticky readout may take at most this share of the screen's height. */
 const HEAD_SHARE = 0.4;
 const COLD_KEY = 'dsv.recovery';
@@ -166,6 +170,19 @@ function lineSample(mode: string, cold = false, chip = true): SVGSVGElement {
   sizeSample(s2, 0.85);
   return s2;
 }
+/**
+ * A message log's mark, as the key draws a log: a box with ticks along its base (messages in a row). Left edge at x,
+ * centred on y = 0, 14 by 11 units at scale s. One path, filled with the even-odd rule: the box's outline and three ticks.
+ */
+function logMark(x: number, s: number): string {
+  const r = (v: number) => v.toFixed(2);
+  const W2 = 14 * s;
+  const H2 = 5.5 * s;
+  const t = 1.6 * s;
+  const box = `M${r(x)},${r(-H2)} h${r(W2)} v${r(2 * H2)} h${r(-W2)} z M${r(x + t)},${r(-H2 + t)} v${r(2 * H2 - 2 * t)} h${r(W2 - 2 * t)} v${r(-(2 * H2 - 2 * t))} z`;
+  const ticks = [3.4, 6.3, 9.2].map((dx) => `M${r(x + dx * s)},${r(H2 - t)} v${r(-3.2 * s)} h${r(1.4 * s)} v${r(3.2 * s)} z`).join(' ');
+  return `${box} ${ticks}`;
+}
 /** Redraw a line sample for the diagram's scale k: 1 unit is k pixels, as on the diagram. */
 function sizeSample(s2: SVGSVGElement, k: number): void {
   const L = SAMPLE_PX / k;
@@ -179,8 +196,8 @@ function sizeSample(s2: SVGSVGElement, k: number): void {
     const r = extra.firstElementChild as SVGRectElement;
     for (const [a, v] of [['x', -12], ['y', -8], ['width', 24], ['height', 16], ['rx', 8]] as const) r.setAttribute(a, (v / k).toFixed(2));
     const gl = r.nextElementSibling;
-    // The log glyph, three bars, at the size the diagram draws it.
-    if (gl) gl.setAttribute('d', [-5, -1.1, 2.8].map((dx) => `M${(dx / k).toFixed(2)},${(-3.5 / k).toFixed(2)} h${(2.2 / k).toFixed(2)} v${(7 / k).toFixed(2)} h${(-2.2 / k).toFixed(2)} z`).join(' '));
+    // The log glyph, the key's own log mark, at the size the diagram draws it.
+    if (gl) gl.setAttribute('d', logMark(-6.5 / k, 0.85 / k));
   } else extra.setAttribute('d', `M${(L - 10 / k).toFixed(2)},${(m - 5 / k).toFixed(2)} L${(L - 2 / k).toFixed(2)},${m.toFixed(2)} L${(L - 10 / k).toFixed(2)},${(m + 5 / k).toFixed(2)} z`);
 }
 function boxSample(kind: string): SVGSVGElement {
@@ -489,7 +506,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   const countLong = h('span.hld-count-long', null, `${design.tour.length} steps`);
   const countShort = h('span.hld-count-short', { 'aria-hidden': 'true' }, `${design.tour.length}`);
   const counter = h('span.hld-count', null, countLong, countShort);
-  const exploreBtn = h('button.hld-quiet', { type: 'button', title: 'Leave the tour (Escape)', onclick: () => leaveTour(true) }, icon('close'), h('span', null, 'Leave the tour'));
+  const exploreBtn = h('button.hld-quiet', { type: 'button', 'aria-label': 'Leave the tour', title: 'Leave the tour (Escape)', onclick: () => leaveTour(true) }, icon('close'), h('span', null, 'Leave the tour'));
   const speedBtns: HTMLButtonElement[] = [];
   // With reduced motion nothing moves, so the speeds set only how long each step waits: the group and its buttons say so.
   const still = reducedMotion();
@@ -578,9 +595,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   // ---- written sections ------------------------------------------------------------
   const list = (items2: string[]) => h('ul', null, items2.map((t) => h('li', null, t)));
   type Cell = string | HTMLElement;
+  /** Every table's wrapper, so one that ends up scrolling sideways can be made a named tab stop (see tableScroll). */
+  const tableWraps: { wrap: HTMLElement; named: string }[] = [];
   /** A table, named by the heading of its section. */
-  const table = (head2: string[], rows: Cell[][], cls: string, named: string) =>
-    h(
+  const table = (head2: string[], rows: Cell[][], cls: string, named: string) => {
+    const wrap: HTMLElement = h(
       'div.table-wrap', null,
       // `stack` is the site's rule for restacking a table into labelled blocks on a phone.
       tableRoles(
@@ -591,6 +610,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
         ),
       ),
     );
+    tableWraps.push({ wrap, named });
+    return wrap;
+  };
   // Every connection, both directions of a two-way line on rows of their own.
   const flowRows: Cell[][] = design.flows.flatMap((x) => {
     const row = (a: string, b: string, delivery: string, via = x.via, mode = x.mode) => {
@@ -794,10 +816,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     halo.setAttribute('x', String(-w / 2 - 4));
     halo.setAttribute('width', String(w + 8));
     if (glyph) {
-      chipText.setAttribute('x', String(G / 2));
-      const gx = -w / 2 + 13;
-      // Three short bars: messages in a row, as the log box draws them along its base.
-      glyph.setAttribute('d', [0, 4.8, 9.6].map((dx) => `M${(gx + dx).toFixed(1)},-5.5 h3 v11 h-3 z`).join(' '));
+      // The words start where they would sit centred in the room after the glyph, and grow only to the right: wider
+      // letter spacing (a reader's text-spacing setting) never runs them into the glyph.
+      chipText.setAttribute('text-anchor', 'start');
+      chipText.setAttribute('x', (G / 2 - tl / 2).toFixed(1));
+      glyph.setAttribute('d', logMark(-w / 2 + 13, 1));
     }
     // A chip on a line near the drawing's edge is slid along its row to stay whole inside it: its line still runs through it.
     p = new DOMPoint(Math.min(Math.max(p.x, w / 2 + 2), W - w / 2 - 2), p.y);
@@ -1416,6 +1439,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     }
     stage.classList.toggle('touring', inTour);
     stage.classList.toggle('playing', playing);
+    // A step whose message is never sent: its token is drawn hollow and dashed, and holds on the dead line.
+    token.g.classList.toggle('missed', !!s && s.path.some((p) => s.failed?.includes(legOf(p).fl.id)));
     const atEnd = step === design.tour.length - 1;
     playBtn.replaceChildren(icon(playing ? 'pause' : 'play'), playLabel);
     playLabel.textContent = playing ? 'Pause' : !inTour ? (leftAt > 0 ? `Resume at step ${leftAt + 1}` : 'Play the tour') : atEnd && !trip && !starting ? 'Play again from step 1' : 'Play';
@@ -1467,6 +1492,17 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     stage.classList.toggle('two', two);
     stage.classList.toggle('three', three);
     stage.classList.toggle('phone', small());
+    // A phone on its side: the head is one row, the title alone. Where the row has room to spare, the step's first line
+    // shows beside the title, cut with an ellipsis, so the step can be read without More. Only when the title still fits
+    // on one line and the excerpt gets a useful width: the row never wraps for it.
+    const side = tiny && !moreOpen && matchMedia(SIDEWAYS).matches;
+    stage.classList.toggle('peek', side);
+    if (side) {
+      const r = document.createRange();
+      r.selectNodeContents(stepTitle);
+      const lines = new Set(Array.from(r.getClientRects()).map((q) => Math.round(q.top))).size;
+      if (lines > 1 || stepBody.clientWidth < PEEK_MIN) stage.classList.remove('peek');
+    }
     if (!brief && moreOpen) setMore(false, true);
     if (!brief && document.activeElement === moreBtn) playBtn.focus({ preventScroll: true });
     moreBtn.hidden = !brief;
@@ -1545,7 +1581,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       const r = replyOf.get(p.replace(/^</, '')) && !p.startsWith('<') ? x.reply : undefined;
       const via = r?.via ?? x.via;
       const kind = MODES.find((m) => m.id === (r?.mode ?? x.mode))!.label.toLowerCase();
-      return kind.startsWith(via.toLowerCase()) ? kind : `${via} (${kind})`;
+      // A connection that fails on this step carried nothing: say so, so the line does not read as a delivery.
+      const missed = s.failed?.includes(x.id) ? ', missed' : '';
+      return kind.startsWith(via.toLowerCase()) ? `${kind}${missed}` : `${via}${missed} (${kind})`;
     }))];
     // A step with no trip says so, so the line is always there to read.
     return [h('span.hld-k', null, 'Travels by: '), ways.length ? ways.join(', then ') : `nothing this step; it waits in the ${nameOf(s.focus[0])}`];
@@ -2146,6 +2184,13 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       }
       const raw = { kind: 'path' as const, el: pe, back, full, from, len, label, who: which, vertical: up > across };
       const leg = { ...raw, off: legPlace(i, which, n, raw, mainRest) };
+      // A message that is never sent (a renewal missed) does not travel: the token holds on the dead line, where a
+      // delivered one would have come to rest, for as long as a leg would take. It is drawn there from the step's start.
+      if (which === 'main' && s.failed?.includes(fl.id)) {
+        const rested = n === ps.length - 1 ? restLeg(i, which, leg, mainRest) : leg;
+        prevEnd = pe.getPointAtLength(back ? full - rested.len : rested.len);
+        return { ...rested, from: rested.len };
+      }
       return n === ps.length - 1 ? restLeg(i, which, leg, mainRest) : leg;
     });
   }
@@ -2716,14 +2761,29 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       must = union(union(endBox(i), dotBox(endOf(i))), pillAt(endOf(i), restOff(i), pillWidth(endLabel(i))));
     }
     const centre = camCentre(rest);
-    for (const ax of ['x', 'y'] as const) {
-      const half = (ax === 'x' ? canvas.clientWidth : canvas.clientHeight) / (2 * k);
-      const u = CAM_PAD / k;
-      const a = must[ax];
-      const b = must[ax] + (ax === 'x' ? must.w : must.h);
-      const lo = b + u - half;
-      const hi = a - u + half;
-      centre[ax] = lo <= hi ? Math.max(lo, Math.min(hi, centre[ax])) : (a + b) / 2;
+    const hold = (m: Box) => {
+      for (const ax of ['x', 'y'] as const) {
+        const half = (ax === 'x' ? canvas.clientWidth : canvas.clientHeight) / (2 * k);
+        const u = CAM_PAD / k;
+        const a = m[ax];
+        const b = m[ax] + (ax === 'x' ? m.w : m.h);
+        const lo = b + u - half;
+        const hi = a - u + half;
+        centre[ax] = lo <= hi ? Math.max(lo, Math.min(hi, centre[ax])) : (a + b) / 2;
+      }
+    };
+    hold(must);
+    // A lit box the view cuts is pulled wholly into view when a pan can do it with the box the step ends at and the
+    // resting labels still inside: the largest part showing first. One that cannot be gets an edge sign (updateMarks).
+    const fitsNow = (u: Box) => u.w * k <= canvas.clientWidth - 2 * CAM_PAD + 0.5 && u.h * k <= canvas.clientHeight - 2 * CAM_PAD + 0.5;
+    const v0 = camViewAt(k, centre);
+    const shown = (b: Box) => (Math.max(0, Math.min(b.x + b.w, v0.x + v0.w) - Math.max(b.x, v0.x)) * Math.max(0, Math.min(b.y + b.h, v0.y + v0.h) - Math.max(b.y, v0.y))) / (b.w * b.h);
+    const cut = design.tour[i].focus.map((id) => boxOf(id)).filter((b) => shown(b) > 0 && !within(b, v0, 0.5)).sort((a, b) => shown(b) - shown(a));
+    for (const b of cut) {
+      const m2 = union(must, b);
+      if (!fitsNow(m2)) continue;
+      must = m2;
+      hold(must);
     }
     const view = camViewAt(k, centre);
     // Everything the trip touches already in the rest view: nothing to follow.
@@ -2861,13 +2921,30 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     type Edge = 'left' | 'right' | 'top' | 'bottom';
     const arrows: Record<Edge, string> = { left: '←', right: '→', top: '↑', bottom: '↓' };
     const want: { id: string; side: Edge; at: number; cx: number; cy: number }[] = [];
+    // The leg the token is on, while it travels: when both its ends are out of view, their signs sit level with the
+    // token, the one it is going to on the edge it travels towards and the one it left on the edge behind it.
+    const seg = trip && trip.i < trip.segs.length ? trip.segs[trip.i] : null;
+    const leg = seg && seg.kind === 'path' && seg.who === 'main' && token.at ? seg : null;
+    const ends = leg ? (() => { const fl = flowById.get(lineIdOf.get(leg.el)!)!; return leg.back ? [fl.to, fl.from] : [fl.from, fl.to]; })() : null;
+    const share = (b: Box) => (Math.max(0, Math.min(b.x + b.w, v.x + v.w) - Math.max(b.x, v.x)) * Math.max(0, Math.min(b.y + b.h, v.y + v.h) - Math.max(b.y, v.y))) / (b.w * b.h);
+    const bothOut = !!ends && share(boxOf(ends[0])) === 0 && share(boxOf(ends[1])) === 0;
     for (const id of design.tour[step].focus) {
       const b = boxOf(id);
-      // A box with a quarter or more of it in view needs no sign: the reader can see where it is.
-      const sx = Math.max(0, Math.min(b.x + b.w, v.x + v.w) - Math.max(b.x, v.x));
-      const sy = Math.max(0, Math.min(b.y + b.h, v.y + v.h) - Math.max(b.y, v.y));
-      // A box wholly in view needs no sign; one cut by an edge gets one, so the reader knows there is more of it.
-      if (sx >= b.w - 1 && sy >= b.h - 1) continue;
+      // A box half or more in view needs no sign: the reader can see where it is. (At rest the camera has already pulled
+      // any cut box it could wholly into view.) Less than half, or none of it, and it gets one.
+      if (share(b) >= 0.5) continue;
+      if (bothOut && ends!.includes(id)) {
+        const tx = token.at!.x;
+        const ty = token.at!.y;
+        const [s0, t0] = ends!.map(boxOf);
+        const ddx = t0.x + t0.w / 2 - (s0.x + s0.w / 2);
+        const ddy = t0.y + t0.h / 2 - (s0.y + s0.h / 2);
+        const ahead = id === ends![1];
+        const flat = Math.abs(ddx) >= Math.abs(ddy);
+        const side: Edge = flat ? ((ddx >= 0) === ahead ? 'right' : 'left') : (ddy >= 0) === ahead ? 'bottom' : 'top';
+        want.push({ id, side, at: flat ? (ty - v.y) * k : (tx - v.x) * k, cx: b.x + b.w / 2, cy: b.y + b.h / 2 });
+        continue;
+      }
       const cx = b.x + b.w / 2;
       const cy = b.y + b.h / 2;
       const dx = (cx - (v.x + v.w / 2)) / v.w;
@@ -3217,7 +3294,12 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     const stuck = !stage.classList.contains('unstick');
     const headH = stuck ? head.offsetHeight : 0;
     let y = window.scrollY;
-    if (head.offsetHeight + canvas.offsetHeight <= vh) y = stageTop;
+    const hr = head.getBoundingClientRect();
+    const cr = canvas.getBoundingClientRect();
+    // The readout and the whole canvas already on screen, the canvas clear of the readout: the page stays where it is, so
+    // the page's own title does not scroll away when Play is pressed.
+    if (hr.top >= -0.5 && cr.top >= hr.bottom - 1 && cr.bottom <= vh + 0.5) y = window.scrollY;
+    else if (head.offsetHeight + canvas.offsetHeight <= vh) y = stageTop;
     else {
       // The lowest scroll that shows the bottom of the step, and the highest that keeps its top below the stuck readout.
       const lo = top + (u.y + u.h + pad) * k - vh + 6;
@@ -3495,8 +3577,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       cancelGlance();
       hideToken(branchTok);
       hideToken();
-      // On a phone the view pans to the step with the token already waiting where it sets off, so it is never lost.
-      if (cam && !fitted && design.tour[i].path.length && !reducedMotion()) {
+      // On a phone the view pans to the step with the token already waiting where it sets off, so it is never lost. A step
+      // about a failure shows the token there too, at every size, through the beat it opens on: never an empty diagram.
+      if (((cam && !fitted) || !!design.tour[i].failed?.length) && design.tour[i].path.length && !reducedMotion()) {
         const f = pathLegs(i)[0];
         const st = legStart(f);
         const off = restPlace(i, st, pillWidth(f.label), f.off, f.vertical, null, f.el);
@@ -3710,7 +3793,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
         close();
       } else if (step >= 0) {
         e.preventDefault();
-        const onHead = head.contains(t);
+        // From the readout, or with nothing focused, focus lands on Play, so the next key has somewhere to go.
+        const onHead = head.contains(t) || t === document.body || t === document.documentElement || t === host || t.id === 'main';
         leaveTour(onHead);
       }
       return;
@@ -3796,10 +3880,57 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       legend.removeAttribute('aria-label');
     }
   };
-  const keyRo = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => requestAnimationFrame(keyScroll)) : null;
+  // The fade at its foot ends on the foot of a whole line: below that line nothing shows, so no line is cut in half.
+  const keyFade = () => {
+    if (!alive || !legend.classList.contains('scrolls')) {
+      legend.style.removeProperty('--fade-end');
+      return;
+    }
+    const lr = legend.getBoundingClientRect();
+    const foot = lr.top + legend.clientTop + legend.clientHeight;
+    let best = 0;
+    const walk = document.createTreeWalker(legend, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      if (!n.textContent?.trim()) continue;
+      range.selectNodeContents(n);
+      for (const q of Array.from(range.getClientRects())) if (q.width > 2 && q.height > 4 && q.bottom <= foot + 0.5 && q.bottom > best) best = q.bottom;
+    }
+    if (best > lr.top) legend.style.setProperty('--fade-end', `${(best - lr.top + 3).toFixed(1)}px`);
+    else legend.style.removeProperty('--fade-end');
+  };
+  const keyRo = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => requestAnimationFrame(() => { keyScroll(); keyFade(); })) : null;
   keyRo?.observe(legend);
-  keyNotes.addEventListener('toggle', keyScroll);
-  legend.addEventListener('scroll', () => legend.classList.toggle('at-end', legend.scrollTop + legend.clientHeight >= legend.scrollHeight - 2), { passive: true });
+  // The tables restack below 800px, so none should scroll sideways. If one ever does (a long word, a zoomed font), it is a
+  // named region with a tab stop, so the clipped columns can be reached from the keyboard.
+  const tableScroll = () => {
+    if (!alive) return;
+    for (const { wrap, named } of tableWraps) {
+      if (wrap.scrollWidth > wrap.clientWidth + 1) {
+        wrap.setAttribute('tabindex', '0');
+        wrap.setAttribute('role', 'region');
+        wrap.setAttribute('aria-labelledby', named);
+      } else {
+        wrap.removeAttribute('tabindex');
+        wrap.removeAttribute('role');
+        wrap.removeAttribute('aria-labelledby');
+      }
+    }
+  };
+  const tableRo = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => requestAnimationFrame(tableScroll)) : null;
+  // The wrapper's own size does not change when its table outgrows it, so watch the table as well.
+  for (const { wrap } of tableWraps) {
+    tableRo?.observe(wrap);
+    if (wrap.firstElementChild) tableRo?.observe(wrap.firstElementChild);
+  }
+  keyNotes.addEventListener('toggle', () => {
+    keyScroll();
+    keyFade();
+  });
+  legend.addEventListener('scroll', () => {
+    legend.classList.toggle('at-end', legend.scrollTop + legend.clientHeight >= legend.scrollHeight - 2);
+    keyFade();
+  }, { passive: true });
   // A turned phone or a resized window: keep the step in view.
   const onResize = () => {
     clearTimeout(resizeTimer);
@@ -3876,10 +4007,10 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   if (open) {
     requestAnimationFrame(() => {
       if (!alive) return;
-      const missing = (what: string) => {
+      const missing = (what: string, say?: string) => {
         // The address goes back to the page itself, so it never names something that is not there.
         history.replaceState(history.state, '', base);
-        notFound.textContent = `There is no ${what} called "${open.id}" on this diagram. Pick a part on it, or one from the list under it.`;
+        notFound.textContent = say ?? `There is no ${what} called "${open.id}" on this diagram. Pick a part on it, or one from the list under it.`;
         notFound.hidden = false;
         // 16px clear of the top of the screen, so its outline shows whole.
         window.scrollTo({ top: Math.max(0, notFound.getBoundingClientRect().top + window.scrollY - 16) });
@@ -3914,7 +4045,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
           go(n - 1, true, true);
           quietFocus(stepTitle);
         }
-        else missing('tour step');
+        else missing('tour step', `There are ${design.tour.length} tour steps; ${(() => { try { return decodeURIComponent(open.id); } catch { return open.id; } })()} is not one of them.`);
       } else if (open.kind === 'g') {
         const term = document.getElementById(`term-${open.id}`) ?? document.getElementById(`term-${slug(decodeURIComponent(open.id))}`);
         if (term) {
@@ -3941,6 +4072,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     ro?.disconnect();
     panRo?.disconnect();
     keyRo?.disconnect();
+    tableRo?.disconnect();
     io?.disconnect();
     styleWatch?.disconnect();
     document.removeEventListener('keydown', onKey);
