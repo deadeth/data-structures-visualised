@@ -94,7 +94,7 @@ This repo was mostly built by one coordinating session and many sub-agents. What
 
 Design review used blind rounds: three fresh reviewers per round (visual, accessibility and responsive, interaction and motion), given no earlier scores and no sight of each other, reviewing a frozen build. Brief: `docs/briefs/blind-reviewer.md`. Process and lessons: ADR 0007.
 
-## State when this file was last updated (11 November 2026, evening)
+## State when this file was last updated (12 November 2026)
 
 Live and verified:
 - About 48 structure pages across nine groups. "Reliability patterns" holds transactional outbox, sagas, idempotency keys, and retries, backoff and circuit breakers.
@@ -103,9 +103,12 @@ Live and verified:
 - Site search, covering structures, designs and interview pushes.
 - A structure page opens with `info.summary` under its title. The catalogue `blurb` is only for the home page, sidebar and search.
 
-In progress:
-- Crawler design page blind review. Rounds 5 to 11 ran on 11 and 12 November. Round 11 scores were 9 in fourteen of eighteen cells and 8 in four (visual design once, layout twice, accessibility once). Reports, briefs and the standing decisions are in `/tmp/council/b<n>/` on the session machine, not in the repo; the decisions that must not be reopened are listed below.
+Paused, not in progress:
+- Crawler design page blind review. Rounds 5 to 12 ran on 11 and 12 November. Round 12 scored 9 in sixteen of eighteen cells and 8 in two: written content (a write-ordering error, since fixed) and clarity (a phone camera jump between steps 13 and 14, since fixed). Matthew stopped the loop after the round 12 fixes; no round 13 has checked them. Reports and briefs were in `/tmp/council/b<n>/` on the session machine and are not in the repo.
 - The crawler tour has 14 steps: the node failure is two steps, "The lease runs out" and "A new owner takes over".
+- Known and accepted on the crawler page: at 768x1024 step 14 rests without the Object store in view (tablets have no edge signs); at 320px wide steps 6, 7 and 12 show one end of a leg and an edge sign for the other; with a box selected, labels that cannot be placed cleanly are left off the diagram and listed in the panel; there is no dark scheme.
+- The ledger, alerts and cards diagrams share the renderer but have had no layout pass of their own: the ledger's right-hand column sits tight against the stage edge.
+- Prose uses a one-glyph font, "Plain zero" (the zero of Atkinson Hyperlegible Next with its slash removed, OFL), inlined in `src/styles.css` as `--sans`; data contexts use `--sans-data` and keep the slashed zero.
 
 Design-page decisions settled during review (reviewers flip on these; do not reopen without a reason):
 - Phone tour: one fixed canvas height, camera scale between 0.8 and 1.0 so diagram text is 13px or more, no zooming out to fit a step. The camera follows the token; the destination box and resting label always sit inside the canvas; other lit boxes out of view get an edge sign.
