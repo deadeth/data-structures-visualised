@@ -189,7 +189,8 @@ async function route(typing = false): Promise<void> {
   const m = /^\/s\/([a-z0-9-]+)$/.exec(path);
   // A design page, opened at a box (c), connection (f), glossary term (g), tour step (t), likely push (q) or section (x);
   // or its rehearsal mode or crib.
-  const dm = /^\/d\/([a-z0-9-]+)(?:\/([cfgtqx])\/([a-z0-9-]+)|\/(rehearse|crib))?$/.exec(path);
+  // The part id is matched loosely and lower-cased, so a mistyped or capitalised deep link reaches the design page's own "no such part" note.
+  const dm = /^\/d\/([a-z0-9-]+)(?:\/([cfgtqx])\/([^/]+)|\/(rehearse|crib))?$/.exec(path);
   const chosen = dm ? designEntry(dm[1]) : undefined;
   if (path === '/') {
     document.title = 'Data structures, visualised';
@@ -216,7 +217,7 @@ async function route(typing = false): Promise<void> {
       mount = Promise.all([import('./ui/design-extras'), chosen.load(), extras]).then(([x, d, e]) => (mode === 'crib' ? x.mountCrib(main, chosen, d, e) : x.mountRehearse(main, chosen, d, e)));
     } else {
       document.title = `${chosen.name} | Data structures, visualised`;
-      const open = dm[2] ? { kind: dm[2], id: dm[3] } : undefined;
+      const open = dm[2] ? { kind: dm[2], id: decodeURIComponent(dm[3]).toLowerCase() } : undefined;
       mount = Promise.all([import('./ui/design-page'), chosen.load(), extras]).then(([page, d, e]) => page.mountDesign(main, d, open, e));
     }
   } else if (m && entry(m[1]) && isReady(m[1])) {
@@ -224,7 +225,10 @@ async function route(typing = false): Promise<void> {
     mount = mountStructure(main, m[1]);
   } else {
     document.title = 'Page not found | Data structures, visualised';
-    main.append(h('article', null, h('h1', null, 'No page at this address'), h('p', null, 'Pick a structure from the list, or ', h('a', { href: '#/' }, 'go to the start'), '.')));
+    const lost = h('h1', { tabIndex: -1 }, 'No page at this address');
+    main.append(h('article', null, lost, h('p', null, 'Pick a structure from the list, or ', h('a', { href: '#/' }, 'go to the start'), '.')));
+    // Focus the heading so a screen reader announces the miss.
+    lost.focus();
     return;
   }
   try {
