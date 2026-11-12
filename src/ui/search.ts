@@ -65,7 +65,7 @@ function build(): Promise<Doc[]> {
         });
       }
     }
-    d.tour.forEach((t, i) => docs.push({ kind: 'Tour step', title: t.title, also: [], text: t.text, href: `${base}/t/${i + 1}`, where: `${d.name}: tour step ${i + 1}`, from: d.name }));
+    d.tour.forEach((t, i) => docs.push({ kind: 'Tour step', title: t.title, also: [], text: [t.text, ...(t.explain ?? []).flatMap((e) => [e.q, e.a])].join(' '), href: `${base}/t/${i + 1}`, where: `${d.name}: tour step ${i + 1}`, from: d.name }));
     for (const dec of d.decisions) docs.push({ kind: 'Decision', title: dec.choice, also: [], text: `${dec.a} ${dec.b} ${dec.call}`, href: base, where: `${d.name}: decisions worth defending`, from: d.name });
     // Likely pushes from the design's interview extras, when written: each opens its question in the "Likely pushes" section.
     const ex = await entry.extras?.().catch(() => undefined);

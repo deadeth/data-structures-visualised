@@ -167,6 +167,11 @@ export interface TourStep {
   recovery?: boolean;
   /** Connections not drawn on this step, even with the recovery paths shown, so nothing on screen contradicts the step. */
   hide?: string[];
+  /**
+   * The questions a newcomer would ask about `text`, each answered in two or three plain sentences:
+   * what a term means, which box does the thing, who is told. Shown under the stage as "Step n explained".
+   */
+  explain?: { q: string; a: string }[];
 }
 
 export interface Design {

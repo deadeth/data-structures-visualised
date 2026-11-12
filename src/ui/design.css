@@ -1662,9 +1662,62 @@ main:has(> .design) {
   font-weight: 700;
 }
 
+.hld-explain-link {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.hld-explain {
+  scroll-margin-top: 220px;
+}
+
+/* The step in a newcomer's terms: the questions its text raises, each with a short answer. */
+.hld-explain {
+  margin-top: 14px;
+}
+
+.hld-explain-text {
+  max-width: 78ch;
+  color: var(--ink-2);
+}
+
+.hld-qa {
+  margin: 12px 0 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+  gap: 12px 36px;
+}
+
+.hld-qa dt {
+  font-weight: 700;
+}
+
+.hld-qa dd {
+  margin: 2px 0 0;
+  max-width: 68ch;
+  line-height: 1.5;
+}
+
 /* A call written out: a labelled block of code that scrolls sideways inside itself, never the page. */
+/* The blocks take the panel's full width, two to a row where two 72-character blocks fit, so lines rarely need to scroll. */
 .hld-examples {
+  grid-column: 1 / -1;
   min-width: 0;
+}
+
+.hld-ex-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 39rem), 1fr));
+  gap: 4px 28px;
+  align-items: start;
 }
 
 .hld-ex-lead {
