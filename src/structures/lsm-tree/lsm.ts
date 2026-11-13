@@ -302,7 +302,10 @@ function compactLevel(s: LsmState, lv: number, rec: Rec, cost: Cost, why: Compac
 
   if (recording) {
     const hue = new Map<number, number>();
-    groups.forEach((g, gi) => g.forEach((t) => hue.set(t.id, lower.length && gi === groups.length - 1 ? 3 : gi % 3)));
+    // One colour per input table, so every entry in the merged run can be traced to the file it came from.
+    // There are six hues: a merge of more than six tables reuses them in order.
+    let n = 0;
+    groups.forEach((g) => g.forEach((t) => hue.set(t.id, n++ % 6)));
     s.merge = { from: lv, to, phase: 'inputs', hue, run: [], seq: ++s.mergeSeq };
     s.view[lv] = 0;
     s.view[to] = 0;
@@ -408,7 +411,7 @@ function compactLevel(s: LsmState, lv: number, rec: Rec, cost: Cost, why: Compac
         ? `Every entry was a stale copy or a spent tombstone, so nothing is left to write.`
         : groups.length === 1
           ? `There is only one input, so no merging is needed: the ${plural(out.length, 'entry', 'entries')} that ${out.length === 1 ? 'is' : 'are'} left ${out.length === 1 ? 'is' : 'are'} copied across in order.`
-          : `Merge sort: keep taking the smallest key at the front of any input. ${plural(comparisons, 'comparison')} give one sorted run of ${plural(out.length, 'entry', 'entries')}, each coloured by the input it came from.`,
+          : `Merge sort: keep taking the smallest key at the front of any input. ${plural(comparisons, 'comparison')} give one sorted run of ${plural(out.length, 'entry', 'entries')}, each coloured by the table it came from.`,
     );
   }
 
