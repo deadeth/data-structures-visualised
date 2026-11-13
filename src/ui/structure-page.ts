@@ -16,6 +16,15 @@ function parseArg(def: ArgDef, raw: string): { value?: number | string; error?: 
     if (n < min || n > max) return { error: `${def.label}: enter a whole number from ${min} to ${max}.` };
     return { value: n };
   }
+  if (def.kind === 'ints') {
+    const min = def.min ?? 0;
+    const max = def.max ?? 999;
+    const most = def.maxItems ?? 16;
+    const parts = text.split(/[\s,]+/).filter(Boolean);
+    const say = `${def.label}: enter up to ${most} whole numbers from ${min} to ${max}, with spaces between them.`;
+    if (!parts.length || parts.length > most || parts.some((p) => !/^\d+$/.test(p) || Number(p) < min || Number(p) > max)) return { error: say };
+    return { value: parts.map(Number).join(' ') };
+  }
   const word = text.toLowerCase();
   if (!/^[a-z]{1,12}$/.test(word)) return { error: `${def.label}: use 1 to 12 letters, a to z.` };
   return { value: word };
@@ -144,9 +153,10 @@ export async function mountStructure(host: HTMLElement, id: string): Promise<() 
       const input = h('input', {
         type: 'text',
         inputMode: a.kind === 'int' ? 'numeric' : 'text',
+        ...(a.kind === 'ints' ? { class: 'wide' } : {}),
         autocomplete: 'off',
         spellcheck: false,
-        placeholder: 'random',
+        placeholder: a.kind === 'ints' ? 'an example' : 'random',
         oninput: () => {
           auto[i] = input.value.trim() === '';
           clearError();

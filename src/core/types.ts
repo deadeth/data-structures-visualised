@@ -134,9 +134,15 @@ export interface Frame {
 export interface ArgDef {
   name: string;
   label: string;
-  kind: 'int' | 'word';
+  /**
+   * 'int' is one whole number and 'word' one short word. 'ints' is a list of whole numbers typed with spaces or commas
+   * ("5 2 9 1"); `run` receives it as a string of the numbers joined by single spaces. For 'ints', `min` and `max` bound each
+   * number (0 to 999 unless given) and `maxItems` bounds how many (16 unless given).
+   */
+  kind: 'int' | 'word' | 'ints';
   min?: number;
   max?: number;
+  maxItems?: number;
 }
 
 /** Minimal recorder surface that operations use. See recorder.ts. */

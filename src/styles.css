@@ -331,6 +331,11 @@ h1 {
   width: 6.2em;
 }
 
+/* A list of numbers needs room to be read back. */
+.field input.wide {
+  width: min(20em, 70vw);
+}
+
 .field input[inputmode='text'] {
   width: 9em;
 }
