@@ -1,4 +1,7 @@
 BITS = 8  # kept small to fit the page; real fingerprints have 64
+BLOCKS = 4  # real indexes split 64 bits into 4 blocks of 16
+BLOCK_BITS = BITS // BLOCKS
+BLOCK_MASK = (1 << BLOCK_BITS) - 1
 
 
 # region word_hash
@@ -30,6 +33,14 @@ def fingerprint(words):
 # endregion
 
 
+# region block_key
+def block_key(fp, block):
+    """The bits of one block of a fingerprint, block 0 on the left."""
+    shift = BITS - BLOCK_BITS * (block + 1)
+    return (fp >> shift) & BLOCK_MASK  #@key
+# endregion
+
+
 # region hamming
 def hamming(a, b):
     """How many bit positions differ between two fingerprints."""
@@ -51,13 +62,19 @@ class SimHash:
         self.threshold = threshold
         # Page number to fingerprint, in the order pages arrived.
         self.pages = {}
+        # One table per block: block value to the pages that have it.
+        self.tables = [{} for _ in range(BLOCKS)]
 
     # region add
     def add(self, page, words):
         """Fingerprint a page and keep it. False if already kept."""
         if page in self.pages:  #@known_test
             return False  #@known
-        self.pages[page] = fingerprint(words)  #@store
+        fp = fingerprint(words)
+        self.pages[page] = fp  #@store
+        for block in range(BLOCKS):
+            key = block_key(fp, block)  #@file
+            self.tables[block].setdefault(key, []).append(page)  #@file
         return True
     # endregion
 
@@ -79,4 +96,24 @@ class SimHash:
             if distance <= self.threshold:  #@near_test
                 found.append(page)  #@near_keep
         return found  #@near_done
+    # endregion
+
+    # region near_blocks
+    def near_blocks(self, words):
+        """Near pages found through the block tables, without a scan."""
+        fp = fingerprint(words)  #@nb_start
+        candidates = []
+        for block in range(BLOCKS):  #@nb_blocks
+            key = block_key(fp, block)  #@nb_key
+            bucket = self.tables[block].get(key, [])  #@nb_lookup
+            for page in bucket:
+                if page not in candidates:  #@nb_new
+                    candidates.append(page)  #@nb_add
+        found = []
+        # Only candidates are compared: the rest share no block.
+        for page in candidates:  #@nb_each
+            distance = hamming(fp, self.pages[page])  #@nb_distance
+            if distance <= self.threshold:  #@nb_test
+                found.append(page)  #@nb_keep
+        return found  #@nb_done
     # endregion
