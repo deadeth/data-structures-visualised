@@ -199,6 +199,10 @@ export interface Design {
   components: Component[];
   flows: Flow[];
   tour: TourStep[];
+  /** What the main tour follows, in a few words, shown where the reader picks a story. Needed only with `stories`. */
+  tourName?: string;
+  /** More tours over the same diagram, each following something else. The reader picks one above the diagram; `tour` is the first. */
+  stories?: { id: string; name: string; tour: TourStep[] }[];
   brief: { heading: string; points: string[] }[];
   numbers: { what: string; assumption: string; result: string }[];
   framings: { name: string; scale: string; shape: string }[];

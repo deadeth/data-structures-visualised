@@ -187,10 +187,10 @@ async function route(typing = false): Promise<void> {
 
   let mount: Promise<() => void>;
   const m = /^\/s\/([a-z0-9-]+)$/.exec(path);
-  // A design page, opened at a box (c), connection (f), glossary term (g), tour step (t), likely push (q) or section (x);
+  // A design page, opened at a box (c), connection (f), glossary term (g), tour step (t), story (s, as `id` or `id.step`), likely push (q) or section (x);
   // or its rehearsal mode or crib.
   // The part id is matched loosely and lower-cased, so a mistyped or capitalised deep link reaches the design page's own "no such part" note.
-  const dm = /^\/d\/([a-z0-9-]+)(?:\/([cfgtqx])\/([^/]+)|\/(rehearse|crib))?$/.exec(path);
+  const dm = /^\/d\/([a-z0-9-]+)(?:\/([cfgtqxs])\/([^/]+)|\/(rehearse|crib))?$/.exec(path);
   const chosen = dm ? designEntry(dm[1]) : undefined;
   if (path === '/') {
     document.title = 'Data structures, visualised';

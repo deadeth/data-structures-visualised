@@ -256,9 +256,26 @@ function altItem(a: { name: string; chosen?: boolean; what?: string; pros?: stri
 }
 
 export async function mountDesign(host: HTMLElement, design: Design, open?: { kind: string; id: string }, extras?: Extras): Promise<() => void> {
+  // A design can carry more than one tour over the same diagram. `/s/<id>` or `/s/<id>.<step>` picks one; the page then runs
+  // exactly as if that were its only tour.
+  const stories = design.stories ?? [];
+  let story: (typeof stories)[number] | undefined;
+  let badStory: string | undefined;
+  if (open?.kind === 's') {
+    const [sid, n] = open.id.split('.');
+    story = stories.find((x) => x.id === sid);
+    if (story) {
+      design = { ...design, tour: story.tour };
+      open = n ? { kind: 't', id: n } : undefined;
+    } else {
+      badStory = open.id;
+      open = undefined;
+    }
+  }
   const W = design.size.w;
   const H = design.size.h;
   const base = `#/d/${design.id}`;
+  const storyBase = story ? `${base}/s/${story.id}` : base;
   /** The page's title as the router set it: what is open on the diagram goes in front of it, and comes off when it closes. */
   const baseTitle = document.title;
   const byId = new Map(design.components.map((c) => [c.id, c]));
@@ -773,7 +790,20 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     );
     setExplainShut(explainShut);
   };
-  const page = h('article.design', null, h('header.page-head', null, h('h1', null, design.name), h('p.lede', null, design.blurb), ex?.links), notFound, stage, status, explainBox, detail, notes);
+  // Which story the tour follows. Each is a link, so a story has an address and the page starts again on it.
+  const storyNav = stories.length
+    ? h(
+        'nav.hld-stories', { 'aria-label': 'Story to follow' },
+        h('span.hld-stories-label', null, 'Follow'),
+        h(
+          'ul', null,
+          [{ id: '', name: design.tourName ?? 'Main tour' }, ...stories].map((x) =>
+            h('li', null, h('a', { href: x.id ? `${base}/s/${x.id}` : base, ...((story?.id ?? '') === x.id ? { 'aria-current': 'true' } : {}) }, x.name)),
+          ),
+        ),
+      )
+    : null;
+  const page = h('article.design', null, h('header.page-head', null, h('h1', null, design.name), h('p.lede', null, design.blurb), ex?.links), storyNav, notFound, stage, status, explainBox, detail, notes);
   host.append(page);
 
   // ---- state ---------------------------------------------------------------------
@@ -1273,7 +1303,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   function setUrl(): void {
     if (!alive) return;
     clearMissing();
-    const want = selected ? `${base}/c/${selected}` : picked ? `${base}/f/${picked}` : step >= 0 ? `${base}/t/${step + 1}` : base;
+    const want = selected ? `${base}/c/${selected}` : picked ? `${base}/f/${picked}` : step >= 0 ? (story ? `${storyBase}.${step + 1}` : `${base}/t/${step + 1}`) : storyBase;
     if (location.hash !== want) history.replaceState(history.state, '', want);
     const fl = picked ? flowById.get(picked) : null;
     const what = selected ? nameOf(selected) : fl ? lineName(fl) : step >= 0 ? `Step ${step + 1}: ${design.tour[step].title}` : '';
@@ -4264,6 +4294,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     return null;
   }
 
+  if (badStory) {
+    history.replaceState(history.state, '', base);
+    notFound.textContent = `There is no story called "${badStory}" on this page. Pick one above the diagram.`;
+    notFound.hidden = false;
+  }
   // A link can open a box, a connection, a glossary term or a tour step. Focus goes to what opened.
   if (open) {
     requestAnimationFrame(() => {
