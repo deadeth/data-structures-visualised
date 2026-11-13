@@ -1,7 +1,7 @@
 import { LABEL_MAX } from '../../core/fit';
 import { CELL_H, TRAY_PAD } from '../../core/geometry';
 import { pick, randomInt } from '../../core/rng';
-import type { Cell, Decor, Probe, Rec, Scene, SceneNode, StructureDef } from '../../core/types';
+import type { Cell, Decor, Probe, Rec, Scene, SceneNode, StructureDef, VarValue } from '../../core/types';
 import java from './code/CacheStrategies.java?raw';
 import python from './code/cache_strategies.py?raw';
 import { info } from './info';
@@ -128,6 +128,16 @@ function listOf(items: string[]): string {
 }
 const keyList = () => listOf(KEYS.map(String));
 
+/** `entry` in the listing: None on a miss, otherwise the fields a reader would watch. */
+function entryVars(e: Entry | undefined): Record<string, VarValue> {
+  return e ? { 'entry.value': e.value, 'entry.version': e.version, 'entry.expires': e.expires } : { entry: null };
+}
+
+/** `load` after it has filled the cache: the row it read and what it unpacked from it. */
+function filledVars(key: number, row: Row, expires: number | null): Record<string, VarValue> {
+  return { key, row: [row.value, row.version], value: row.value, version: row.version, expires };
+}
+
 function setNote(s: CacheState, id: string, note: string | undefined): void {
   const c = s.clients.find((x) => x.id === id);
   if (c) c.note = note;
@@ -169,6 +179,7 @@ export function read(s: CacheState, raw: number, rec: Rec): number | null {
   const key = Math.floor(raw);
   if (!s.db.has(key)) s.ghost = key;
   const e = s.cache.get(key);
+  rec.vars({ key, ...entryVars(e) });
   rec.mark(cid(key), 'compare');
   rec.line('lookup');
   if (e) {
@@ -216,6 +227,7 @@ export function read(s: CacheState, raw: number, rec: Rec): number | null {
   rec.count('reads');
   rec.mark(did(key), 'key');
   const row = s.db.get(key);
+  rec.vars({ key, row: row ? [row.value, row.version] : null });
   if (!row) {
     rec.line('miss', 'db_read', 'absent');
     rec.step(
@@ -228,6 +240,7 @@ export function read(s: CacheState, raw: number, rec: Rec): number | null {
   rec.step(`Read ${key} from the database: ${vv(row)}.`, { probe: atDb(key) });
   rec.unmark(did(key));
   const e2 = fill(s, key, row);
+  rec.vars(filledVars(key, row, e2.expires));
   rec.mark(cid(key), 'key');
   rec.markCell(cid(key), 3, 'ok');
   rec.line('fill');
@@ -243,6 +256,7 @@ export function write(s: CacheState, rawKey: number, rawValue: number, rec: Rec)
   begin(s);
   const key = Math.floor(rawKey);
   const value = Math.max(0, Math.min(999, Math.floor(rawValue)));
+  rec.vars({ key, value });
   rec.line('write');
   if (!s.db.has(key)) {
     rec.step(`This page's database has four rows: ${keyList()}. Write to one of those.`);
@@ -252,11 +266,13 @@ export function write(s: CacheState, rawKey: number, rawValue: number, rec: Rec)
 
   if (s.strategy === 'cache-aside') {
     const version = dbWrite(s, key, value, rec);
+    rec.vars({ key, value, version });
     rec.mark(did(key), 'key');
     rec.line('aside_db', 'db_write');
     rec.step(`Cache-aside: the application writes the database first. ${key} goes from ${vv(before)} to ${value} v${version}.`, { probe: atDb(key) });
     rec.unmark(did(key));
     const e = s.cache.get(key);
+    rec.vars({ key, value });
     rec.line('aside_delete');
     if (e) {
       rec.mark(cid(key), 'bad');
@@ -285,11 +301,13 @@ export function write(s: CacheState, rawKey: number, rawValue: number, rec: Rec)
 
   if (s.strategy === 'write-through') {
     const version = dbWrite(s, key, value, rec);
+    rec.vars({ key, value, version });
     rec.mark(did(key), 'key');
     rec.line('through_db', 'db_write');
     rec.step(`Write-through: the cache writes the database as part of the request. ${key} goes from ${vv(before)} to ${value} v${version}.`, { probe: atDb(key) });
     rec.mark(did(key), 'ok');
     const e = fill(s, key, { value, version });
+    rec.vars({ key, value, version, expires: e.expires });
     rec.mark(cid(key), 'key');
     rec.markCell(cid(key), 3, 'ok');
     rec.line('through_cache');
@@ -306,6 +324,7 @@ export function write(s: CacheState, rawKey: number, rawValue: number, rec: Rec)
     const queued = s.queue.find((p) => p.key === key);
     const version = (queued ? queued.version : before.version) + 1;
     s.cache.set(key, { value, version, expires: null });
+    rec.vars({ key, value, version });
     rec.mark(cid(key), 'key');
     rec.line('behind_cache', 'next_version');
     rec.step(
@@ -313,6 +332,7 @@ export function write(s: CacheState, rawKey: number, rawValue: number, rec: Rec)
       { probe: atCache(key) },
     );
     rec.unmark(cid(key));
+    rec.vars({ key, value, version, 'queue[key]': [value, version] });
     rec.line('behind_queue');
     if (queued) {
       const was = vv(queued);
@@ -341,11 +361,13 @@ export function write(s: CacheState, rawKey: number, rawValue: number, rec: Rec)
 
   // write-around
   const version = dbWrite(s, key, value, rec);
+  rec.vars({ key, value, version });
   rec.mark(did(key), 'key');
   rec.line('around_db', 'db_write');
   rec.step(`Write-around: the write goes to the database only. ${key} goes from ${vv(before)} to ${value} v${version}.`, { probe: atDb(key) });
   rec.unmark(did(key));
   const e = s.cache.get(key);
+  rec.vars({ key, value });
   rec.line('around_keep');
   if (e && e.expires !== null) {
     rec.mark(cid(key), 'key');
@@ -380,10 +402,12 @@ function drain(s: CacheState, rec: Rec): number {
     rec.count('writes');
     rec.mark(qid(p.key), 'key');
     rec.mark(did(p.key), 'ok');
+    rec.vars({ key: p.key, value: p.value, version: p.version });
     rec.line('drain', 'flush_write');
     rec.step(`Write ${p.key} = ${p.value} v${p.version} to the database.`, { probe: atQueue(p.key) });
     const e = s.cache.get(p.key)!;
     e.expires = s.now + s.ttl;
+    rec.vars({ key: p.key, value: p.value, version: p.version, 'entry.expires': e.expires });
     rec.mark(cid(p.key), 'key');
     rec.markCell(cid(p.key), 3, 'ok');
     rec.line('unpin');
@@ -392,6 +416,7 @@ function drain(s: CacheState, rec: Rec): number {
     rec.mark(qid(p.key), 'ok');
   }
   s.queue = [];
+  rec.vars();
   rec.line('flushed');
   rec.step(`Flushed: ${plural(n, 'database write')} in one batch. Cache and database agree again.`);
   return n;
@@ -400,6 +425,7 @@ function drain(s: CacheState, rec: Rec): number {
 /** Send every queued write to the database. Returns how many went. */
 export function flush(s: CacheState, rec: Rec): number {
   begin(s);
+  rec.vars();
   rec.line('drain');
   if (!s.queue.length) {
     rec.step(
@@ -422,6 +448,7 @@ export function crashCache(s: CacheState, rec: Rec): number {
   const first = lost[0];
   for (const k of s.cache.keys()) rec.mark(cid(k), 'bad');
   for (const p of lost) rec.mark(qid(p.key), 'bad');
+  rec.vars({ lost: lost.length });
   rec.line('wipe');
   rec.step(
     `The cache process dies. Everything it held in memory is gone: ${plural(s.cache.size, 'entry', 'entries')}` +
@@ -461,6 +488,7 @@ export function crashCache(s: CacheState, rec: Rec): number {
 export function tick(s: CacheState, k: number, rec: Rec): boolean {
   begin(s);
   const n = Math.max(1, Math.floor(k));
+  rec.vars({ ticks: n, now: s.now });
   rec.line('tick');
   if (s.now + n > MAX_TICK) {
     rec.step(`Sorry, this page's clock stops at tick ${MAX_TICK} so the numbers stay readable, and it reads ${s.now}. Reload the page to start again.`);
@@ -468,6 +496,7 @@ export function tick(s: CacheState, k: number, rec: Rec): boolean {
   }
   const from = s.now;
   s.now += n;
+  rec.vars({ ticks: n, now: s.now });
   rec.step(`Advance the clock by ${ticks(n)}, from ${from} to ${s.now}. Each cache entry is checked against its expiry time.`);
   const gone = [...s.cache.entries()].filter(([, e]) => e.expires !== null && e.expires <= s.now).map(([key]) => key);
   if (!gone.length) {
@@ -481,6 +510,8 @@ export function tick(s: CacheState, k: number, rec: Rec): boolean {
     return true;
   }
   for (const key of gone) rec.mark(cid(key), 'bad');
+  // With one key dropped, the loop's own variables are shown; with several, only the clock.
+  if (gone.length === 1) rec.vars({ ticks: n, now: s.now, key: gone[0], expires: s.cache.get(gone[0])!.expires });
   rec.line('expire_test', 'expire');
   rec.step(
     `${listOf(gone.map(String))} ${gone.length === 1 ? 'has' : 'have'} reached ${gone.length === 1 ? 'its' : 'their'} expiry time and ${gone.length === 1 ? 'is' : 'are'} dropped. The next read of ${gone.length === 1 ? 'it' : 'each'} misses and loads a fresh copy from the database.`,
@@ -489,6 +520,7 @@ export function tick(s: CacheState, k: number, rec: Rec): boolean {
     s.cache.delete(key);
     rec.unmark(cid(key));
   }
+  rec.vars({ ticks: n, now: s.now });
   rec.line('expire_scan');
   rec.step(`${plural(s.cache.size, 'entry', 'entries')} left in the cache. A TTL is how long you are willing to serve a value that might be out of date.`);
   return true;
@@ -498,6 +530,7 @@ export function tick(s: CacheState, k: number, rec: Rec): boolean {
 export function setStrategy(s: CacheState, raw: number | string, rec: Rec): boolean {
   begin(s);
   const next = parseStrategy(raw);
+  rec.vars({ strategy: next ?? String(raw) });
   rec.line('switch');
   if (!next) {
     rec.step(`Enter cache-aside, write-through, write-behind or write-around.`);
@@ -510,6 +543,7 @@ export function setStrategy(s: CacheState, raw: number | string, rec: Rec): bool
   }
   const was = s.strategy;
   s.strategy = next;
+  rec.vars({ strategy: next });
   rec.line('switch');
   rec.step((was === next ? `The strategy is already ${next}. ` : `From now on: ${next}. `) + STRATEGY_SAYS[next]);
   return true;
@@ -523,6 +557,7 @@ export function setStrategy(s: CacheState, raw: number | string, rec: Rec): bool
 export function race(s: CacheState, raw: number, rec: Rec): boolean {
   begin(s);
   const key = Math.floor(raw);
+  rec.vars({ key, entry: null });
   rec.line('lookup');
   if (!s.db.has(key)) {
     rec.step(`This page's database has four rows: ${keyList()}. Race on one of those.`);
@@ -547,6 +582,8 @@ export function race(s: CacheState, raw: number, rec: Rec): boolean {
   const old = { ...s.db.get(key)! };
   rec.count('reads');
   setNote(s, 'a', `has ${vv(old)}`);
+  // The variables are A's until B starts, then B's, then A's again.
+  rec.vars({ key, row: [old.value, old.version] });
   rec.mark(did(key), 'key');
   rec.line('miss', 'db_read');
   rec.step(`A reads the database and gets ${vv(old)}.`, { probe: atDb(key) });
@@ -563,12 +600,14 @@ export function race(s: CacheState, raw: number, rec: Rec): boolean {
   const fresh = (old.value + 10) % 1000;
   const version = dbWrite(s, key, fresh, rec);
   setNote(s, 'b', `wrote ${fresh} v${version}`);
+  rec.vars({ key, value: fresh, version });
   rec.mark(did(key), 'key');
   rec.line('aside_db', 'db_write');
   rec.step(`Meanwhile client B writes ${key} = ${fresh}, database first. The database now holds ${fresh} v${version}.`, { probe: atDb(key) });
   rec.mark(did(key), 'ok');
 
   rec.mark(cid(key), 'key');
+  rec.vars({ key, value: fresh });
   rec.line('aside_delete');
   rec.step(
     `B deletes ${key} from the cache, as cache-aside says. There is nothing to delete: A has not written its copy yet. B is finished and did everything right.`,
@@ -579,6 +618,8 @@ export function race(s: CacheState, raw: number, rec: Rec): boolean {
   rec.mark(clientId(A), 'path');
   const e = fill(s, key, old);
   setNote(s, 'a', `filled ${vv(old)}`);
+  const aFilled = filledVars(key, old, e.expires);
+  rec.vars(aFilled);
   rec.markCell(cid(key), 2, 'bad');
   rec.line('fill');
   rec.step(
@@ -591,6 +632,7 @@ export function race(s: CacheState, raw: number, rec: Rec): boolean {
   rec.count('stale');
   s.hits++;
   s.stale++;
+  rec.vars({ key, ...entryVars(e) });
   rec.line('lookup', 'hit');
   rec.compare(`cache v${old.version}`, '<', `db v${version}`, 'stale read', {
     probe: atCache(key),
@@ -598,6 +640,7 @@ export function race(s: CacheState, raw: number, rec: Rec): boolean {
   });
 
   rec.markCell(cid(key), 3, 'compare');
+  rec.vars(aFilled);
   rec.line('fill');
   rec.step(
     `What bounds it is the TTL set on this line. The entry expires at tick ${e.expires}, and the next read then loads ${fresh}. With no TTL it would stay wrong until the next write to ${key}.`,
@@ -605,11 +648,13 @@ export function race(s: CacheState, raw: number, rec: Rec): boolean {
   );
   rec.markCell(cid(key), 3, 'idle');
 
+  rec.vars({ key, value: fresh });
   rec.line('aside_delete');
   rec.step(
     `Why delete and not set? If writers set the cache, two of them could set it in the opposite order to their database writes, leaving the older value with no reader involved. A delete carries no value, so its order cannot matter.`,
     { probe: atCache(key) },
   );
+  rec.vars(aFilled);
   rec.line('fill');
   rec.step(
     `The fix is to make that late fill fail. Facebook's memcache gives a reader a lease on a miss and a delete cancels it, so A's fill is refused. Cost of this race: 1 miss, 1 database read, 1 database write, 1 stale read.`,
@@ -625,6 +670,7 @@ export function race(s: CacheState, raw: number, rec: Rec): boolean {
 export function stampede(s: CacheState, raw: number, rec: Rec): boolean {
   begin(s);
   const key = Math.floor(raw);
+  rec.vars({ key });
   rec.line('lookup');
   if (!s.db.has(key)) {
     rec.step(`This page's database has four rows: ${keyList()}. Pick one of those as the hot key.`);
@@ -640,6 +686,7 @@ export function stampede(s: CacheState, raw: number, rec: Rec): boolean {
   );
 
   // ---- without protection ----
+  rec.vars({ key, entry: null });
   for (const r of readers) {
     rec.mark(clientId(r), 'path');
     rec.mark(cid(key), 'compare');
@@ -651,11 +698,12 @@ export function stampede(s: CacheState, raw: number, rec: Rec): boolean {
   rec.mark(cid(key), 'bad');
   for (const r of readers) r.note = 'reading db';
   rec.count('reads', READERS);
+  rec.vars({ key, row: [row.value, row.version] });
   rec.mark(did(key), 'key');
   rec.line('miss', 'db_read');
   rec.step(`All ${READERS} go to the database for the same row at the same moment: ${READERS} database reads for one value.`, { probe: atDb(key) });
   rec.unmark(did(key));
-  fill(s, key, row);
+  rec.vars(filledVars(key, row, fill(s, key, row).expires));
   for (const r of readers) r.note = `has ${row.value}`;
   rec.mark(cid(key), 'key');
   rec.line('fill');
@@ -671,10 +719,12 @@ export function stampede(s: CacheState, raw: number, rec: Rec): boolean {
   }
   s.cache.delete(key);
   rec.unmark(cid(key));
+  rec.vars({ key });
   rec.line('first');
   rec.step(`Now the same moment again, with a lock per key. The entry expires again and the same ${READERS} requests arrive.`, { probe: atCache(key) });
   const [first, ...rest] = readers;
   rec.mark(clientId(first), 'path');
+  rec.vars({ key, entry: null });
   rec.mark(cid(key), 'compare');
   rec.compare(`cache[${key}]`, '=', 'none', `${first.name} misses`, { probe: atCache(key), message: `${first.name} looks in the cache: a miss.` });
   rec.count('misses');
@@ -700,12 +750,14 @@ export function stampede(s: CacheState, raw: number, rec: Rec): boolean {
     message: `${first.name} looks once more now that it holds the lock. Still empty, so it loads.`,
   });
   rec.count('reads');
+  rec.vars({ key, row: [row.value, row.version] });
   rec.mark(cid(key), 'bad');
   rec.mark(did(key), 'key');
   rec.line('load', 'db_read');
   rec.step(`${first.name} reads the database: 1 read, ${vv(row)}.`, { probe: atDb(key) });
   rec.unmark(did(key));
-  fill(s, key, row);
+  const filled = fill(s, key, row);
+  rec.vars(filledVars(key, row, filled.expires));
   s.lock = null;
   first.note = `has ${row.value}`;
   rec.mark(cid(key), 'key');
@@ -713,6 +765,7 @@ export function stampede(s: CacheState, raw: number, rec: Rec): boolean {
   rec.line('fill');
   rec.step(`${first.name} fills the cache and releases the lock.`, { probe: atCache(key) });
 
+  rec.vars({ key, ...entryVars(filled) });
   for (const r of rest) {
     rec.unmark(clientId(r));
     rec.mark(clientId(r), 'path');

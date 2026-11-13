@@ -337,6 +337,8 @@ export class CodePanel {
   private live: string[] = [];
   private empty = 'Run an operation to see the code for it here.';
   private note: string | null = null;
+  private readonly strips: HTMLElement[] = [];
+  private lastVars = new Map<string, string>();
 
   constructor() {
     const header = () => {
@@ -348,8 +350,13 @@ export class CodePanel {
       }
       return h('div.code-head', null, h('span.code-title', null, 'Code'), switcher);
     };
-    this.root = h('div.code-panel', null, header(), this.full.root);
-    this.windowRoot = h('div.code-window', null, header(), this.window.root);
+    const strip = () => {
+      const e = h('div.code-vars', { hidden: true, role: 'group', 'aria-label': 'Variables at this step' });
+      this.strips.push(e);
+      return e;
+    };
+    this.root = h('div.code-panel', null, header(), strip(), this.full.root);
+    this.windowRoot = h('div.code-window', null, header(), strip(), this.window.root);
     this.render();
   }
 
@@ -364,6 +371,29 @@ export class CodePanel {
     if (opts.empty) this.empty = opts.empty;
     this.note = opts.rest ? 'The lines for each step light up as it plays.' : null;
     this.render();
+  }
+
+  /**
+   * The listing's variables at this step, as a strip of name = value pairs under the header. A value that differs from
+   * the step before is marked, so the eye finds what just changed. No variables: the strip is hidden.
+   */
+  showVars(vars: [string, string][] | undefined): void {
+    const prev = this.lastVars;
+    const next = new Map(vars ?? []);
+    for (const e of this.strips) {
+      e.hidden = !vars?.length;
+      e.replaceChildren(
+        ...(vars?.length
+          ? [
+              h('span.code-vars-title', null, 'Variables'),
+              h('dl', null, vars.map(([k, v]) => h('div', prev.size && prev.get(k) !== v ? { class: 'changed' } : null, h('dt', null, k), h('dd', null, v)))),
+            ]
+          : []),
+      );
+    }
+    // The "more above" control sits in the header row: tell it how far up that is now that the strip is in between.
+    for (const e of this.strips) e.parentElement?.style.setProperty('--vars-h', e.hidden ? '0px' : `${e.offsetHeight}px`);
+    this.lastVars = next;
   }
 
   /** Highlight the lines that carry any of these anchors, following them over `ms`. */

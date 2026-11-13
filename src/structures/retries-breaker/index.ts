@@ -152,6 +152,9 @@ const ticks = (n: number) => `${n} ${n === 1 ? 'tick' : 'ticks'}`;
 const tokenText = (tenths: number) => (tenths / 10).toFixed(1);
 const list = (items: string[]) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
 const policyName = (p: number) => POLICY_LABEL[p].toLowerCase();
+/** For the Variables strip: a string as the listing holds it, and a policy as its constant's name. */
+const q = (x: string) => `"${x}"`;
+const P = (p: number) => POLICIES[p].toUpperCase();
 
 // ---- the page's own bookkeeping ---------------------------------------------
 
@@ -220,6 +223,7 @@ function breakerFailure(s: RBState, c: Client, ctx: Ctx, probe: Probe): void {
   if (c.state === 'half-open') {
     tripBreaker(s, c);
     if (loud) {
+      ctx.rec.vars({ now: s.now, 'self.state': q(c.state), 'self.open_until': c.openUntil });
       ctx.rec.line('failed', 'reopen');
       ctx.rec.step(`The probe failed, so ${c.name}'s breaker opens again, until tick ${c.openUntil}. The downstream is still not ready, and it was asked only once to find that out.`, { probe });
     }
@@ -231,6 +235,7 @@ function breakerFailure(s: RBState, c: Client, ctx: Ctx, probe: Probe): void {
   const trips = n >= THRESHOLD;
   if (loud) {
     ctx.rec.markCell(`c${c.name}`, 2, 'compare');
+    ctx.rec.vars({ now: s.now, 'self.failures': [...c.failures], 'len(self.failures)': n, THRESHOLD });
     ctx.rec.line('failed', 'count', 'threshold');
     ctx.rec.compare(`${c.name} failures ${n}`, trips ? '≥' : '<', `threshold ${THRESHOLD}`, trips ? 'open the breaker' : 'stay closed', {
       probe,
@@ -244,6 +249,7 @@ function breakerFailure(s: RBState, c: Client, ctx: Ctx, probe: Probe): void {
     tripBreaker(s, c);
     if (loud) {
       ctx.rec.markCell(`c${c.name}`, 1, 'bad');
+      ctx.rec.vars({ now: s.now, 'self.state': q(c.state), 'self.open_until': c.openUntil });
       ctx.rec.line('trip');
       ctx.rec.step(`${c.name}'s breaker is open until tick ${c.openUntil}. For ${ticks(OPEN_FOR)} its calls fail fast, without touching the downstream, which gets room to recover.`, { probe });
       ctx.rec.markCell(`c${c.name}`, 1, 'idle');
@@ -257,6 +263,7 @@ function breakerFailure(s: RBState, c: Client, ctx: Ctx, probe: Probe): void {
 function backoff(s: RBState, n: number, policy: number, ctx: Ctx, loud: boolean, probe: Probe): number {
   if (policy === IMMEDIATE) {
     if (loud) {
+      ctx.rec.vars({ n, policy: P(policy) });
       ctx.rec.line('delay', 'immediate');
       ctx.rec.step(`Immediate retry: no wait at all. On this clock the soonest is the next tick, so every client that failed now retries together.`, { probe });
     }
@@ -264,6 +271,7 @@ function backoff(s: RBState, n: number, policy: number, ctx: Ctx, loud: boolean,
   }
   if (policy === FIXED) {
     if (loud) {
+      ctx.rec.vars({ n, policy: P(policy), FIXED_DELAY });
       ctx.rec.line('delay', 'fixed');
       ctx.rec.step(`Fixed delay: wait ${ticks(FIXED_DELAY)}, every time. Clients that failed together stay together.`, { probe });
     }
@@ -272,6 +280,7 @@ function backoff(s: RBState, n: number, policy: number, ctx: Ctx, loud: boolean,
   const raw = BASE * 2 ** n;
   const capped = Math.min(CAP, raw);
   if (loud) {
+    ctx.rec.vars({ n, policy: P(policy), 'BASE * 2 ** n': raw, CAP, delay: capped });
     ctx.rec.line('delay', 'exp');
     ctx.rec.compare(`${BASE} × 2^${n} = ${raw}`, raw > CAP ? '>' : '≤', `cap ${CAP}`, raw > CAP ? `cap it: ${CAP} ticks` : `${raw} ticks`, {
       probe,
@@ -284,6 +293,7 @@ function backoff(s: RBState, n: number, policy: number, ctx: Ctx, loud: boolean,
   if (policy !== JITTER) return capped;
   const d = 1 + Math.floor(nextRandom(s) * capped);
   if (loud) {
+    ctx.rec.vars({ n, policy: P(policy), 'BASE * 2 ** n': raw, CAP, delay: d });
     ctx.rec.line('jitter');
     ctx.rec.step(`Full jitter: draw a random wait from 1 to ${capped} ticks. The draw is ${d}. Clients that failed together now come back apart.`, { probe });
   }
@@ -294,10 +304,13 @@ function backoff(s: RBState, n: number, policy: number, ctx: Ctx, loud: boolean,
 function planRetry(s: RBState, c: Client, ctx: Ctx, probe: Probe): void {
   const ch = c.chain!;
   const loud = isLoud(ctx, c);
+  // The attempt just recorded is the newest mark: its result is the error being handled.
+  const error = loud ? q(c.marks[c.marks.length - 1]?.result ?? '') : '';
   if (ch.policy === NONE || ch.attempt >= MAX_ATTEMPTS) {
     c.chain = null;
     ctx.gaveUp++;
     if (loud) {
+      ctx.rec.vars({ now: s.now, error, 'chain.policy': P(ch.policy), 'chain.attempt': ch.attempt });
       ctx.rec.line('give_up_check', 'give_up');
       if (ch.policy === NONE) ctx.rec.step(ch.policy === s.policy ? `The policy is no retries, so ${c.name} gives up and its caller gets the error.` : `This call was made without retries, so it ends here with the error.`, { probe });
       else ctx.rec.compare(`attempt ${ch.attempt}`, '≥', `max ${MAX_ATTEMPTS}`, 'give up', { probe, message: `${c.name} has made ${MAX_ATTEMPTS} attempts, the most its policy allows. It gives up and its caller gets the error.` });
@@ -309,6 +322,7 @@ function planRetry(s: RBState, c: Client, ctx: Ctx, probe: Probe): void {
   if (ch.deadline !== null) {
     const late = at > ch.deadline;
     if (loud) {
+      ctx.rec.vars({ now: s.now, error, 'chain.attempt': ch.attempt, delay, 'chain.deadline': ch.deadline });
       ctx.rec.line('deadline');
       ctx.rec.compare(`${s.now} + ${delay} = ${at}`, late ? '>' : '≤', `deadline ${ch.deadline}`, late ? 'stop now' : 'in time, go on', {
         probe,
@@ -331,6 +345,7 @@ function planRetry(s: RBState, c: Client, ctx: Ctx, probe: Probe): void {
     const enough = c.tokens >= COST;
     if (loud) {
       ctx.rec.markCell(`c${c.name}`, 3, 'compare');
+      ctx.rec.vars({ 'self.tenths': c.tokens, COST });
       ctx.rec.line('budget');
       ctx.rec.compare(`${c.name} tokens ${tokenText(c.tokens)}`, enough ? '≥' : '<', `cost ${tokenText(COST)}`, enough ? 'spend one, retry' : 'no retry', {
         probe,
@@ -356,6 +371,7 @@ function planRetry(s: RBState, c: Client, ctx: Ctx, probe: Probe): void {
   if (loud) {
     const next: Probe = { text: `${c.name}${ch.attempt + 1}`, at: markId(c.name, at) };
     ctx.rec.unmark(markId(c.name, s.now));
+    ctx.rec.vars({ now: s.now, 'chain.attempt': ch.attempt, delay, 'chain.due': at, 'budget.tenths': c.tokens ?? undefined });
     ctx.rec.line(c.tokens !== null ? 'spend' : 'schedule', 'schedule');
     ctx.rec.step(`${c.name}${ch.attempt + 1} is due at tick ${at}.` + (c.tokens !== null ? ` One token spent, ${tokenText(c.tokens)} left.` : ``), { probe: next });
   }
@@ -384,6 +400,7 @@ function attempt(s: RBState, c: Client, ctx: Ctx, first: boolean): Result {
     if (loud) {
       ctx.rec.mark(id, 'key');
       ctx.rec.markCell(`c${c.name}`, 1, 'compare');
+      ctx.rec.vars({ now: s.now, 'breaker.state': q(c.state), 'breaker.open_until': c.openUntil, result: 'FAST' });
       ctx.rec.line(...lead, 'allow', 'fast');
       ctx.rec.compare(`tick ${s.now}`, '<', `open to ${c.openUntil}`, 'fail fast, send nothing', {
         probe,
@@ -406,11 +423,14 @@ function attempt(s: RBState, c: Client, ctx: Ctx, first: boolean): Result {
 
   if (loud) {
     ctx.rec.mark(id, 'key');
+    const bstate = guarded ? q(c.state) : undefined;
+    ctx.rec.vars({ now: s.now, 'chain.attempt': n, 'breaker.state': bstate, 'load[now]': load });
     ctx.rec.line(...lead, ...(first ? [] : ['fire']), 'allow', 'send', 'arrive');
     const why = guarded ? (c.state === 'half-open' ? `${c.name}'s breaker is half-open, so this request is the probe: the one call let through to test the downstream. ` : `${c.name}'s breaker is closed, so it goes out. `) : ``;
     ctx.rec.step(`${why}${c.name}${n} reaches the downstream at tick ${s.now}. That is ${load} ${load === 1 ? 'request' : 'requests'} it has received this tick.`, { probe });
     if (s.health === 'recovering') {
       ctx.rec.mark(loadId(s.now), 'compare');
+      ctx.rec.vars({ now: s.now, 'chain.attempt': n, 'load[now]': load, CAPACITY, result: q(result) });
       ctx.rec.line(result === 'ok' ? 'capacity' : 'shed');
       ctx.rec.compare(`tick ${s.now} load ${load}`, load <= CAPACITY ? '≤' : '>', `capacity ${CAPACITY}`, result === 'ok' ? 'served' : 'shed with 503', {
         probe,
@@ -421,6 +441,7 @@ function attempt(s: RBState, c: Client, ctx: Ctx, first: boolean): Result {
       });
       ctx.rec.unmark(loadId(s.now));
     } else {
+      ctx.rec.vars({ now: s.now, 'chain.attempt': n, 'self.health': q(s.health), result: q(result) });
       ctx.rec.line('outcome');
       ctx.rec.step(
         s.health === 'healthy'
@@ -442,6 +463,7 @@ function attempt(s: RBState, c: Client, ctx: Ctx, first: boolean): Result {
       c.failures = [];
     }
     if (loud) {
+      ctx.rec.vars({ now: s.now, 'chain.attempt': n, result: q(result), 'breaker.state': guarded ? q(c.state) : undefined });
       ctx.rec.line('result', 'ok', ...(closing ? ['close'] : []));
       ctx.rec.step(
         closing
@@ -466,6 +488,7 @@ function startCall(s: RBState, c: Client, policy: number, guarded: boolean, ctx:
   if (loud) {
     const probe: Probe = { text: `${c.name}1`, at: markId(c.name, s.now) };
     ctx.rec.mark(markId(c.name, s.now), 'key');
+    ctx.rec.vars({ now: s.now, policy: P(policy), guarded, limit: c.chain.deadline, 'budget.tenths': c.tokens ?? undefined });
     ctx.rec.line(...lead, 'call', ...(c.tokens !== null ? ['deposit', 'earn'] : []));
     ctx.rec.step(
       `${c.name} calls the downstream at tick ${s.now}. ${c.name}1 is its first attempt` +
@@ -511,16 +534,19 @@ function advance(s: RBState, ctx: Ctx, lead: string[]): void {
   ensureView(s);
   if (event === 'overload') {
     ctx.rec.mark(loadId(was), 'bad');
+    ctx.rec.vars({ now: was, 'load[now]': s.load[was], CAPACITY, 'self.calm': 0 });
     ctx.rec.line(...lead, 'end_tick', 'overload');
     ctx.rec.step(`Tick ${was} sent the recovering downstream ${s.load[was]} requests, more than the ${CAPACITY} it can serve. Its count of calm ticks starts again from 0: retries arriving together are keeping it down.`);
     ctx.rec.unmark(loadId(was));
   } else if (event === 'healed') {
+    ctx.rec.vars({ now: was, 'load[now]': s.load[was] ?? 0, CAPACITY, 'self.calm': CALM_TICKS, 'self.health': q(s.health) });
     ctx.rec.line(...lead, 'end_tick', 'healed');
     ctx.rec.step(`The downstream has stayed within its capacity for ${CALM_TICKS} ticks in a row. From tick ${s.now} it is healthy again.`);
   }
   for (const c of opened) {
     if (!isLoud(ctx, c)) continue;
     ctx.rec.markCell(`c${c.name}`, 1, 'compare');
+    ctx.rec.vars({ now: s.now, 'self.open_until': c.openUntil, 'self.state': q(c.state) });
     ctx.rec.line(...lead, 'breakers', 'wait', 'half_open');
     ctx.rec.step(`Tick ${s.now} has reached ${c.name}'s open-until time, so its breaker goes half-open. The next call will be let through as a probe; any others wait for its answer.`);
     ctx.rec.markCell(`c${c.name}`, 1, 'idle');
@@ -570,6 +596,7 @@ function summarise(s: RBState, ctx: Ctx, done: { c: Client; n: number; r: Result
   ].filter(Boolean);
   for (const d of done) ctx.rec.mark(markId(d.c.name, s.now), 'path');
   ctx.rec.mark(markId(first.c.name, s.now), 'key');
+  ctx.rec.vars({ 'self.now': s.now, 'load[now]': load, CAPACITY: compares ? CAPACITY : undefined });
   if (compares) {
     const over = load > CAPACITY;
     ctx.rec.mark(loadId(s.now), 'compare');
@@ -590,6 +617,7 @@ function newCtx(rec: Rec, loud: Ctx['loud']): Ctx {
 // ---- operations ---------------------------------------------------------------
 
 export function call(s: RBState, who: number | string, rec: Rec): Result | null {
+  rec.vars();
   const c = clientOf(s, who);
   if (!c) {
     rec.line('call');
@@ -612,6 +640,7 @@ export function call(s: RBState, who: number | string, rec: Rec): Result | null 
 
 /** Advance the clock by k ticks, firing whatever is due. Returns false at the page's clock limit. */
 export function tick(s: RBState, k: number, rec: Rec): boolean {
+  rec.vars({ 'self.now': s.now });
   if (s.now + k > MAX_TICK) {
     rec.line('clock');
     rec.step(`Sorry, this page's clock stops at tick ${MAX_TICK} so the numbers stay readable, and it reads ${s.now}. Use Reset to start again from tick 0.`);
@@ -623,12 +652,14 @@ export function tick(s: RBState, k: number, rec: Rec): boolean {
     advance(s, ctx, []);
     const due = dueNow(s);
     if (due.length) {
+      rec.vars({ 'self.now': s.now });
       rec.line('clock', 'due');
       rec.step(`The clock moves to tick ${s.now}. Due now: ${list(due.map((c) => `${c.name}${c.chain!.attempt + 1}`))}.`);
       fireDue(s, ctx, []);
     }
   }
   const waiting = s.clients.filter((c) => c.chain?.due != null).map((c) => `${c.name}${c.chain!.attempt + 1} at tick ${c.chain!.due}`);
+  rec.vars({ 'self.now': s.now });
   rec.line('clock');
   rec.step(
     `The clock reads tick ${s.now}${k > 1 ? `, ${ticks(k)} after ${from}` : ``}. ` +
@@ -645,6 +676,7 @@ const HEALTH_TEXT: Record<Health, string> = {
 };
 
 export function setDownstream(s: RBState, h: Health, rec: Rec): void {
+  rec.vars({ health: q(h) });
   rec.line('health');
   if (s.health === h) {
     rec.step(`The downstream is already ${h}. Nothing changes.`);
@@ -661,6 +693,7 @@ export function setDownstream(s: RBState, h: Health, rec: Rec): void {
 /** Room on the clock for an operation that may run this many ticks. */
 function room(s: RBState, need: number, rec: Rec, line: string): boolean {
   if (s.now + need <= MAX_TICK) return true;
+  rec.vars({ 'self.now': s.now });
   rec.line(line);
   rec.step(`Sorry, this needs up to ${need} more ticks and the page's clock stops at ${MAX_TICK}. Use Reset to start again from tick 0.`);
   return false;
@@ -668,6 +701,7 @@ function room(s: RBState, need: number, rec: Rec, line: string): boolean {
 
 export function storm(s: RBState, raw: number | string, rec: Rec): void {
   const policy = policyOf(raw);
+  rec.vars();
   if (policy === null) {
     rec.line('storm_drop');
     rec.step(`Choose a retry policy for the storm: none, immediate, fixed, exponential or jitter.`);
@@ -680,6 +714,7 @@ export function storm(s: RBState, raw: number | string, rec: Rec): void {
   advance(s, newCtx(rec, null), []);
   setView(s, s.now);
   const start = s.now;
+  rec.vars({ policy: P(policy), 'self.now': s.now });
   rec.line('storm_drop');
   rec.step(
     `A storm with ${policyName(policy)}. At tick ${start} all four clients call, just as the downstream fails. ` +
@@ -688,6 +723,7 @@ export function storm(s: RBState, raw: number | string, rec: Rec): void {
       ` Follow A; the others are summed up each tick.`,
   );
   setHealth(s, 'failing');
+  rec.vars({ policy: P(policy), 'self.now': s.now, start, health: q(s.health) });
   rec.line('storm_fail', 'health');
   rec.step(`The downstream fails at tick ${start}. It will come back at tick ${start + DOWN_FOR}, able to serve only ${CAPACITY} requests a tick while it warms up.`);
 
@@ -707,11 +743,13 @@ export function storm(s: RBState, raw: number | string, rec: Rec): void {
     advance(s, ctx, ['storm_tick']);
     if (s.now === start + DOWN_FOR) {
       setHealth(s, 'recovering');
+      rec.vars({ policy: P(policy), 'self.now': s.now, start, health: q(s.health) });
       rec.line('storm_recover', 'health');
       rec.step(`Tick ${s.now}: the downstream is back, recovering. It can serve ${CAPACITY} requests a tick and sheds the rest with 503.`);
     }
     const due = dueNow(s);
     if (!due.length) continue;
+    rec.vars({ policy: P(policy), 'self.now': s.now, start });
     rec.line('storm_tick', 'clock', 'due');
     rec.step(`Tick ${s.now}. Due now: ${list(due.map((c) => `${c.name}${c.chain!.attempt + 1}`))}.`);
     fireDue(s, ctx, ['storm_fire']);
@@ -720,6 +758,7 @@ export function storm(s: RBState, raw: number | string, rec: Rec): void {
   const reached = since(s.load, start).reduce((sum, [, n]) => sum + n, 0);
   const shed = since(s.shed, start).reduce((sum, [, n]) => sum + n, 0);
   const later = Math.max(0, ...since(s.load, start + 1).map(([, n]) => n));
+  rec.vars({ policy: P(policy), 'self.now': s.now, start });
   rec.line('storm_loop');
   rec.step(
     `Storm over at tick ${s.now}, ${ticks(s.now - start)} after it began. 4 calls sent ${reached} requests to the downstream, ${(reached / 4).toFixed(1)} per call. ` +
@@ -728,6 +767,7 @@ export function storm(s: RBState, raw: number | string, rec: Rec): void {
 }
 
 export function trip(s: RBState, who: number | string, rec: Rec): void {
+  rec.vars();
   const c = clientOf(s, who);
   if (!c) {
     rec.line('trip_loop');
@@ -735,6 +775,7 @@ export function trip(s: RBState, who: number | string, rec: Rec): void {
     return;
   }
   if (!s.breakerOn) {
+    rec.vars({ client: c.name, 'b.enabled': false });
     rec.line('no_breaker');
     rec.step(`The breakers are switched off on this page, so there is nothing to trip: every call goes out, however long the downstream has been failing. Turn Breaker on to see it.`);
     return;
@@ -754,12 +795,15 @@ export function trip(s: RBState, who: number | string, rec: Rec): void {
   step('trip_tick');
   if (c.state === 'closed' && (s.health === 'healthy' || s.health === 'recovering')) {
     setHealth(s, 'failing');
+    rec.vars({ client: c.name, 'b.state': q(c.state), 'self.now': s.now, health: q(s.health) });
     rec.line('trip_fail', 'health');
     rec.step(`For failures to pile up the downstream must be failing, so it fails now, at tick ${s.now}. ${c.name} calls once a tick with no retries, so the failures are easy to count.`);
   } else if (c.state === 'closed') {
+    rec.vars({ client: c.name, 'b.state': q(c.state), 'self.now': s.now });
     rec.line('trip_loop');
     rec.step(`The downstream is ${s.health}. ${c.name} calls once a tick with no retries, so the failures are easy to count.`);
   } else {
+    rec.vars({ client: c.name, 'b.state': q(c.state), 'self.now': s.now });
     rec.line('trip_loop');
     rec.step(`${c.name}'s breaker is ${c.state} and the downstream is ${s.health}. ${c.name} calls once a tick with no retries until the next probe.`);
   }
@@ -774,6 +818,7 @@ export function trip(s: RBState, who: number | string, rec: Rec): void {
   }
   startCall(s, c, NONE, true, ctx, ['trip_probe']);
   const closed = (c.state as BState) === 'closed';
+  rec.vars({ client: c.name, 'b.state': q(c.state), 'self.now': s.now });
   rec.line('trip_probe');
   rec.step(
     closed
@@ -783,6 +828,7 @@ export function trip(s: RBState, who: number | string, rec: Rec): void {
 }
 
 export function budget(s: RBState, deadline: number, rec: Rec): void {
+  rec.vars({ deadline });
   if (!Number.isInteger(deadline) || deadline < 0 || deadline > 20) {
     rec.line('budget_on');
     rec.step(`Give a deadline from 1 to 20 ticks, or 0 to turn deadlines and retry budgets off.`);
@@ -805,12 +851,14 @@ export function budget(s: RBState, deadline: number, rec: Rec): void {
   const ctx = newCtx(rec, c.name);
   s.deadline = deadline;
   for (const x of s.clients) x.tokens = BUDGET_CAP;
+  rec.vars({ client: c.name, deadline, 'c.deadline': deadline, 'c.budget.tenths': BUDGET_CAP });
   rec.line('budget_on');
   rec.step(
     `From now on every call carries a deadline: its caller waits ${ticks(deadline)} at most. And every client has a retry budget, a token bucket: a call earns 0.2 tokens, a retry costs 1, and at most ${tokenText(BUDGET_CAP)} are saved. Each starts full.`,
   );
   if (s.health === 'healthy' || s.health === 'recovering') {
     setHealth(s, 'slow');
+    rec.vars({ client: c.name, deadline, health: q(s.health) });
     rec.line('budget_slow', 'health');
     rec.step(`To have something to retry, the downstream turns slow: every attempt times out.`);
   }
@@ -819,12 +867,14 @@ export function budget(s: RBState, deadline: number, rec: Rec): void {
     advance(s, ctx, ['budget_wait']);
     if (dueNow(s).length) fireDue(s, ctx, ['budget_wait']);
   }
+  rec.vars({ client: c.name, deadline, 'client.chain': null, 'self.now': s.now });
   rec.line('budget_wait');
   rec.step(`${c.name}'s call is over at tick ${s.now}. Without a deadline or a budget it could have made ${MAX_ATTEMPTS} attempts. Budget 0 turns both off again.`);
 }
 
 export function reset(s: RBState, rec: Rec): void {
   Object.assign(s, create(s.policy, s.breakerOn));
+  rec.vars({ policy: P(s.policy), 'self.now': s.now });
   rec.line('reset');
   rec.step(`Reset: clock at tick 0, the downstream healthy, every breaker closed, no deadlines or budgets.`);
 }

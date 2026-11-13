@@ -119,6 +119,13 @@ const same = (a: Pair, b: Pair) => a.key === b.key && tag(a) === tag(b);
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const list = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 
+/** A pair as the listing's tuple: (reducer, user, 1) for a count, (reducer, user, tag, value) for a join. */
+function tup(p: Pair): string {
+  if (p.kind === 'one') return `(${p.part}, ${p.key}, 1)`;
+  if (p.kind === 'click') return `(${p.part}, ${p.key}, 1, "")`;
+  return `(${p.part}, ${p.key}, 0, "${p.value}")`;
+}
+
 export const bid = (b: number) => `b${b}`;
 export const USERS_ID = 'users';
 export const mid = (i: number) => `m${i}`;
@@ -169,6 +176,7 @@ function begin(s: MRState, job: Job): void {
 /** The step for a user with no clicks: nothing to follow, and nothing changes. */
 function noClicks(s: MRState, user: number, rec: Rec): void {
   const present = [...new Set(s.blocks.flat())].sort((a, b) => a - b).map(who);
+  rec.vars();
   rec.line('job');
   rec.step(`${who(user)} made no clicks in this input, so there is no record of theirs to follow. Users with clicks: ${list(present)}.`);
 }
@@ -197,6 +205,7 @@ function partitionAll(s: MRState, name: string, rec: Rec, chip: () => Probe, ext
   }
   const p = followed!;
   const h = hashKey(p.key);
+  rec.vars({ key: p.key, h, reducers: s.reducers, 'h % reducers': p.part });
   rec.compare(`h(${name}) mod ${s.reducers}`, '=', `R${p.part}`, `send to reducer ${p.part}`, {
     probe: chip(),
     message:
@@ -246,6 +255,7 @@ function mergeReducer(s: MRState, r: number, rec: Rec, chip: () => Probe, show: 
         b.tone = 'compare';
         const eq = same(a, b);
         rec.line(...(lt ? ['cmp', 'new_best'] : ['cmp']));
+        rec.vars({ i, best, 'run[0]': tup(a), 'runs[best][0]': tup(b), 'len(out)': s.reds[r].length });
         const verdict = lt ? `M${a.from} has the smaller head` : eq ? `tie, keep M${b.from}, the earlier run` : `keep M${b.from}`;
         const why = lt
           ? a.key === b.key
@@ -273,6 +283,7 @@ function mergeReducer(s: MRState, r: number, rec: Rec, chip: () => Probe, show: 
     if (live) {
       if (p.id === s.follow) {
         rec.line('take');
+        rec.vars({ best, 'out[-1]': tup(p), 'len(out)': s.reds[r].length });
         rec.step(
           `${lead()}Take ${text(p)} from M${p.from}, the followed record: it is the smallest head left. It has crossed the network from map task ${p.from} to reducer ${r}. In the mapper it is greyed out: the copy there stays on local disk until the job ends.`,
           { probe: chip() },
@@ -287,6 +298,7 @@ function mergeReducer(s: MRState, r: number, rec: Rec, chip: () => Probe, show: 
 /** The shuffle: every reducer fetches and merges its share. The followed record's reducer is shown first and in full. */
 function shuffle(s: MRState, target: number, rec: Rec, chip: () => Probe, why: string): void {
   s.stage = 'shuffle';
+  rec.vars({ r: target });
   rec.line('fetch');
   rec.step(
     `Shuffle. Reducer ${target} fetches the pairs marked R${target} from every map task, and each other reducer does the same for its own. Every mapper sends to every reducer, over the network. ${why}`,
@@ -302,6 +314,7 @@ function shuffle(s: MRState, target: number, rec: Rec, chip: () => Probe, why: s
   }
   s.loads = s.reds.map((red) => red.length);
   const others = order.slice(1);
+  rec.vars({ 'len(out)': s.reds[target].length });
   rec.line('merged');
   rec.step(
     `Reducer ${target} has merged all ${plural(s.reds[target].length, 'record')} into one sorted list with ${plural(mine, 'comparison')}. ` +
@@ -321,12 +334,15 @@ export function count(s: MRState, user: number, rec: Rec): number | null {
     return null;
   }
   const name = who(user);
+  rec.vars();
   begin(s, 'count');
   const chip = (): Probe => {
     const w = locate(s, s.follow!);
     return w ? { text: name, ...w } : { text: name, at: bid(at.b), cell: at.i };
   };
+  const block = s.blocks[at.b];
   rec.markCell(bid(at.b), at.i, 'key');
+  rec.vars({ block });
   rec.line('job');
   rec.step(
     `Count clicks per user. The input is ${plural(clicks(s), 'click')} in ${BLOCKS} HDFS blocks, so the job runs ${BLOCKS} map tasks, one per block, and ${s.reducers} reduce tasks. Follow the click by ${name} in block ${at.b}.`,
@@ -336,6 +352,7 @@ export function count(s: MRState, user: number, rec: Rec): number | null {
   mapClicks(s, 'one', rec);
   s.follow = clickId(at.b, at.i);
   rec.markCell(bid(at.b), at.i, 'path');
+  rec.vars({ block, user });
   rec.line('read', 'emit');
   rec.step(
     `Map. Each map task reads its own block, on a machine that holds a copy, so the input does not cross the network. It turns every click into the pair (user, 1). Map ${at.b} emits (${name}, 1).`,
@@ -346,6 +363,7 @@ export function count(s: MRState, user: number, rec: Rec): number | null {
   const target = partitionAll(s, name, rec, chip);
 
   sortMaps(s);
+  rec.vars({ block, out: s.maps[at.b].map(tup) });
   rec.line('sort');
   rec.step(
     `Each map task sorts its pairs by reducer, then by key, and writes them to its own local disk, not to HDFS. They are temporary: if a mapper dies, its task is simply run again.`,
@@ -355,6 +373,7 @@ export function count(s: MRState, user: number, rec: Rec): number | null {
   shuffle(s, target, rec, chip, `This is the expensive part of a job: all ${plural(clicks(s), 'pair')} are written to disk, sent and merged.`);
 
   // Reduce: one pass over each merged list, adding while the key stays the same.
+  rec.vars({ r: target });
   rec.line('group');
   rec.step(
     `Reduce. Each reducer walks its merged list once. Equal keys sit next to each other, so a running total only needs the key before it: no hash table, and memory stays small however large the input.`,
@@ -371,6 +390,7 @@ export function count(s: MRState, user: number, rec: Rec): number | null {
         if (shown) {
           p.tone = 'compare';
           rec.line('same', eq ? 'sum' : 'new_key');
+          rec.vars({ key: p.key, one: 1, 'totals[-1]': [last.key, Number(last.value)] });
           rec.compare(`key ${who(p.key)}`, eq ? '=' : '≠', `last ${who(last.key)}`, eq ? `add 1, ${name} is now ${Number(last.value) + 1}` : `start a total for ${name}`, {
             probe: chip(),
             message: eq
@@ -386,6 +406,7 @@ export function count(s: MRState, user: number, rec: Rec): number | null {
       } else if (shown) {
         p.tone = 'path';
         rec.line('new_key');
+        rec.vars({ key: p.key, one: 1, totals: [] });
         rec.step(`${text(p)} is the first pair in reducer ${r}'s list, so there is nothing to compare it with: ${name} starts at 1.`, { probe: chip() });
       }
       totals.push({ id: `t${p.key}`, kind: 'total', key: p.key, value: '1', part: r, from: -1, fetched: false });
@@ -400,6 +421,7 @@ export function count(s: MRState, user: number, rec: Rec): number | null {
   const mineTotal = s.reds[target].find((t) => t.key === user)!;
   s.follow = mineTotal.id;
   const files = Array.from({ length: s.reducers }, (_, j) => `part-r-0000${j}`);
+  rec.vars({ 'len(totals)': written, [`totals[${s.reds.flat().indexOf(mineTotal)}]`]: [user, Number(mineTotal.value)] });
   rec.line('write');
   rec.step(
     `Done: ${name} made ${plural(Number(mineTotal.value), 'click')}. Each reducer writes its totals to HDFS as one file (${list(files)}), ${written} totals in all. The job read ${plural(clicks(s), 'record')} and sent ${clicks(s)} pairs across the network. A combiner, summing on the map side first, would have sent fewer.`,
@@ -418,12 +440,15 @@ export function join(s: MRState, user: number, rec: Rec): string | null {
   }
   const name = who(user);
   const row = s.users.find(([k]) => k === user);
+  rec.vars();
   begin(s, 'join');
   const chip = (): Probe => {
     const w = locate(s, s.follow!);
     return w ? { text: name, ...w } : { text: name, at: bid(at.b), cell: at.i };
   };
+  const block = s.blocks[at.b];
   rec.markCell(bid(at.b), at.i, 'key');
+  rec.vars({ block });
   rec.line('job');
   rec.step(
     `Sort-merge join: attach each user's country to their clicks. Both inputs are large in principle, so neither is held in memory. The clicks are ${BLOCKS} blocks and the users table is one more, so ${BLOCKS + 1} map tasks. Follow the click by ${name} in block ${at.b}.`,
@@ -435,6 +460,7 @@ export function join(s: MRState, user: number, rec: Rec): string | null {
   rec.count('reads', s.users.length);
   s.follow = clickId(at.b, at.i);
   rec.markCell(bid(at.b), at.i, 'path');
+  rec.vars({ block, user });
   rec.line('read', 'emit', 'emit_user');
   rec.step(
     `Map. Both datasets are keyed by user id. A click becomes (${name}, c), and a user row becomes (user, country) with a tag that makes it sort before that user's clicks. Map ${at.b} emits (${name}, c).`,
@@ -451,11 +477,13 @@ export function join(s: MRState, user: number, rec: Rec): string | null {
   );
 
   sortMaps(s);
+  rec.vars({ block, out: s.maps[at.b].map(tup) });
   rec.line('sort');
   rec.step(`Each map task sorts its output by reducer, then by user, with user rows first, and writes it to local disk.`, { probe: chip() });
 
   shuffle(s, target, rec, chip, `Clicks and user rows travel alike: ${plural(clicks(s) + s.users.length, 'record')} in all.`);
 
+  rec.vars({ r: target });
   rec.line('group');
   rec.step(
     `Reduce. Reducer ${target} walks its merged list once. Because of the tag, a user's row arrives just before that user's clicks, so the reducer remembers one country at a time: the join needs memory for one row, not a table.`,
@@ -479,6 +507,7 @@ export function join(s: MRState, user: number, rec: Rec): string | null {
         if (shown) {
           p.tone = 'compare';
           rec.line('user_first', 'remember');
+          rec.vars({ key: p.key, tag: 0, value: p.value, current, country });
           rec.compare(`${name} group starts`, '=', 'user row', `remember ${p.value}`, {
             probe: chip(),
             message: `${name}'s group starts with the user row ${text(p)}. Keep its country, ${p.value}, for the clicks that follow.`,
@@ -490,6 +519,7 @@ export function join(s: MRState, user: number, rec: Rec): string | null {
         if (shown) {
           p.tone = 'compare';
           rec.line('match', 'drop');
+          rec.vars({ key: p.key, tag: 1, value: '', current, country });
           rec.compare(`${name} country`, '=', 'none', 'no user row, drop the click', {
             probe: chip(),
             message: `${text(p)} is a click, and no user row came before it, so there is no country for ${name}. An inner join drops the click. A left outer join would keep it with an empty country.`,
@@ -510,6 +540,7 @@ export function join(s: MRState, user: number, rec: Rec): string | null {
         if (shown) {
           p.tone = 'compare';
           rec.line('match', 'joined');
+          rec.vars({ key: p.key, tag: 1, value: '', current, country, 'joined[-1]': `(${j.key}, "${country}")` });
           rec.compare(`${name} country`, '=', country, `emit ${text(j)}`, {
             probe: chip(),
             message: `${text(p)} is a click and the country in hand is ${country}, so emit the joined row ${text(j)}.`,
@@ -528,6 +559,7 @@ export function join(s: MRState, user: number, rec: Rec): string | null {
   rec.count('written', written);
   s.follow = result ? `j${s.follow}` : null;
   const moved = clicks(s) + s.users.length;
+  rec.vars({ 'len(joined)': written });
   rec.line('write');
   rec.step(
     (result ? `Done: the click became ${result}. ` : `Done: ${name}'s click is not in the output, because the users table has no row for ${name}. `) +
@@ -546,9 +578,12 @@ export function broadcast(s: MRState, user: number, rec: Rec): string | null {
     return null;
   }
   const name = who(user);
+  rec.vars();
   begin(s, 'broadcast');
   const atInput: Probe = { text: name, at: bid(at.b), cell: at.i };
+  const shownTable = `{${s.users.map(([k, c]) => `${k}: "${c}"`).join(', ')}}`;
   rec.markCell(bid(at.b), at.i, 'key');
+  rec.vars({ block: s.blocks[at.b] });
   rec.line('job');
   rec.step(
     `Broadcast hash join: the same join, but the users table is small, ${plural(s.users.length, 'row')}. Send a copy of it to every map task instead of shuffling the clicks. Follow the click by ${name} in block ${at.b}.`,
@@ -560,6 +595,7 @@ export function broadcast(s: MRState, user: number, rec: Rec): string | null {
     s.maps[b] = s.users.map(([key, value]) => ({ id: `h${b}u${key}`, kind: 'user' as Kind, key, value, part: -1, from: b, fetched: false }));
     rec.count('reads', s.users.length);
   }
+  rec.vars({ block: s.blocks[at.b], table: shownTable });
   rec.line('load');
   rec.step(
     `Each of the ${BLOCKS} map tasks reads the whole users table into an in-memory hash table before it reads a single click. The table is read ${BLOCKS} times, ${BLOCKS * s.users.length} rows, which is cheap while it is small.`,
@@ -578,6 +614,7 @@ export function broadcast(s: MRState, user: number, rec: Rec): string | null {
       if (followed) {
         if (cell >= 0) s.maps[b][cell].tone = 'compare';
         rec.line('read', 'lookup');
+        rec.vars({ block: s.blocks[b], table: shownTable, user: key, country: country ?? null });
         rec.compare(name, country ? '=' : '≠', country ? `row ${who(key)} ${country}` : 'any row', country ? `emit ${name} ${country}` : 'no match, drop the click', {
           probe: country ? { text: name, at: mid(b), cell } : atInput,
           message: country
@@ -602,6 +639,7 @@ export function broadcast(s: MRState, user: number, rec: Rec): string | null {
         s.follow = j.id;
         rec.markCell(bid(b), i, 'path');
         rec.line('joined');
+        rec.vars({ block: s.blocks[b], table: shownTable, user: key, country, 'joined[-1]': `(${key}, "${country}")` });
         rec.step(`Map ${b} writes ${text(j)} straight to its output. The click never left the machine it was read on.`, { probe: { text: name, at: oid(b), cell: s.outs[b].length - 1 } });
         s.follow = null;
       }
@@ -614,6 +652,7 @@ export function broadcast(s: MRState, user: number, rec: Rec): string | null {
   rec.unmark(USERS_ID);
   if (result) s.follow = `j${clickId(at.b, at.i)}`;
   const where = result ? locate(s, s.follow!) : null;
+  rec.vars({ 'len(joined)': written });
   rec.line('write');
   rec.step(
     `Done: the same ${written} joined rows as the sort-merge join, ${plural(dropped, 'click')} dropped. A map-only job: no shuffle, no sort, no reducers, 0 records sent between machines. Each mapper writes its own file, part-m-00000 to 00002. It only works while the small side fits in every mapper's memory.`,
@@ -625,6 +664,7 @@ export function broadcast(s: MRState, user: number, rec: Rec): string | null {
 
 /** Load a skewed input where one user makes 7 of the 9 clicks, and show where the pairs of a count land. Returns the loads. */
 export function skew(s: MRState, hot: number, rec: Rec): number[] {
+  rec.vars();
   s.blocks = hotInput(hot);
   s.hot = hot;
   begin(s, 'skew');
@@ -635,6 +675,8 @@ export function skew(s: MRState, hot: number, rec: Rec): number[] {
     return w ? { text: name, ...w } : { text: name, at: bid(at.b), cell: at.i };
   };
   rec.markCell(bid(at.b), at.i, 'key');
+  const [a, b] = [2, 5, 4].filter((u) => u !== hot).slice(0, 2);
+  rec.vars({ hot, a, b });
   rec.line('hot');
   rec.step(
     `A skewed input: ${name} makes 7 of the 9 clicks. Real data often has keys like this: a crawler, a celebrity account, or an empty user id that every anonymous click shares. Run the count again and follow one of ${name}'s clicks.`,
@@ -656,6 +698,7 @@ export function skew(s: MRState, hot: number, rec: Rec): number[] {
     }
   }
   s.loads = s.reds.map((red) => red.length);
+  rec.vars({ loads: s.loads });
   rec.line('load_up');
   rec.step(
     `Shuffle. The pairs land at their reducers: ${s.loads.map((n, j) => `reducer ${j} gets ${n}`).join(', ')}. A key is never split, so all 7 of ${name}'s pairs pile up at reducer ${target}.`,
@@ -698,6 +741,7 @@ export function reset(s: MRState, rec: Rec): void {
   s.blocks = EVEN.map((b) => [...b]);
   s.hot = null;
   begin(s, 'none');
+  rec.vars({ blocks: s.blocks.map((b) => `[${b.join(', ')}]`) });
   rec.line('reset');
   rec.step(
     was === null

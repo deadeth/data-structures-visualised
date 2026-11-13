@@ -1,6 +1,6 @@
 import { CELL_H } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
-import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef } from '../../core/types';
+import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef, VarValue } from '../../core/types';
 import java from './code/ConsistentHashRing.java?raw';
 import python from './code/consistent_hash_ring.py?raw';
 import { info } from './info';
@@ -230,6 +230,7 @@ const formula = (key: number): string => `hash(${key}) = (${key} × 197 + 61) mo
 
 function begin(s: RingState, pos: number, rec: Rec): void {
   rec.clearMarks();
+  rec.vars();
   s.born = null;
   s.cursor = rec.recording ? pos : null;
 }
@@ -243,11 +244,19 @@ function end(s: RingState): void {
  * Find the point that owns `pos` the way a real client does: binary search over
  * the sorted list of points for the first one at or after the position.
  */
-function locate(s: RingState, pos: number, rec: Rec, probe: Probe): { point: Point; wrapped: boolean; comparisons: number } {
+function locate(
+  s: RingState,
+  pos: number,
+  rec: Rec,
+  probe: Probe,
+  outer: Record<string, VarValue> = {},
+): { point: Point; wrapped: boolean; comparisons: number; lo: number } {
   const live = livePoints(s);
   let lo = 0;
   let hi = live.length;
   let comparisons = 0;
+  // The caller's key stays on show while its search runs.
+  rec.vars({ ...outer, pos, lo, hi });
   rec.line('search');
   rec.step(
     `The client keeps the ${plural(live.length, 'point')} in a sorted list: ${live.map((p) => `${p.pos}°`).join(', ')}. It binary-searches that list for the first point at or after ${pos}°. No server is contacted yet.`,
@@ -259,6 +268,7 @@ function locate(s: RingState, pos: number, rec: Rec, probe: Probe): { point: Poi
     comparisons++;
     rec.count('reads');
     rec.mark(pid(p), 'compare');
+    rec.vars({ ...outer, pos, lo, hi, mid, 'points[mid].pos': p.pos });
     if (pos <= p.pos) {
       rec.line('compare', 'earlier');
       rec.compare(`h(${probe.text}) = ${pos}°`, '≤', `${p.pos}°`, `${p.server}'s point is at or after the key, so it could be the owner: look earlier for a closer one`, { probe });
@@ -275,8 +285,12 @@ function locate(s: RingState, pos: number, rec: Rec, probe: Probe): { point: Poi
   const point = wrapped ? live[0] : live[lo];
   for (const p of live) rec.unmark(pid(p));
   rec.mark(pid(point), 'ok');
-  return { point, wrapped, comparisons };
+  return { point, wrapped, comparisons, lo };
 }
+
+/** The caller's variables once the search has settled on a point. */
+const settledVars = (rec: Rec, key: number, pos: number, hit: { point: Point; lo: number }): void =>
+  rec.vars({ key, pos, lo: hit.lo, 'point.pos': hit.point.pos, 'point.server': hit.point.server });
 
 /** The line of the search that settled on the owner: the wrap to the first point, or the plain return. */
 const settled = (hit: { wrapped: boolean }): string => (hit.wrapped ? 'wrap' : 'owner');
@@ -294,12 +308,14 @@ export function lookup(s: RingState, key: number, rec: Rec): string {
   const probe: Probe = { text, at: CURSOR, place: outward(pos) };
   const stored = s.keys.has(key);
   if (stored) rec.mark(kid(key), 'key');
+  rec.vars({ key, pos });
   rec.line('hash');
   rec.step(
     `${formula(key)}, so key ${key} belongs at ${pos}° on the ring${stored ? '' : ' (it is not stored, but any key has a place)'}. Its server is the first point clockwise from there.`,
     { probe },
   );
-  const hit = locate(s, pos, rec, probe);
+  const hit = locate(s, pos, rec, probe, { key });
+  settledVars(rec, key, pos, hit);
   rec.line(settled(hit), 'found');
   rec.step(
     `${found(key, pos, hit)} The search took ${plural(hit.comparisons, 'comparison')} over ${plural(livePoints(s).length, 'point')}, all on the client, so the request goes straight to ${hit.point.server}.`,
@@ -314,6 +330,7 @@ export function put(s: RingState, key: number, rec: Rec): boolean {
   const pos = hashKey(key);
   const text = String(key);
   begin(s, pos, rec);
+  rec.vars({ key, pos });
   if (s.keys.has(key)) {
     rec.mark(kid(key), 'key');
     rec.line('duplicate');
@@ -334,7 +351,8 @@ export function put(s: RingState, key: number, rec: Rec): boolean {
     return false;
   }
   rec.step(`${formula(key)}, so key ${key} belongs at ${pos}° on the ring. Its server is the first point clockwise from there.`, { probe });
-  const hit = locate(s, pos, rec, probe);
+  const hit = locate(s, pos, rec, probe, { key });
+  settledVars(rec, key, pos, hit);
   s.keys.set(key, { pos, lane });
   if (rec.recording) s.born = key;
   rec.count('writes');
@@ -353,6 +371,7 @@ export function remove(s: RingState, key: number, rec: Rec): boolean {
   const pos = hashKey(key);
   const text = String(key);
   begin(s, pos, rec);
+  rec.vars({ key, pos });
   if (!s.keys.has(key)) {
     rec.line('hash', 'missing');
     rec.step(`${formula(key)}. No key ${key} is stored at ${pos}°, so there is nothing to delete.`, { probe: { text, at: CURSOR, place: outward(pos) } });
@@ -363,7 +382,8 @@ export function remove(s: RingState, key: number, rec: Rec): boolean {
   rec.mark(kid(key), 'key');
   rec.line('hash');
   rec.step(`${formula(key)}, so key ${key} sits at ${pos}° on the ring. Find its server the same way a read would.`, { probe });
-  const hit = locate(s, pos, rec, probe);
+  const hit = locate(s, pos, rec, probe, { key });
+  settledVars(rec, key, pos, hit);
   rec.mark(kid(key), 'bad');
   rec.line(settled(hit), 'route');
   rec.step(`${found(key, pos, hit)} Only ${hit.point.server} can hold it, so the delete goes there and nowhere else.`, { probe });
@@ -391,6 +411,7 @@ export function addServer(s: RingState, rec: Rec): { name: string; moved: number
   begin(s, 0, rec);
   s.cursor = null;
   if (s.servers.length >= MAX_SERVERS) {
+    rec.vars({ free: [] });
     rec.line('full');
     rec.step(`This drawing stops at ${MAX_SERVERS} servers. Remove one before adding another.`);
     return null;
@@ -402,6 +423,7 @@ export function addServer(s: RingState, rec: Rec): { name: string; moved: number
   const points = join(s, name, false);
   for (const p of points) rec.mark(pid(p), 'ok');
   rec.mark(tid(name), 'ok');
+  rec.vars({ name, spots: points.map((p) => p.pos) });
   rec.line('join');
   rec.step(
     `Server ${name} joins with ${plural(points.length, 'point')} at ${list(points.map((p) => `${p.pos}°`))}. A real ring gets these by hashing the server's name; this page uses a fixed table so the picture stays readable. No key has moved yet.`,
@@ -420,6 +442,10 @@ export function addServer(s: RingState, rec: Rec): { name: string; moved: number
     moved.push(...here);
     rec.count('moved', here.length);
     for (const k of moved) rec.mark(kid(k), 'ok');
+    if (rec.recording) {
+      const from = prev ? prev.pos : p.pos;
+      rec.vars({ name, pos: p.pos, loser, prev: from, arc: (p.pos - from + RING) % RING, moved: [...moved] });
+    }
     rec.line('take_arc', loser === name ? 'covered' : here.length ? 'move' : 'in_arc');
     rec.step(
       `${name}'s point at ${p.pos}° takes over the arc from ${prev ? prev.pos : p.pos}° round to ${p.pos}°` +
@@ -432,6 +458,7 @@ export function addServer(s: RingState, rec: Rec): { name: string; moved: number
 
   rec.clearMarks();
   const total = s.keys.size;
+  rec.vars({ name, moved: [...moved] });
   rec.line('done');
   rec.step(
     `${name} is in. ${moved.length} of ${plural(total, 'key')} moved, all to ${name}, and no key moved between the old servers.` +
@@ -445,12 +472,14 @@ export function removeServer(s: RingState, which: string, rec: Rec): { name: str
   begin(s, 0, rec);
   s.cursor = null;
   const name = String(which).trim().toUpperCase().charAt(0);
+  rec.vars({ name });
   if (!s.servers.includes(name)) {
     rec.line('unknown');
     rec.step(`There is no server called "${String(which).trim()}". The ring has ${list(s.servers)}.`);
     return null;
   }
   if (s.servers.length === 1) {
+    rec.vars({ name, 'len(servers)': 1 });
     rec.line('last');
     rec.step(`${name} is the last server. If it left, its keys would have nowhere to go, so it stays.`);
     return null;
@@ -462,6 +491,7 @@ export function removeServer(s: RingState, which: string, rec: Rec): { name: str
   for (const p of points) rec.mark(pid(p), 'bad');
   rec.mark(tid(name), 'bad');
   for (const k of mine) rec.mark(kid(k), 'bad');
+  rec.vars({ name, mine });
   rec.line('leave');
   rec.step(
     `Server ${name} leaves, or fails. Its ${points.length === 1 ? 'point comes' : `${points.length} points come`} off the ring at ${list(points.map((p) => `${p.pos}°`))}. ` +

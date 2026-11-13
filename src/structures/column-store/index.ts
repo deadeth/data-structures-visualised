@@ -189,6 +189,7 @@ export function sum(s: StoreState, rawCountry: number | string, rawLayout: numbe
   const x = asCountry(rawCountry);
   const given = String(rawLayout ?? '').trim();
   const layout = given ? parseLayout(given) : s.setting;
+  rec.vars({ country: x });
   if (!layout) {
     rec.line('col_done');
     rec.step(`The layout is row or column. Leave it empty to use the page setting, which is ${s.setting}.`);
@@ -206,6 +207,7 @@ export function sum(s: StoreState, rawCountry: number | string, rawLayout: numbe
 function sumRows(s: StoreState, x: string, rec: Rec): number {
   const rows = allRows(s);
   const blocks = [...s.groups, ...(s.buffer.length ? [s.buffer] : [])];
+  rec.vars({ country: x, total: 0 });
   rec.line('row_read');
   rec.step(
     `SUM(amount) WHERE country = ${x}, on the row file. A row's 4 values are stored together, so the only way to see every country is to read every row, all 4 values of it.`,
@@ -226,6 +228,7 @@ function sumRows(s: StoreState, x: string, rec: Rec): number {
         hits++;
         rec.markCell(cid(r, 'amount'), 0, 'ok');
       }
+      rec.vars({ country: x, row: [r.day, r.country, r.product, r.amount], c: r.country, amount: r.amount, total });
       rec.line('row_read', 'row_test', ...(hit ? ['row_add'] : []));
       rec.compare(x, hit ? '=' : '≠', `row ${n}: ${r.country}`, hit ? `add ${r.amount}, total ${total}` : 'skip the row', {
         probe: chipAt(s, x, b, 'country'),
@@ -234,6 +237,7 @@ function sumRows(s: StoreState, x: string, rec: Rec): number {
       n++;
     }
   });
+  rec.vars({ country: x, total });
   rec.line('row_done');
   rec.step(
     `SUM = ${total}. The row file read all ${rows.length} rows: ${rows.length * 4} values and ${rows.length * 4 * VALUE_BYTES} bytes, to use ${plural(hits, 'amount')}. Every day and product was read too, only to be stepped over.`,
@@ -246,6 +250,7 @@ function sumColumns(s: StoreState, x: string, rec: Rec): number {
   if (enc) s.panel = { kind: 'encode', col: 'country', coded: s.groups.map((g) => g.length), runs: s.groups.map(() => true) };
   else if (s.panel.kind === 'bitmap') s.panel = { kind: 'none' };
   for (const g of s.groups) markCells(rec, g, ['day', 'product'], 'dim');
+  rec.vars({ country: x, total: 0 });
   rec.line('group');
   rec.step(
     `The same query on the column file. It needs only country and amount, so the day and product chunks are never opened. The footer at the end of the file holds every chunk's min and max, so the reader checks those first.`,
@@ -269,6 +274,8 @@ function sumColumns(s: StoreState, x: string, rec: Rec): number {
     const hi = String(maxOf(values));
     const probe = chipAt(s, x, g, 'country');
     const above = x > hi;
+    const group = `groups[${g}]`;
+    rec.vars({ country: x, group, 'stats.lo': lo, 'stats.hi': hi, total });
     rec.line('group', 'above', ...(above ? ['skip'] : []));
     rec.compare(x, above ? '>' : '≤', `max ${hi}`, above ? `skip row group ${g}` : 'check the min', { probe });
     let skip = above;
@@ -293,6 +300,7 @@ function sumColumns(s: StoreState, x: string, rec: Rec): number {
       tally('bytes', e.dictionary.length * ENTRY_BYTES + e.runs.length * RUN_BYTES);
       const code = e.dictionary.indexOf(x);
       rec.markCell(dictId(g), Math.max(0, code), 'compare');
+      rec.vars({ value: x, 'self.dictionary': e.dictionary, code: code < 0 ? undefined : code, hits: code < 0 ? [] : undefined });
       if (code < 0) {
         rec.line('filter', 'dict_test', 'dict_miss');
         rec.compare(x, '≠', `dictionary ${e.dictionary.join(' ')}`, `not in this chunk, skip it`, {
@@ -315,6 +323,10 @@ function sumColumns(s: StoreState, x: string, rec: Rec): number {
         const span = rows.slice(start, start + count);
         const match = c === code;
         tally('values');
+        if (rec.recording) {
+          const after = match ? [...hits, ...Array.from({ length: count }, (_v, k) => start + k)] : hits;
+          rec.vars({ value: x, code, c, count, start, hits: after });
+        }
         rec.markCell(runsId(g), j, 'compare');
         markCells(rec, span, ['country'], 'compare');
         rec.line('filter', 'run_test', ...(match ? ['run_hit'] : []));
@@ -334,6 +346,7 @@ function sumColumns(s: StoreState, x: string, rec: Rec): number {
       rows.forEach((r, i) => {
         const match = r.country === x;
         tally('values');
+        rec.vars({ value: x, i, v: r.country, hits: match ? [...hits, i] : hits });
         rec.markCell(cid(r, 'country'), 0, 'compare');
         rec.line('filter', 'scan', ...(match ? ['hit'] : []));
         rec.compare(x, match ? '=' : '≠', `position ${i}: ${r.country}`, match ? `keep position ${i}` : 'no match', { probe });
@@ -344,6 +357,7 @@ function sumColumns(s: StoreState, x: string, rec: Rec): number {
     if (!hits.length) {
       falseHit = true;
       markCells(rec, rows, ['amount'], 'dim');
+      rec.vars({ country: x, group, hits, total });
       rec.line('none');
       rec.step(
         `No row in row group ${g} holds ${x}. Its min and max allowed it, but ${x} falls in a gap between the values that are there. The amount chunk is never read.`,
@@ -358,6 +372,7 @@ function sumColumns(s: StoreState, x: string, rec: Rec): number {
     tally('values', aEnc ? encodeChunk(amounts).runs.length : amounts.length);
     tally('bytes', chunkBytes(amounts, aEnc));
     markCells(rec, rows, ['amount'], 'path');
+    rec.vars({ country: x, group, hits, amounts, total });
     rec.line('amounts');
     rec.step(
       `Now read row group ${g}'s amount chunk, ${chunkBytes(amounts, aEnc)} bytes. Amount is fetched only after the filter has run, and only for row groups that matched. That is late materialisation.`,
@@ -366,6 +381,7 @@ function sumColumns(s: StoreState, x: string, rec: Rec): number {
     const picked = hits.map((i) => rows[i].amount);
     total += picked.reduce((a, b) => a + b, 0);
     markCells(rec, hits.map((i) => rows[i]), ['amount'], 'ok');
+    rec.vars({ country: x, group, hits, amounts, total });
     rec.line('add');
     rec.step(`Add the amounts at ${hits.length === 1 ? 'position' : 'positions'} ${list(hits)}: ${picked.join(' + ')}. Total so far ${total}.`, {
       probe: chipAt(s, x, g, 'amount'),
@@ -379,6 +395,7 @@ function sumColumns(s: StoreState, x: string, rec: Rec): number {
     tally('values', 2);
     rec.markCell(cid(r, 'country'), 0, 'compare');
     if (match) total += r.amount;
+    rec.vars({ country: x, row: [r.day, r.country, r.product, r.amount], 'row[1]': r.country, 'row[3]': r.amount, total });
     rec.line('buffer_test', ...(match ? ['buffer_add'] : []));
     rec.compare(x, match ? '=' : '≠', `buffered: ${r.country}`, match ? `add ${r.amount}, total ${total}` : 'skip the row', {
       probe: chipAt(s, x, b, 'country'),
@@ -389,6 +406,7 @@ function sumColumns(s: StoreState, x: string, rec: Rec): number {
   }
 
   const n = allRows(s).length;
+  rec.vars({ country: x, total });
   rec.line('col_done');
   rec.step(
     `SUM = ${total}, from ${plural(valuesRead, 'value')} and ${bytesRead} bytes. The reader opened 2 of 4 columns in ${read} of ${plural(s.groups.length, 'row group')}, and skipped ${skipped} on min and max alone` +
@@ -400,9 +418,13 @@ function sumColumns(s: StoreState, x: string, rec: Rec): number {
 
 // ---- encode ---------------------------------------------------------------------
 
+/** Runs as the listing holds them, for the Variables strip: [code, count] pairs. */
+const runList = (runs: [number, number][]) => runs.map(([c, n]) => `[${c}, ${n}]`);
+
 /** Dictionary-encode one column chunk by chunk, then run-length encode the codes. Returns false when there was nothing to do. */
 export function encode(s: StoreState, raw: number | string, rec: Rec): boolean {
   const col = parseCol(raw);
+  rec.vars({ name: col ?? String(raw) });
   rec.line('mark');
   if (!col) {
     rec.step(`Enter a column to encode: day, country, product or amount.`);
@@ -411,6 +433,7 @@ export function encode(s: StoreState, raw: number | string, rec: Rec): boolean {
   toColumns(s, rec, `Encoding works on one column stored on its own.`);
   if (s.encoded.includes(col)) {
     s.panel = { kind: 'encode', col, coded: s.groups.map((g) => g.length), runs: s.groups.map(() => true) };
+    rec.vars({ name: col, 'self.encoded': [...s.encoded] });
     rec.line('already');
     rec.step(`The ${col} column is already stored as dictionaries and runs, ${columnBytes(s, col)} bytes. There is nothing to do.`);
     return false;
@@ -419,6 +442,7 @@ export function encode(s: StoreState, raw: number | string, rec: Rec): boolean {
   s.panel = panel;
   const n = fileRows(s).length;
   const plain = n * VALUE_BYTES;
+  rec.vars({ name: col, 'self.encoded': [...s.encoded, col] });
   rec.line('mark', 'each_chunk');
   rec.step(
     `Encode the ${col} column. Stored plainly it takes ${n} × ${VALUE_BYTES} = ${plain} bytes. Each row group's chunk gets its own dictionary, so a reader can decode one chunk without the others.`,
@@ -435,6 +459,7 @@ export function encode(s: StoreState, raw: number | string, rec: Rec): boolean {
       if (found < 0) dict.push(v);
       codes.push(code);
       panel.coded[g] = i + 1;
+      rec.vars({ value: v, dictionary: dict, codes });
       rec.markCell(cid(rows[i], col), 0, 'key');
       rec.markCell(dictId(g), code, found < 0 ? 'ok' : 'compare');
       rec.markCell(codesId(g), i, 'ok');
@@ -452,6 +477,7 @@ export function encode(s: StoreState, raw: number | string, rec: Rec): boolean {
       rec.markCell(cid(rows[i], col), 0, 'key');
       if (i === 0) {
         runs.push([c, 1]);
+        rec.vars({ codes, code: c, runs: runList(runs) });
         rec.markCell(codesId(g), 0, 'compare');
         rec.line('next_code', 'new_run');
         rec.step(`Now run-length encode row group ${g}'s codes: store each run of equal codes once, with a count. The first code, ${c}, starts a run: ${c}×1.`, { probe });
@@ -461,6 +487,7 @@ export function encode(s: StoreState, raw: number | string, rec: Rec): boolean {
         if (same) runs[runs.length - 1][1]++;
         else runs.push([c, 1]);
         const last = runs[runs.length - 1];
+        rec.vars({ codes, code: c, runs: runList(runs) });
         rec.markCell(codesId(g), i - 1, 'compare');
         rec.markCell(codesId(g), i, 'compare');
         rec.line('next_code', 'same', same ? 'extend' : 'new_run');
@@ -475,6 +502,7 @@ export function encode(s: StoreState, raw: number | string, rec: Rec): boolean {
     const p = values.length * VALUE_BYTES;
     const withCodes = dict.length * ENTRY_BYTES + codes.length * CODE_BYTES;
     const withRuns = dict.length * ENTRY_BYTES + runs.length * RUN_BYTES;
+    rec.vars({ dictionary: dict, runs: runList(runs) });
     rec.line('store');
     rec.step(
       `Row group ${g}: a dictionary of ${dict.length} and ${plural(runs.length, 'run')} (${runText(runs)}). ${p} bytes plain, ${withCodes} as dictionary and codes, ${withRuns} as dictionary and runs.`,
@@ -491,6 +519,7 @@ export function encode(s: StoreState, raw: number | string, rec: Rec): boolean {
   } else {
     why = `The dictionary helps because there are only a few distinct values. The runs are short because the table is sorted by country, not ${col}: equal ${col} values are scattered.`;
   }
+  rec.vars({ name: col, 'self.encoded': [...s.encoded] });
   rec.line('each_chunk');
   rec.step(
     `${col}: ${plain} bytes plain, ${codesTotal} as dictionaries and codes, ${after} as dictionaries and ${plural(runsTotal, 'run')}. ${why}` +
@@ -514,6 +543,7 @@ export function distinct(s: StoreState, c: 'country' | 'product'): string[] {
 export function bitmap(s: StoreState, rawCountry: number | string, rawProduct: number | string, rec: Rec): number | null {
   const x = asCountry(rawCountry);
   const y = asProduct(rawProduct);
+  rec.vars({ country: x, product: y });
   rec.line('build');
   if (!/^[A-Z]{2}$/.test(x) || !/^[a-z]{2,4}$/.test(y)) {
     rec.step(`Enter a two-letter country code and a product, such as FR and tea. This table sells ${list(PRODUCTS)} in ${list(COUNTRIES)}.`);
@@ -535,6 +565,7 @@ export function bitmap(s: StoreState, rawCountry: number | string, rawProduct: n
     rec.count('bytes', columnBytes(s, c));
     for (const v of values) {
       panel.built++;
+      if (rec.recording) rec.vars({ country: x, product: y, name: c, value: v, 'maps[value]': bitsOf(s, c, v) });
       for (const r of rows) rec.markCell(cid(r, c), 0, r[c] === v ? 'path' : 'idle');
       const at = rows.flatMap((r, i) => (r[c] === v ? [i] : []));
       rec.step(`${c} = ${v}: ${at.length === 1 ? 'row' : 'rows'} ${list(at)}, so bitmap ${bitsOf(s, c, v)}.`);
@@ -545,9 +576,12 @@ export function bitmap(s: StoreState, rawCountry: number | string, rawProduct: n
   scan('product', products);
 
   const bytesPer = Math.ceil(n / 8);
+  const aBits = rec.recording && countries.includes(x) ? bitsOf(s, 'country', x) : '0'.repeat(n);
   const pickOne = (c: 'country' | 'product', v: string, values: string[], anchor: string) => {
     const has = values.includes(v);
     rec.count('bytes', bytesPer);
+    const bits = rec.recording ? (has ? bitsOf(s, c, v) : '0'.repeat(n)) : '';
+    rec.vars(c === 'country' ? { country: x, product: y, a: bits } : { country: x, product: y, a: aBits, b: bits });
     if (has) rec.mark(bmId(c, v), 'compare');
     rec.line(anchor);
     rec.compare(v, has ? '=' : '≠', has ? `bitmap ${v}` : `every ${c} bitmap`, has ? `use the bitmap for ${v}` : `no row has ${v}, so all zeros`, {
@@ -563,12 +597,14 @@ export function bitmap(s: StoreState, rawCountry: number | string, rawProduct: n
   panel.and = true;
   rec.mark(AND_ID, 'ok');
   const andProbe: Probe = { text: `${x} ${y}`, at: AND_ID, cell: 0 };
+  rec.vars({ country: x, product: y, a, b, both });
   rec.line('and');
   rec.step(`AND the two bitmaps, bit by bit: ${a} AND ${b} = ${both}. A CPU does this 64 rows at a time, one instruction per 64-bit word.`, { probe: andProbe });
   const hits = rows.filter((_r, i) => both[i] === '1');
   const at = rows.flatMap((_r, i) => (both[i] === '1' ? [i] : []));
   markCells(rec, hits, ['country', 'product'], 'ok');
   let count = hits.length;
+  rec.vars({ country: x, product: y, a, b, both, count });
   rec.line('count');
   rec.step(count ? `Count the 1 bits: ${plural(count, 'row')}, at ${count === 1 ? 'row' : 'rows'} ${list(at)}.` : `There are no 1 bits: no row in the files has both.`, { probe: andProbe });
 
@@ -577,6 +613,7 @@ export function bitmap(s: StoreState, rawCountry: number | string, rawProduct: n
     const match = r.country === x && r.product === y;
     if (match) count++;
     rec.count('values', 2);
+    rec.vars({ country: x, product: y, both, row: [r.day, r.country, r.product, r.amount], count });
     rec.line('buffer_test', ...(match ? ['buffer_add'] : []));
     rec.compare(`${r.country} ${r.product}`, match ? '=' : '≠', `${x} ${y}`, match ? `count it, ${count} now` : 'not counted', {
       probe: chipAt(s, `${x} ${y}`, bb, 'country'),
@@ -584,6 +621,7 @@ export function bitmap(s: StoreState, rawCountry: number | string, rawProduct: n
     });
     if (match) markCells(rec, [r], ['country', 'product'], 'ok');
   }
+  rec.vars({ country: x, product: y, both, count });
   rec.line('both_done');
   rec.step(
     `COUNT = ${count}. Building the bitmaps read both columns once. After that, the filter reads 2 bitmaps of ${n} bits, ${bytesPer * 2} bytes, whatever the conditions. Bitmaps suit columns with few distinct values: ${countries.length} countries and ${products.length} products here.`,
@@ -598,6 +636,8 @@ export function append(s: StoreState, rawCountry: number | string, rawProduct: n
   const x = asCountry(rawCountry);
   const y = asProduct(rawProduct);
   const amount = Number(rawAmount);
+  const tuple = [NEW_DAY, x, y, amount];
+  rec.vars({ row: tuple });
   rec.line('row_file');
   if (!COUNTRIES.includes(x) || !PRODUCTS.includes(y) || !Number.isInteger(amount) || amount < 1 || amount > 99) {
     rec.step(`This page's table sells ${list(PRODUCTS)} in ${list(COUNTRIES)}, for amounts from 1 to 99. Enter one of each.`);
@@ -631,6 +671,7 @@ export function append(s: StoreState, rawCountry: number | string, rawProduct: n
   markCells(rec, [last[last.length - 1]], COLS, 'idle');
   s.buffer.push(row);
   markCells(rec, [row], COLS, 'ok');
+  rec.vars({ row: tuple, 'len(self.buffer)': s.buffer.length });
   rec.step(`So the row goes into a buffer in memory instead, as an LSM tree's memtable does. Nothing on disk changes.`, { probe: chipAt(s, name, b, 'country') });
 
   const full = s.buffer.length >= FLUSH_ROWS;
@@ -648,6 +689,8 @@ export function append(s: StoreState, rawCountry: number | string, rawProduct: n
 
   // Flush: sort, cut into column chunks with stats, write a new immutable file.
   s.buffer.sort((p, q) => (p.country < q.country ? -1 : p.country > q.country ? 1 : 0));
+  const rowText = (r: Row) => `(${r.day}, ${r.country}, ${r.product}, ${r.amount})`;
+  rec.vars({ rows: s.buffer.map(rowText) });
   rec.line('sort');
   rec.step(
     `The buffer is full. Sort its ${FLUSH_ROWS} rows by country, so the new file is in country order inside, like the rest of the table.`,
@@ -662,6 +705,7 @@ export function append(s: StoreState, rawCountry: number | string, rawProduct: n
   const aLo = minOf(chunk(rows, 'amount'));
   const aHi = maxOf(chunk(rows, 'amount'));
   markCells(rec, rows, COLS, 'ok');
+  rec.vars({ rows: rows.map(rowText), 'group["country"].lo': lo, 'group["country"].hi': hi });
   rec.line('split', 'stats');
   rec.step(
     `Cut the rows into 4 column chunks and work out each chunk's min and max: country ${lo} to ${hi}, amount ${aLo} to ${aHi}.` +
@@ -670,6 +714,7 @@ export function append(s: StoreState, rawCountry: number | string, rawProduct: n
   );
   const bytes = COLS.reduce((sum, c) => sum + chunkBytes(chunk(rows, c), s.encoded.includes(c)), 0);
   rec.count('files');
+  rec.vars({ 'len(self.groups)': s.groups.length, 'self.buffer': [] });
   rec.line('write');
   rec.step(
     `Write it as a new file: ${FLUSH_ROWS} rows, 4 chunks and a footer, ${bytes} bytes of data. The old row groups are not touched. Files are only ever added, never changed.`,
@@ -693,6 +738,7 @@ export function append(s: StoreState, rawCountry: number | string, rawProduct: n
 export function reset(s: StoreState, rec: Rec): void {
   const fresh = create(s.setting);
   Object.assign(s, fresh);
+  rec.vars();
   rec.line('reset');
   rec.step(`Back to the ${SAMPLE.length} example rows, sorted by country into 3 row groups of 4. Nothing is encoded and the buffer is empty.`);
 }

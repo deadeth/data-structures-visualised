@@ -92,10 +92,12 @@ function tooMany(nums: number[], rec: Rec): boolean {
 // ---- loading ----------------------------------------------------------------
 
 export function loadSorted(s: BSState, arg: number | string | undefined, rec: Rec): boolean {
+  rec.vars();
   rec.line('load_sorted');
   const nums = numbersFrom(arg, rec);
   if (!nums || tooMany(nums, rec)) return false;
   s.items = [...nums].sort((a, b) => a - b);
+  rec.vars({ numbers: nums });
   s.tags = {};
   s.showEnd = false;
   for (let i = 0; i < s.items.length; i++) rec.mark(cid(i), 'ok');
@@ -107,6 +109,7 @@ export function loadSorted(s: BSState, arg: number | string | undefined, rec: Re
 }
 
 export function loadUnsorted(s: BSState, arg: number | string | undefined, rec: Rec): boolean {
+  rec.vars();
   rec.line('load');
   let nums: number[] | null;
   if (typeof arg === 'string') {
@@ -124,6 +127,7 @@ export function loadUnsorted(s: BSState, arg: number | string | undefined, rec: 
   s.items = nums;
   s.tags = {};
   s.showEnd = false;
+  rec.vars({ numbers: nums });
   for (let i = 0; i < s.items.length; i++) rec.mark(cid(i), 'ok');
   rec.step(
     isSorted(nums)
@@ -135,12 +139,14 @@ export function loadUnsorted(s: BSState, arg: number | string | undefined, rec: 
 
 /** Set the array to typed numbers, in the order typed. An unsorted list is kept unsorted, so the failure can be seen. */
 export function setArray(s: BSState, arg: number | string | undefined, rec: Rec): boolean {
+  rec.vars();
   rec.line('load');
   const nums = numbersFrom(typeof arg === 'string' ? arg : String(arg ?? ''), rec);
   if (!nums || tooMany(nums, rec)) return false;
   s.items = nums;
   s.tags = {};
   s.showEnd = false;
+  rec.vars({ numbers: nums });
   for (let i = 0; i < nums.length; i++) rec.mark(cid(i), 'ok');
   const n = nums.length;
   rec.step(
@@ -173,7 +179,12 @@ export function find(s: BSState, key: number, rec: Rec): Trace {
   let ruledOut: { step: number; mid: number; right: boolean } | null = null;
   const copies = a.map((v, i) => (v === key ? i : -1)).filter((i) => i >= 0);
   const live = (from: number, to: number) => copies.some((i) => i >= from && i <= to);
+  // The listing's variables. mid stays set after the loop, as in Python.
+  let mid: number | undefined;
+  const show = () => rec.vars({ key, lo, hi, mid, 'a[mid]': mid === undefined ? undefined : a[mid] });
+  rec.vars();
   if (n === 0) {
+    show();
     rec.line('init', 'loop', 'missing');
     rec.step(`The array is empty, so there is nowhere to look for ${key}. No comparisons.`, { probe: at(0) });
     s.tags = {};
@@ -182,6 +193,7 @@ export function find(s: BSState, key: number, rec: Rec): Trace {
   }
 
   rec.line('init');
+  show();
   rec.step(
     `Find ${key}. lo and hi mark the range where ${key} could still be: all ${n} items, index 0 to ${n - 1}.` +
       (sorted ? '' : ' The array is not sorted, but binary search has no way to know that.'),
@@ -189,10 +201,11 @@ export function find(s: BSState, key: number, rec: Rec): Trace {
   );
 
   while (lo <= hi) {
-    const mid = lo + ((hi - lo) >> 1);
+    mid = lo + ((hi - lo) >> 1);
     mids.push(mid);
     s.tags = { lo, mid, hi };
     const v = a[mid];
+    show();
     rec.mark(cid(mid), 'compare');
     const where =
       mids.length === 1
@@ -225,6 +238,7 @@ export function find(s: BSState, key: number, rec: Rec): Trace {
       const was = lo;
       lo = mid + 1;
       s.tags = { lo, mid, hi };
+      show();
       rec.line('go_right');
       rec.step(
         `${sorted ? `Everything from index ${was} to ${mid} is ${v} or less, because the array is sorted.` : `On a sorted array everything from index ${was} to ${mid} would be ${v} or less.`} Rule it out: lo = mid + 1 = ${lo}. ${rangeLeft(lo, hi)}`,
@@ -241,6 +255,7 @@ export function find(s: BSState, key: number, rec: Rec): Trace {
       const was = hi;
       hi = mid - 1;
       s.tags = { lo, mid, hi };
+      show();
       rec.line('go_left');
       rec.step(
         `${sorted ? `Everything from index ${mid} to ${was} is ${v} or more, because the array is sorted.` : `On a sorted array everything from index ${mid} to ${was} would be ${v} or more.`} Rule it out: hi = mid - 1 = ${hi}. ${rangeLeft(lo, hi)}`,
@@ -289,8 +304,12 @@ export function lowerBound(s: BSState, key: number, rec: Rec): Trace {
   s.tags = { lo, hi };
   s.showEnd = true;
   const at = (i: number): Probe => ({ text: String(key), at: slotId(s, i) });
+  let mid: number | undefined;
+  const show = () => rec.vars({ key, lo, hi, mid, 'a[mid]': mid === undefined ? undefined : a[mid] });
+  rec.vars();
 
   rec.line('lb_init');
+  show();
   rec.step(
     `Lower bound of ${key}: the first index whose item is ${key} or more. The answer can be ${n}, past the end, if every item is smaller, so hi starts at ${n}, the empty slot.` +
       (sorted ? '' : ' The array is not sorted, but nothing checks.'),
@@ -298,10 +317,11 @@ export function lowerBound(s: BSState, key: number, rec: Rec): Trace {
   );
 
   while (lo < hi) {
-    const mid = lo + ((hi - lo) >> 1);
+    mid = lo + ((hi - lo) >> 1);
     mids.push(mid);
     s.tags = { lo, mid, hi };
     const v = a[mid];
+    show();
     rec.mark(cid(mid), 'compare');
     const where =
       mids.length === 1
@@ -316,6 +336,7 @@ export function lowerBound(s: BSState, key: number, rec: Rec): Trace {
       dimRange(rec, lo, mid);
       lo = mid + 1;
       s.tags = { lo, mid, hi };
+      show();
       rec.line('lb_right');
       rec.step(`Rule out up to index ${mid}: lo = mid + 1 = ${lo}. ${candidates(lo, hi, n)}`, { probe: at(lo) });
     } else {
@@ -328,6 +349,7 @@ export function lowerBound(s: BSState, key: number, rec: Rec): Trace {
       rec.mark(cid(mid), 'path');
       hi = mid;
       s.tags = { lo, mid, hi };
+      show();
       rec.line('lb_left');
       rec.step(
         `Keep index ${mid} as the best answer so far and rule out everything after it: hi = mid = ${hi}, not mid - 1. ${candidates(lo, hi, n)}`,
@@ -451,7 +473,7 @@ function gapKey(a: number[]): number {
 
 function noop(r: Rec): Rec {
   const f = () => {};
-  return { recording: r.recording, step: f, compare: f, count: f, line: f, mark: f, markCell: f, markEdge: f, unmark: f, clearMarks: f };
+  return { recording: r.recording, step: f, compare: f, count: f, line: f, vars: f, mark: f, markCell: f, markEdge: f, unmark: f, clearMarks: f };
 }
 
 const def: StructureDef<BSState> = {

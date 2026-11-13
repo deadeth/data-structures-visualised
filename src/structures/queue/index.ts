@@ -1,7 +1,7 @@
 import { LABEL_LINE, PROBE_H, probeWidth } from '../../core/fit';
 import { CELL_H, boxWidth } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
-import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef } from '../../core/types';
+import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef, VarValue } from '../../core/types';
 import java from './code/RingBufferQueue.java?raw';
 import python from './code/ring_buffer_queue.py?raw';
 import { info } from './info';
@@ -247,6 +247,12 @@ const used = (s: QueueState) => `${s.size} of ${s.capacity} slots are in use`;
 export function enqueue(s: QueueState, key: number, rec: Rec): boolean {
   const label = String(key);
   const waiting: Probe = { text: label, at: PRODUCER };
+  // The listing's fields, after the operation's argument.
+  // capacity only where the lit line reads it, as the strip is narrow.
+  const show = (extra?: Record<string, VarValue>) =>
+    rec.vars({ key, size: s.size, capacity: extra ? undefined : s.capacity, head: s.head, tail: s.tail, ...extra });
+  rec.vars();
+  show();
   rec.mark(HUB, 'compare');
   rec.line('check');
   if (s.size === s.capacity) {
@@ -271,6 +277,7 @@ export function enqueue(s: QueueState, key: number, rec: Rec): boolean {
   s.slots[at] = key;
   rec.count('writes');
   rec.mark(slotId(at), 'key');
+  show({ 'slots[tail]': key });
   rec.line('write');
   rec.step(
     `Write ${key} into slot ${at}, the slot tail points at. Tail always marks the next free slot, so there is nothing to search for or shift.`,
@@ -283,6 +290,7 @@ export function enqueue(s: QueueState, key: number, rec: Rec): boolean {
   const full = s.size === s.capacity;
   const wrapped = next === 0;
   rec.mark(TAIL, 'ok');
+  show();
   rec.line('advance');
   rec.step(
     `tail = (${at} + 1) mod ${s.capacity} = ${next}. ` +
@@ -304,6 +312,11 @@ export function enqueue(s: QueueState, key: number, rec: Rec): boolean {
 
 /** Remove and return the oldest item, or null when the buffer is empty. */
 export function dequeue(s: QueueState, rec: Rec): number | null {
+  // key is the local the listing reads into; undefined leaves it out until then.
+  const show = (key?: number, extra?: Record<string, VarValue>) =>
+    rec.vars({ key, size: s.size, capacity: extra ? undefined : s.capacity, head: s.head, tail: s.tail, ...extra });
+  rec.vars();
+  show();
   rec.mark(HUB, 'compare');
   rec.line('check');
   if (s.size === 0) {
@@ -323,6 +336,7 @@ export function dequeue(s: QueueState, rec: Rec): number | null {
   const label = String(value);
   rec.count('reads');
   rec.mark(slotId(at), 'key');
+  show(value, { 'slots[head]': value });
   rec.line('read');
   rec.step(`Read ${value} from slot ${at}, the slot head points at. It has waited longest, so it leaves first: first in, first out.`, {
     probe: rec.recording ? tagProbe(s, HEAD, label) : undefined,
@@ -332,6 +346,7 @@ export function dequeue(s: QueueState, rec: Rec): number | null {
   s.slots[at] = null;
   rec.mark(slotId(at), 'bad');
   rec.mark(CONSUMER, 'ok');
+  show(value, { 'slots[head]': null });
   rec.line('free');
   rec.step(`${value} goes to the consumer and slot ${at} is free again. Real ring buffers rarely wipe the slot: moving head past it is enough.`, {
     probe: gone,
@@ -343,6 +358,7 @@ export function dequeue(s: QueueState, rec: Rec): number | null {
   const empty = s.size === 0;
   const wrapped = next === 0;
   rec.mark(HEAD, 'ok');
+  show(value);
   rec.line('advance');
   rec.step(
     `head = (${at} + 1) mod ${s.capacity} = ${next}. ` +

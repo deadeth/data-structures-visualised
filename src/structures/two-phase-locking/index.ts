@@ -171,6 +171,12 @@ function notOpen(s: TxState, t: number, verb: string): string | null {
   return null;
 }
 
+// ---- variables strip --------------------------------------------------------------
+
+/** A lock the listing holds by reference, shown as the row it guards. */
+const lockName = (row: Row) => row;
+const queueText = (lock: Lock) => lock.queue.map((q) => `(${q.id}, ${q.mode})`);
+
 // ---- 2PL: locks -------------------------------------------------------------------
 
 /**
@@ -182,6 +188,7 @@ function grantable(s: TxState, row: Row, id: number, mode: Mode, rec: Rec, ctx: 
   const x = lock.exclusive;
   const name = NAME[row];
   rec.markCell(xId(row), 0, 'compare');
+  rec.vars({ lock: lockName(row), t: id, mode, 'lock.exclusive': x, 'lock.shared': lock.shared });
   const writerInWay = x !== null && x !== id;
   ln(rec, ...ctx, 'x_held', ...(writerInWay || mode === 'X' ? [] : ['s_held']));
   rec.compare(`X on ${name}: ${x === null ? 'none' : T(x)}`, writerInWay ? '≠' : '=', `none or ${T(id)}`, writerInWay ? 'another writer: wait' : mode === 'S' ? 'no writer in the way: grant' : 'no other writer', {
@@ -236,6 +243,7 @@ function deadlocked(s: TxState, start: number, rec: Rec): number[] | null {
   const parent = new Map<number, number>();
   const stack = [start];
   const seen = new Set([start]);
+  rec.vars({ start, stack: [...stack], seen: [...seen] });
   ln(rec, 'detect', 'visit');
   rec.step(`Every new wait could close a loop. So the database searches the waits-for graph from ${T(start)}: whom does it wait for, whom do they wait for, and does any path lead back to ${T(start)}?`, {
     probe: atGraph(start, start),
@@ -246,6 +254,7 @@ function deadlocked(s: TxState, start: number, rec: Rec): number[] | null {
       const back = u === start;
       const fresh = !back && !seen.has(u);
       rec.markEdge(`w${t}-${u}`, 'compare');
+      rec.vars({ start, t, u, stack: [...stack], seen: [...seen] });
       ln(rec, 'edge', 'cycle', ...(fresh ? ['follow'] : []));
       rec.compare(`next ${T(u)}`, back ? '=' : '≠', `start ${T(start)}`, back ? 'back at the start: deadlock' : fresh ? `follow ${T(u)}` : `${T(u)} already checked`, {
         probe: atGraph(start, u),
@@ -279,6 +288,7 @@ function acquire(s: TxState, tx: Txn, row: Row, mode: Mode, value: number, rec: 
   const had = lock.exclusive === tx.id ? 'X' : lock.shared.includes(tx.id) ? 'S' : null;
   if (grantable(s, row, tx.id, mode, rec, ['test'], probe)) {
     grant(s, row, tx.id, mode);
+    rec.vars({ row, mode, 'tx.tid': tx.id, 'lock.exclusive': lock.exclusive, 'lock.shared': lock.shared });
     if (mode === 'S') rec.markCell(sId(row), tx.id - 1, 'ok');
     else rec.markCell(xId(row), 0, 'ok');
     ln(rec, 'grant');
@@ -301,6 +311,7 @@ function acquire(s: TxState, tx: Txn, row: Row, mode: Mode, value: number, rec: 
   tx.status = 'waiting';
   tx.pending = { row, mode, value };
   rec.count('waits');
+  rec.vars({ row, mode, 'tx.tid': tx.id, 'tx.state': tx.status, 'lock.queue': queueText(lock) });
   ln(rec, 'queue');
   rec.step(
     `${T(tx.id)} cannot have ${mode === 'S' ? 'a shared' : 'the exclusive'} lock on ${name} yet, so it joins ${name}'s queue and waits. It keeps every lock it already holds: under two-phase locking nothing is released before the end.`,
@@ -310,12 +321,14 @@ function acquire(s: TxState, tx: Txn, row: Row, mode: Mode, value: number, rec: 
   const cycle = deadlocked(s, tx.id, rec);
   if (!cycle) {
     const on = waitsFor(s, tx.id);
+    rec.vars({ row, mode, 'tx.tid': tx.id, 'tx.state': tx.status, 'lock.queue': queueText(lock) });
     ln(rec, 'acyclic', 'wait');
     rec.step(`No path leads back to ${T(tx.id)}, so there is no deadlock. ${T(tx.id)} simply waits until ${list(on.map(T))} ${on.length === 1 ? 'ends' : 'end'}.`, { probe: atCard(tx.id) });
     return false;
   }
   for (let i = 0; i < cycle.length; i++) rec.markEdge(`w${cycle[i]}-${cycle[(i + 1) % cycle.length]}`, 'bad');
   const loop = [...cycle, cycle[0]].map(T).join(' waits for ');
+  rec.vars({ row, mode, 'tx.tid': tx.id, 'tx.state': tx.status, 'lock.queue': queueText(lock) });
   ln(rec, 'victim');
   rec.step(
     `Deadlock: ${loop}. None of them can ever move, so one must be aborted. This page aborts the transaction whose request closed the loop, ${T(tx.id)}. Real databases pick a victim by age or by how much work would be lost.`,
@@ -340,6 +353,7 @@ function release(s: TxState, tx: Txn, rec: Rec): void {
     }
     lock.queue = lock.queue.filter((q) => q.id !== tx.id);
   }
+  rec.vars({ t: tx.id });
   ln(rec, 'shrink', 'drop');
   rec.step(
     held.length
@@ -366,6 +380,7 @@ function wake(s: TxState, rec: Rec): void {
       waiter.pending = null;
       if (p.mode === 'S') waiter.reads[row] = latest(s, row);
       else waiter.writes[row] = p.value;
+      rec.vars({ row, mode: p.mode, value: p.mode === 'S' ? waiter.reads[row] : p.value, 'tx.tid': q.id, 'tx.state': waiter.status });
       ln(rec, 'resume');
       rec.step(
         p.mode === 'S'
@@ -390,6 +405,7 @@ function snapshotRead(s: TxState, tx: Txn, row: Row, rec: Rec): number {
     if (other === tx || other.status !== 'active' || other.writes[row] === undefined) continue;
     note(tx, row, other);
     rec.markCell(wrId(row), other.id - 1, 'compare');
+    rec.vars({ row, 'tx.tid': tx.id, 'other.tid': other.id, 'other.writes[row]': other.writes[row] });
     ln(rec, 'uncommitted', 'note');
     rec.step(
       `${T(other.id)} has written ${name} but not committed, so ${T(tx.id)} cannot see that write. The database notes that ${T(tx.id)}'s view of ${name} goes stale if ${T(other.id)} commits.`,
@@ -404,6 +420,7 @@ function snapshotRead(s: TxState, tx: Txn, row: Row, rec: Rec): number {
     const cell = i >= shown ? 1 + i - shown : 0;
     const visible = v.ts <= tx.snapshot;
     rec.markCell(rowId(row), cell, 'compare');
+    rec.vars({ row, 'tx.tid': tx.id, 'tx.snapshot': tx.snapshot, ts: v.ts, value: v.value, writer: v.by ? v.by.id : null });
     ln(rec, 'visible');
     rec.compare(`${name} ts ${v.ts}`, visible ? '≤' : '>', `snapshot ${tx.snapshot}`, visible ? 'visible: read it' : 'too new: skip it', {
       probe: { text: T(tx.id), at: rowId(row), cell },
@@ -431,6 +448,7 @@ function warnReaders(s: TxState, tx: Txn, row: Row, rec: Rec): void {
   const name = NAME[row];
   const readers = openTxns(s).filter((o) => o !== tx && o.status === 'active' && o.reads[row] !== undefined);
   if (!readers.length) {
+    rec.vars({ row, 'tx.tid': tx.id });
     ln(rec, 'warn');
     rec.step(`No other open transaction has read ${name}, so nobody's view goes stale. Nothing blocks under SSI: the write goes ahead.`, { probe: atCard(tx.id) });
     return;
@@ -438,6 +456,7 @@ function warnReaders(s: TxState, tx: Txn, row: Row, rec: Rec): void {
   for (const o of readers) {
     note(o, row, tx);
     rec.markCell(rdId(row), o.id - 1, 'compare');
+    rec.vars({ row, 'tx.tid': tx.id, 'other.tid': o.id, 'other.reads[row]': o.reads[row] });
     ln(rec, 'warn', 'reader', 'note');
     rec.step(
       `${T(o.id)} has read ${name}, and ${T(tx.id)} is changing it. So ${T(o.id)}'s view of ${name} is marked stale: if ${T(tx.id)} commits, ${T(o.id)} decided on an old value. Neither waits.`,
@@ -458,6 +477,7 @@ function abortTxn(s: TxState, tx: Txn, rec: Rec, why: string): void {
   s.aborts++;
   rec.count('aborts');
   rec.unmark(card(tx.id));
+  rec.vars({ t: tx.id, 'tx.state': tx.status, 'tx.pending': null });
   ln(rec, 'abort');
   rec.step(
     `${T(tx.id)} is aborted. ` +
@@ -468,6 +488,7 @@ function abortTxn(s: TxState, tx: Txn, rec: Rec, why: string): void {
 }
 
 export function begin(s: TxState, t: number, rec: Rec): boolean {
+  rec.vars({ t, 'old.state': s.txns[t]?.status ?? null });
   ln(rec, 'open');
   if (!IDS.includes(t as 1 | 2 | 3)) {
     rec.step(`This page has three transactions, T1 to T3. There is no ${T(t)}.`);
@@ -480,6 +501,7 @@ export function begin(s: TxState, t: number, rec: Rec): boolean {
   const tx: Txn = { id: t, status: 'active', snapshot: s.clock, reads: {}, writes: {}, stale: [], pending: null, why: null, commitTs: null };
   s.txns[t] = tx;
   follow(rec, s, t);
+  rec.vars({ t, 'tx.state': tx.status, 'tx.snapshot': tx.snapshot });
   const who = OWNER[t] ? `${T(t)} is ${NAME[OWNER[t]!]}'s request to go off call.` : `${T(t)} belongs to no doctor.`;
   ln(rec, 'begin');
   rec.step(
@@ -495,6 +517,7 @@ export function begin(s: TxState, t: number, rec: Rec): boolean {
 export function read(s: TxState, t: number, rowArg: number | string, rec: Rec): number | null {
   ln(rec, 'txn');
   const row = asRow(rowArg);
+  rec.vars({ t, row: row ?? String(rowArg) });
   const problem = notOpen(s, t, 'read') ?? (row ? null : `There is no doctor called "${rowArg}". The table has Alice and Bob.`);
   if (problem) {
     rec.step(problem, isOpen(s.txns[t]) ? { probe: atCard(t) } : {});
@@ -504,6 +527,7 @@ export function read(s: TxState, t: number, rowArg: number | string, rec: Rec): 
   const name = NAME[row!];
   follow(rec, s, t);
   if (tx.writes[row!] !== undefined) {
+    rec.vars({ t, row, 'tx.writes[row]': tx.writes[row!] });
     ln(rec, 'own');
     rec.step(`${T(t)} has already written ${name}, so it reads its own new value: ${flag(tx.writes[row!]!)}. No lock or snapshot is needed for that.`, { probe: atCard(t) });
     return tx.writes[row!]!;
@@ -514,6 +538,7 @@ export function read(s: TxState, t: number, rowArg: number | string, rec: Rec): 
     rec.step(`Before reading ${name}, ${T(t)} must hold a shared lock on it.`, { probe: { text: T(t), at: sId(row!), cell: t - 1 } });
     if (!acquire(s, tx, row!, 'S', 0, rec)) {
       follow(rec, s, t);
+      rec.vars({ t, row, 'tx.state': tx.status });
       ln(rec, 'blocked');
       rec.step(
         tx.status === 'aborted'
@@ -526,6 +551,7 @@ export function read(s: TxState, t: number, rowArg: number | string, rec: Rec): 
     value = latest(s, row!);
     tx.reads[row!] = value;
     rec.markCell(rowId(row!), 1, 'path');
+    rec.vars({ t, row, value, 'tx.reads[row]': value });
     ln(rec, 'latest', 'record');
     rec.step(`${T(t)} reads ${name}: ${flag(value)}, the latest committed value. Its shared lock stays until it ends, so no one can change ${name} under it.`, {
       probe: { text: T(t), at: rowId(row!), cell: 1 },
@@ -533,10 +559,12 @@ export function read(s: TxState, t: number, rowArg: number | string, rec: Rec): 
     rec.unmark(rowId(row!));
     return value;
   }
+  rec.vars({ t, row, 'tx.snapshot': tx.snapshot });
   ln(rec, 'snap');
   rec.step(`${T(t)} reads ${name} from its snapshot, as of timestamp ${tx.snapshot}. There are no locks, so it never waits for anyone.`, { probe: atCard(t) });
   value = snapshotRead(s, tx, row!, rec);
   tx.reads[row!] = value;
+  rec.vars({ t, row, value, 'tx.reads[row]': value });
   ln(rec, 'record');
   rec.step(
     `${T(t)} reads ${name}: ${flag(value)}. The database also records that ${T(t)} read ${name}. PostgreSQL calls this a SIREAD lock: it blocks no one, but a later write to ${name} is checked against it.`,
@@ -555,6 +583,7 @@ export function write(s: TxState, t: number, rowArg: number | string, valueArg: 
     notOpen(s, t, 'write') ??
     (row ? null : `There is no doctor called "${rowArg}". The table has Alice and Bob.`) ??
     (value === 0 || value === 1 ? null : `The on-call flag is 1 (on call) or 0 (off call), not ${valueArg}.`);
+  rec.vars({ t, row: row ?? String(rowArg), value: Number.isFinite(value) ? value : String(valueArg) });
   if (problem) {
     rec.step(problem, isOpen(s.txns[t]) ? { probe: atCard(t) } : {});
     return false;
@@ -567,6 +596,7 @@ export function write(s: TxState, t: number, rowArg: number | string, valueArg: 
     rec.step(`To write ${name}, ${T(t)} needs the exclusive lock on it: no other transaction may hold any lock on ${name}.`, { probe: { text: T(t), at: xId(row!) } });
     if (!acquire(s, tx, row!, 'X', value, rec)) {
       follow(rec, s, t);
+      rec.vars({ t, row, value, 'tx.state': tx.status });
       ln(rec, 'blocked');
       rec.step(
         tx.status === 'aborted'
@@ -581,6 +611,7 @@ export function write(s: TxState, t: number, rowArg: number | string, valueArg: 
   }
   tx.writes[row!] = value;
   follow(rec, s, t);
+  rec.vars({ t, row, value, 'tx.writes[row]': value });
   ln(rec, 'buffer');
   rec.step(`${T(t)} writes ${name} ${flag(value)}. The new value stays private to ${T(t)} until it commits.`, {
     probe: s.method === '2PL' ? { text: T(t), at: xId(row!) } : { text: T(t), at: wrId(row!), cell: t - 1 },
@@ -590,6 +621,7 @@ export function write(s: TxState, t: number, rowArg: number | string, valueArg: 
 
 /** Commit. Under SSI the transaction is checked first and may be aborted instead. Returns true if it committed. */
 export function commit(s: TxState, t: number, rec: Rec): boolean {
+  rec.vars({ t });
   ln(rec, 'txn');
   const problem = notOpen(s, t, 'commit');
   if (problem) {
@@ -598,8 +630,10 @@ export function commit(s: TxState, t: number, rec: Rec): boolean {
   }
   const tx = s.txns[t]!;
   follow(rec, s, t);
+  const staleText = () => tx.stale.map((m) => `(${m.row}, ${m.by.id})`);
 
   if (s.method === 'SSI') {
+    rec.vars({ t, 'tx.stale': staleText() });
     if (!tx.stale.length) {
       ln(rec, 'validate', 'valid');
       rec.step(`Before ${T(t)} commits, the database checks its stale reads. It has none: nothing ${T(t)} read has been changed by a concurrent transaction. It passes.`, { probe: atCard(t) });
@@ -610,6 +644,7 @@ export function commit(s: TxState, t: number, rec: Rec): boolean {
         const done = m.by.status === 'committed';
         const name = NAME[m.row];
         rec.markEdge(`w${t}-${m.by.id}`, 'compare');
+        rec.vars({ t, 'tx.stale': staleText(), row: m.row, writer: m.by.id, 'writer.state': m.by.status });
         ln(rec, 'check', ...(done ? ['stale'] : []));
         rec.compare(`${name}: ${T(m.by.id)} ${m.by.status}`, done ? '=' : '≠', 'committed', done ? `stale read: abort ${T(t)}` : 'harmless so far', {
           probe: atGraph(t, m.by.id),
@@ -623,6 +658,7 @@ export function commit(s: TxState, t: number, rec: Rec): boolean {
         if (done) {
           ln(rec, 'fail');
           abortTxn(s, tx, rec, 'stale read');
+          rec.vars({ t, 'tx.state': tx.status });
           ln(rec, 'fail');
           rec.step(
             `${T(t)} fails with a serialization failure. The application must retry the whole transaction: repeating only the commit would not help, because its reads are out of date.`,
@@ -631,6 +667,7 @@ export function commit(s: TxState, t: number, rec: Rec): boolean {
           return false;
         }
       }
+      rec.vars({ t, 'tx.stale': staleText() });
       ln(rec, 'valid');
       rec.step(`None of the transactions that changed what ${T(t)} read has committed. ${T(t)} passes.`, { probe: atCard(t) });
     }
@@ -642,6 +679,7 @@ export function commit(s: TxState, t: number, rec: Rec): boolean {
   for (const r of wrote) s.versions[r].push({ ts: s.clock, value: tx.writes[r]!, by: tx });
   // The newest version is the last cell of its row.
   for (const r of wrote) rec.markCell(rowId(r), s.method === '2PL' ? 1 : Math.min(SHOWN_VERSIONS, s.versions[r].length), 'ok');
+  if (rec.recording) rec.vars({ t, 'self.clock': s.clock, 'tx.writes': `{${wrote.map((r) => `'${r}': ${tx.writes[r]}`).join(', ')}}` });
   ln(rec, 'apply');
   rec.step(
     wrote.length
@@ -658,6 +696,7 @@ export function commit(s: TxState, t: number, rec: Rec): boolean {
   follow(rec, s, t);
   const doomed = s.method === 'SSI' ? openTxns(s).filter((o) => o.stale.some((m) => m.by === tx)) : [];
   const now = onCall(s);
+  rec.vars({ t, 'self.clock': s.clock, 'tx.state': tx.status });
   ln(rec, 'committed');
   rec.step(
     `${T(t)} is committed. On call: ${now.length ? list(now.map((r) => NAME[r])) : 'nobody'}. ` +
@@ -671,6 +710,7 @@ export function commit(s: TxState, t: number, rec: Rec): boolean {
 }
 
 export function abort(s: TxState, t: number, rec: Rec): boolean {
+  rec.vars({ t });
   ln(rec, 'txn');
   const problem = notOpen(s, t, 'abort');
   if (problem) {
@@ -681,6 +721,7 @@ export function abort(s: TxState, t: number, rec: Rec): boolean {
   follow(rec, s, t);
   abortTxn(s, tx, rec, 'aborted on request');
   follow(rec, s, t);
+  rec.vars({ t, 'tx.state': s.txns[t]!.status });
   ln(rec, 'abort');
   rec.step(`${T(t)} is gone. Nothing it did is visible, and it holds nothing. To try again, begin it afresh or retry it.`, { probe: atCard(t) });
   return true;
@@ -690,6 +731,7 @@ export function abort(s: TxState, t: number, rec: Rec): boolean {
 export function writeSkew(s: TxState, methodArg: number | string | undefined, rec: Rec): void {
   const method = asMethod(methodArg) ?? s.method;
   Object.assign(s, create(method));
+  rec.vars({ method });
   ln(rec, 'ws_reset');
   rec.step(
     `Start again under ${method === '2PL' ? 'two-phase locking' : 'serializable snapshot isolation'}, with both doctors on call. Alice (T1) and Bob (T2) each ask to go off call at the same moment. Each will go only if it sees two doctors on call.`,
@@ -703,6 +745,7 @@ export function writeSkew(s: TxState, methodArg: number | string | undefined, re
     const tx = s.txns[t]!;
     follow(rec, s, t);
     const go = seen[t] >= 2;
+    rec.vars({ method, t, 'on_call[t]': seen[t] });
     ln(rec, 'ws_decide', ...(go ? ['ws_write'] : []));
     rec.compare(`${T(t)} saw ${seen[t]} on call`, go ? '≥' : '<', 2, go ? `${NAME[OWNER[t]!]} may go off call` : `${NAME[OWNER[t]!]} must stay`, {
       probe: atCard(t),
@@ -713,6 +756,7 @@ export function writeSkew(s: TxState, methodArg: number | string | undefined, re
     if (go && tx.status === 'active') withLead(['ws_write'], () => write(s, t, OWNER[t]!, 0, rec));
   }
   for (const i of IDS) rec.unmark(card(i));
+  rec.vars({ method, on_call: `{1: ${seen[1]}, 2: ${seen[2]}}` });
   ln(rec, 'ws_done');
   const t1 = s.txns[1]!;
   const t2 = s.txns[2]!;
@@ -727,6 +771,7 @@ export function writeSkew(s: TxState, methodArg: number | string | undefined, re
 
 /** The application's retry: run the transaction's whole body again from the start. Returns true if it committed. */
 export function retry(s: TxState, t: number, rec: Rec): boolean | null {
+  rec.vars({ t });
   ln(rec, 'r_begin');
   if (!IDS.includes(t as 1 | 2 | 3)) {
     rec.step(`This page has three transactions, T1 to T3. There is no ${T(t)}.`);
@@ -746,6 +791,7 @@ export function retry(s: TxState, t: number, rec: Rec): boolean | null {
   for (const r of ROWS) {
     const v = withLead(['r_read'], () => read(s, t, r, rec));
     if (v === null) {
+      rec.vars({ t, on_call: seen, row: r, value: null });
       ln(rec, 'r_stuck');
       rec.step(
         tx.status === 'aborted'
@@ -760,6 +806,7 @@ export function retry(s: TxState, t: number, rec: Rec): boolean | null {
   follow(rec, s, t);
   if (me) {
     const go = seen >= 2;
+    rec.vars({ t, on_call: seen, me });
     ln(rec, 'r_decide', ...(go ? ['r_write'] : []));
     rec.compare(`${T(t)} saw ${seen} on call`, go ? '≥' : '<', 2, go ? `${NAME[me]} may go off call` : `${NAME[me]} must stay on call`, {
       probe: atCard(t),
@@ -768,6 +815,7 @@ export function retry(s: TxState, t: number, rec: Rec): boolean | null {
         : `This time ${T(t)} sees only ${plural(seen, 'doctor')} on call, so ${NAME[me]} must stay. No write.`,
     });
     if (go && !withLead(['r_write'], () => write(s, t, me, 0, rec))) {
+      rec.vars({ t, on_call: seen, me });
       ln(rec, 'r_stuck');
       rec.step(
         tx.status === 'aborted' ? `The retry stops: ${T(t)} was aborted again. It can be retried once more.` : `The retry stops here because ${T(t)} is blocked. Commit it by hand once the lock is granted.`,
@@ -776,10 +824,12 @@ export function retry(s: TxState, t: number, rec: Rec): boolean | null {
       return null;
     }
   } else {
+    rec.vars({ t, on_call: seen, me: null });
     ln(rec, 'r_decide');
     rec.step(`${T(t)} belongs to no doctor, so it writes nothing. It is a report of who is on call.`, { probe: atCard(t) });
   }
   const ok = withLead(['r_commit'], () => commit(s, t, rec));
+  rec.vars({ t, on_call: seen, me: me ?? null });
   ln(rec, 'r_commit');
   rec.step(ok ? `The retry succeeded: ${T(t)} committed with reads that were up to date.` : `The retry failed its commit check too. The application can retry again.`);
   return ok;

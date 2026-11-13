@@ -656,13 +656,13 @@ export class Renderer {
     const size = nodeSize(def);
     live.w = size.w;
     live.h = size.h;
-    const sig = JSON.stringify([def.cells, def.shape, def.tone, def.hue, def.title, def.caption, def.r]);
+    const sig = JSON.stringify([def.cells, def.shape, def.tone, def.hue, def.title, def.caption, def.r, def.ink]);
     if (sig === live.sig) return;
     live.sig = sig;
     const g = live.g;
     g.replaceChildren();
     const hue = def.hue != null ? ` hue-${def.hue % 6}` : '';
-    g.setAttribute('class', `node${hue}`);
+    g.setAttribute('class', `node${hue}${def.ink ? ` ink-${def.ink}` : ''}`);
     const { w, h } = size;
     let below = h / 2;
 

@@ -100,6 +100,8 @@ const fmtList = (ps: Posting[]) => list(ps.map(fmt));
 const times = (n: number) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`);
 export const score3 = (x: number) => x.toFixed(3);
 const segName = (k: number) => `segment ${k + 1}`;
+/** A postings list as the listing holds it, (doc, tf) pairs, for the Variables strip. */
+const pairs = (ps: { doc: number; tf: number }[]) => ps.map((p) => `(${p.doc}, ${p.tf})`);
 const noSuchDoc = (n: number) => `There is no document ${n}. The library holds documents 1 to ${LIBRARY.length}.`;
 
 /** The analyser: split on spaces and lower-case. Stop words are dropped by the caller. */
@@ -146,6 +148,7 @@ const mid = (term: string) => `m-${term}`;
 /** Analyse a library document and add it to the buffer. Returns false when nothing was added. */
 export function index(s: IndexState, n: number, rec: Rec): boolean {
   rec.clearMarks();
+  rec.vars({ doc: n });
   rec.line('known_test');
   const text = LIBRARY[n - 1];
   if (!Number.isInteger(n) || !text) {
@@ -185,6 +188,7 @@ export function index(s: IndexState, n: number, rec: Rec): boolean {
     row.text = term;
     if (STOP_WORDS.has(term)) {
       row.stop = true;
+      rec.vars({ doc: n, word: row.raw, term });
       rec.mark(kid(i), 'bad');
       rec.line('token', 'lower', 'stop');
       rec.step(
@@ -205,6 +209,7 @@ export function index(s: IndexState, n: number, rec: Rec): boolean {
     if (bump) last.tf++;
     else entry.postings.push({ doc: n, tf: 1 });
     rec.count('writes');
+    rec.vars({ doc: n, word: row.raw, term, postings: rec.recording ? entry.postings.map((p) => `[${p.doc}, ${p.tf}]`) : undefined });
     rec.mark(kid(i), 'path');
     rec.mark(tid(s.buffer.gen, term), 'ok');
     const lower = lowered ? `Lower-case “${row.raw}” to “${term}”, so a search for either finds it. ` : '';
@@ -222,6 +227,7 @@ export function index(s: IndexState, n: number, rec: Rec): boolean {
 
   rec.clearMarks();
   rec.mark(hid(s.buffer.gen), 'ok');
+  rec.vars({ doc: n, 'self.buffered': [...s.buffer.docs] });
   rec.line('done');
   const kept = work.rows.filter((r) => !r.stop).length;
   rec.step(
@@ -234,6 +240,7 @@ export function index(s: IndexState, n: number, rec: Rec): boolean {
 export function flush(s: IndexState, rec: Rec): boolean {
   rec.clearMarks();
   s.work = null;
+  rec.vars({ 'self.buffered': [...s.buffer.docs] });
   rec.line('empty');
   if (!s.buffer.docs.length) {
     rec.step('The buffer is empty: there is nothing to flush.');
@@ -251,6 +258,7 @@ export function flush(s: IndexState, rec: Rec): boolean {
   for (const e of b.terms) e.postings.sort((x, y) => x.doc - y.doc);
   b.docs.sort((x, y) => x - y);
   rec.mark(hid(b.gen), 'compare');
+  rec.vars({ 'self.buffered': [...b.docs], terms: b.terms.map((e) => e.term) });
   rec.line('sort');
   rec.step(
     `Flush. First sort the buffer's terms, ${list(b.terms.map((e) => e.term))}, and each postings list by doc id. Sorted terms are what let a search use binary search.`,
@@ -262,6 +270,7 @@ export function flush(s: IndexState, rec: Rec): boolean {
   rec.count('writes', postings);
   rec.mark(hid(b.gen), 'ok');
   for (const e of b.terms) rec.mark(tid(b.gen, e.term), 'ok');
+  rec.vars({ terms: b.terms.map((e) => e.term), 'seg.docs': [...b.docs], 'len(self.segments)': s.segments.length });
   rec.line('write', 'publish');
   rec.step(
     `Write it out as ${segName(k)}: ${plural(b.terms.length, 'term')}, ${plural(postings, 'posting')}. The segment is never changed again, and from now on searches see ${b.docs.length === 1 ? `document ${b.docs[0]}` : `documents ${list(b.docs)}`}. This is near real time: Elasticsearch refreshes once a second by default.`,
@@ -286,6 +295,7 @@ function lookupShown(s: IndexState, k: number, term: string, rec: Rec): { postin
     made++;
     const probe: Probe = { text: term, at: tid(seg.gen, e.term) };
     rec.mark(tid(seg.gen, e.term), 'compare');
+    rec.vars({ term, lo, hi, mid: m, 'self.terms[mid]': e.term });
     const where = made === 1 ? `${segName(k)}: start with the middle term, “${e.term}”. ` : '';
     if (term < e.term) {
       rec.line('mid', 'test', 'go_left');
@@ -313,6 +323,7 @@ function lookupShown(s: IndexState, k: number, term: string, rec: Rec): { postin
       return { postings: e.postings, made };
     }
   }
+  rec.vars({ term, lo, hi });
   rec.line('missing');
   rec.step(`${segName(k)} has no “${term}”: the range is empty after ${plural(made, 'comparison')}. There is nothing to read here.`, {
     probe: { text: term, at: tid(seg.gen, last.term) },
@@ -327,6 +338,7 @@ export function search(s: IndexState, raw: number | string, rec: Rec): number[] 
   const hits: number[] = [];
   const work: Work = { kind: 'hits', title: `hits for ${term}`, rows: [] };
   s.work = work;
+  rec.vars({ term });
   rec.line('search_start');
   if (STOP_WORDS.has(term)) {
     rec.line('search_start', 'stop_query');
@@ -338,6 +350,7 @@ export function search(s: IndexState, raw: number | string, rec: Rec): number[] 
     rec.step('There are no segments yet, so nothing is searchable. The buffer only becomes searchable when it is flushed.');
     return hits;
   }
+  rec.vars({ term, hits: [] });
   rec.line('segment');
   rec.step(
     `Search for “${term}”. Every segment has its own sorted term dictionary, so search each of the ${plural(s.segments.length, 'segment')} in turn with a binary search.`,
@@ -360,6 +373,7 @@ export function search(s: IndexState, raw: number | string, rec: Rec): number[] 
       rec.mark(rid(p.doc), isDead ? 'bad' : 'ok');
     }
     const live = found.filter((p) => !dead.includes(p.doc)).map((p) => p.doc);
+    rec.vars({ term, seg: segName(k), 'seg.lookup(term)': pairs(found), 'seg.deleted': [...seg.deleted], hits: [...hits] });
     rec.line('postings', 'live', 'hit');
     rec.step(
       dead.length
@@ -372,6 +386,7 @@ export function search(s: IndexState, raw: number | string, rec: Rec): number[] 
   if (buffered) {
     rec.mark(hid(s.buffer.gen), 'compare');
     rec.mark(tid(s.buffer.gen, term), 'compare');
+    rec.vars({ term, hits: [...hits] });
     rec.line('segment');
     rec.step(
       `The buffer holds “${term}” too, for ${plural(buffered.postings.length, 'document')} ${fmtList(buffered.postings)}, but search only reads segments. Those documents show up after the next flush.`,
@@ -379,6 +394,7 @@ export function search(s: IndexState, raw: number | string, rec: Rec): number[] 
     rec.mark(hid(s.buffer.gen), 'idle');
     rec.mark(tid(s.buffer.gen, term), 'idle');
   }
+  rec.vars({ term, hits: [...hits] });
   rec.line('hits');
   rec.step(
     `${hits.length ? `“${term}” is in ${hits.length === 1 ? `document ${hits[0]}` : `documents ${list(hits)}`}.` : `No searchable document holds “${term}”.`} That took ${plural(made, 'comparison')} over ${plural(s.segments.length, 'segment')}: each segment is a separate search, which is one reason to merge them.`,
@@ -399,6 +415,7 @@ export function combine(s: IndexState, op: 'and' | 'or', rawA: number | string, 
   const hits: number[] = [];
   const work: Extract<Work, { kind: 'walk' }> = { kind: 'walk', op, a, b, seg: -1, xs: [], ys: [], out: [], candidates: [] };
   s.work = work;
+  rec.vars({ a, b, hits: [] });
   rec.line(`${A}segment`);
   if (!s.segments.length) {
     rec.line(and ? 'and_done' : 'or_done');
@@ -430,6 +447,7 @@ export function combine(s: IndexState, op: 'and' | 'or', rawA: number | string, 
     if (ys.length) rec.mark(tid(seg.gen, b), 'path');
     const found = `${plural(la.comparisons + lb.comparisons, 'term comparison')}, as Search shows`;
     const has = (t: string, ps: Posting[]) => (ps.length ? `“${t}” is in ${list(ps.map((p) => p.doc))}` : `there is no “${t}”`);
+    rec.vars({ a, b, seg: segName(k), xs: pairs(xs), ys: pairs(ys), hits: [...hits] });
     rec.line(`${A}segment`, `${A}lookup`);
     if (and && (!xs.length || !ys.length)) {
       const missing = !xs.length ? a : b;
@@ -453,6 +471,7 @@ export function combine(s: IndexState, op: 'and' | 'or', rawA: number | string, 
       rec.mark(xid(seg.gen, i), 'compare');
       rec.mark(yid(seg.gen, j), 'compare');
       const probe: Probe = { text: String(x), at: xid(seg.gen, i), place: 'left' };
+      const walkVars = () => rec.vars({ seg: segName(k), i, j, x, y, ...(and ? { hits: [...hits] } : { out: [...work.candidates] }) });
       if (and) {
         if (x === y) {
           const live = isLive(seg, x);
@@ -461,6 +480,7 @@ export function combine(s: IndexState, op: 'and' | 'or', rawA: number | string, 
           rec.mark(oid(x), live ? 'ok' : 'bad');
           rec.mark(xid(seg.gen, i), live ? 'ok' : 'bad');
           rec.mark(yid(seg.gen, j), live ? 'ok' : 'bad');
+          walkVars();
           rec.line(...(live ? ['walk', 'cmp', 'and_live', 'match', 'advance'] : ['walk', 'cmp', 'and_live', 'advance']));
           rec.compare(x, '=', y, live ? 'a hit: move both pointers on' : 'deleted: move both pointers on', {
             probe,
@@ -471,6 +491,7 @@ export function combine(s: IndexState, op: 'and' | 'or', rawA: number | string, 
           i++;
           j++;
         } else if (x < y) {
+          walkVars();
           rec.line('walk', 'cmp', 'cmp_less', 'skip_a');
           rec.compare(x, '<', y, `skip ${x}: move the ${a} pointer on`, {
             probe,
@@ -479,6 +500,7 @@ export function combine(s: IndexState, op: 'and' | 'or', rawA: number | string, 
           rec.mark(xid(seg.gen, i), 'dim');
           i++;
         } else {
+          walkVars();
           rec.line('walk', 'cmp', 'cmp_less', 'skip_b');
           rec.compare(x, '>', y, `skip ${y}: move the ${b} pointer on`, {
             probe,
@@ -492,6 +514,7 @@ export function combine(s: IndexState, op: 'and' | 'or', rawA: number | string, 
           work.candidates.push(x);
           rec.mark(xid(seg.gen, i), 'path');
           rec.mark(yid(seg.gen, j), 'path');
+          walkVars();
           rec.line('or_walk', 'or_cmp', 'or_both');
           rec.compare(x, '=', y, 'take it once, move both on', {
             probe,
@@ -503,6 +526,7 @@ export function combine(s: IndexState, op: 'and' | 'or', rawA: number | string, 
           work.candidates.push(x);
           rec.mark(xid(seg.gen, i), 'path');
           rec.mark(yid(seg.gen, j), 'idle');
+          walkVars();
           rec.line('or_walk', 'or_cmp', 'or_less', 'take_x');
           rec.compare(x, '<', y, `take ${x}, move the ${a} pointer on`, {
             probe,
@@ -513,6 +537,7 @@ export function combine(s: IndexState, op: 'and' | 'or', rawA: number | string, 
           work.candidates.push(y);
           rec.mark(yid(seg.gen, j), 'path');
           rec.mark(xid(seg.gen, i), 'idle');
+          walkVars();
           rec.line('or_walk', 'or_cmp', 'or_less', 'take_y');
           rec.compare(x, '>', y, `take ${y}, move the ${b} pointer on`, {
             probe,
@@ -525,6 +550,7 @@ export function combine(s: IndexState, op: 'and' | 'or', rawA: number | string, 
 
     if (and) {
       const ran = i >= xs.length && j >= ys.length ? 'Both lists have' : `The “${i >= xs.length ? a : b}” list has`;
+      rec.vars({ seg: segName(k), i, j, 'len(xs)': xs.length, 'len(ys)': ys.length, hits: [...hits] });
       rec.line('walk');
       rec.step(`${ran} run out, so nothing else in ${segName(k)} can be on both.`);
       return;
@@ -534,12 +560,14 @@ export function combine(s: IndexState, op: 'and' | 'or', rawA: number | string, 
       for (let q = i; q < xs.length; q++) rec.mark(xid(seg.gen, q), 'path');
       for (let q = j; q < ys.length; q++) rec.mark(yid(seg.gen, q), 'path');
       work.candidates.push(...rest);
+      rec.vars({ seg: segName(k), i, j, out: [...work.candidates] });
       rec.line('or_walk', 'rest');
       rec.step(
         `${!xs.length || !ys.length ? `Only one term is in ${segName(k)}, so there is nothing to compare.` : 'One list has run out.'} The rest of the other list needs no comparisons: take ${list(rest)}.`,
       );
     }
     const dead = work.candidates.filter((d) => !isLive(seg, d));
+    const out = [...work.candidates];
     for (const d of work.candidates) {
       const isDead = dead.includes(d);
       work.out.push({ doc: d, dead: isDead });
@@ -547,6 +575,7 @@ export function combine(s: IndexState, op: 'and' | 'or', rawA: number | string, 
       rec.mark(oid(d), isDead ? 'bad' : 'ok');
     }
     work.candidates = [];
+    rec.vars({ seg: segName(k), out, 'seg.deleted': [...seg.deleted], hits: [...hits] });
     rec.line('rest', 'or_live');
     rec.step(
       dead.length
@@ -557,6 +586,7 @@ export function combine(s: IndexState, op: 'and' | 'or', rawA: number | string, 
 
   rec.clearMarks();
   for (const r of work.out) rec.mark(oid(r.doc), r.dead ? 'bad' : 'ok');
+  rec.vars({ a, b, hits: [...hits] });
   rec.line(and ? 'and_done' : 'or_done');
   const result = hits.length ? (hits.length === 1 ? `document ${hits[0]}` : `documents ${list(hits)}`) : 'no document';
   rec.step(
@@ -573,6 +603,7 @@ export function combine(s: IndexState, op: 'and' | 'or', rawA: number | string, 
 export function remove(s: IndexState, n: number, rec: Rec): boolean {
   rec.clearMarks();
   s.work = null;
+  rec.vars({ doc: n });
   rec.line('not_found');
   if (!Number.isInteger(n) || !LIBRARY[n - 1]) {
     rec.step(noSuchDoc(n));
@@ -593,6 +624,7 @@ export function remove(s: IndexState, n: number, rec: Rec): boolean {
     const seg = s.segments[k];
     const at = seg.docs.indexOf(n);
     const probe: Probe = { text: String(n), at: hid(seg.gen) };
+    rec.vars({ doc: n, seg: segName(k), 'seg.docs': [...seg.docs], 'seg.deleted': [...seg.deleted] });
     if (at < 0) {
       rec.mark(hid(seg.gen), 'dim');
       rec.line('find', 'find_test');
@@ -613,6 +645,7 @@ export function remove(s: IndexState, n: number, rec: Rec): boolean {
     seg.deleted.push(n);
     rec.count('writes');
     rec.markCell(hid(seg.gen), at, 'idle');
+    rec.vars({ doc: n, seg: segName(k), 'seg.docs': [...seg.docs], 'seg.deleted': [...seg.deleted] });
     const terms = seg.terms.filter((e) => e.postings.some((p) => p.doc === n)).map((e) => `“${e.term}”`);
     rec.line('tombstone');
     rec.step(
@@ -628,6 +661,7 @@ export function remove(s: IndexState, n: number, rec: Rec): boolean {
 export function merge(s: IndexState, k1: number, rec: Rec): boolean {
   rec.clearMarks();
   s.work = null;
+  rec.vars({ k: k1 - 1 });
   rec.line('merge_start');
   const count = s.segments.length;
   if (count < 2) {
@@ -646,6 +680,7 @@ export function merge(s: IndexState, k1: number, rec: Rec): boolean {
   rec.mark(hid(A.gen), 'path');
   rec.mark(hid(B.gen), 'path');
   const dead = [...A.deleted, ...B.deleted].sort((x, y) => x - y);
+  rec.vars({ k, a: segName(k), b: segName(k + 1) });
   rec.step(
     `Merge ${segName(k)} and ${segName(k + 1)} into one new segment. Both term dictionaries are sorted, so walk them together as merge sort does, copying each term's postings${dead.length ? ` without the deleted ${dead.length === 1 ? `document ${dead[0]}` : `documents ${list(dead)}`}` : ''}.`,
   );
@@ -669,6 +704,7 @@ export function merge(s: IndexState, k1: number, rec: Rec): boolean {
         ? ` ${gone.length === 1 ? `Document ${gone[0]} is` : `Documents ${list(gone)} are`} deleted, so ${gone.length === 1 ? 'it is' : 'they are'} not copied.`
         : ` Every document with “${term}” is deleted, so the term is left out of the new segment altogether.`
       : '';
+    rec.vars({ i, j, ta: A.terms[i]?.term ?? null, tb: B.terms[j]?.term ?? null, term, docs: pairs(kept) });
     return { term, kept, gone, drop };
   };
 
@@ -749,6 +785,7 @@ export function merge(s: IndexState, k1: number, rec: Rec): boolean {
   s.segments.splice(k, 2, ...(docs.length ? [merged] : []));
   s.work = null;
   rec.clearMarks();
+  rec.vars({ k, live: docs });
   rec.line('replace');
   if (!docs.length) {
     rec.step(`Every document in both segments was deleted, so the merge leaves no segment at all: ${plural(read, 'posting')} read, none written.`);
@@ -770,6 +807,7 @@ export function rank(s: IndexState, rawA: number | string, rawB: number | string
   const work: Extract<Work, { kind: 'rank' }> = { kind: 'rank', title: 'scores', rows: [] };
   s.work = work;
   const n = liveDocs(s).length;
+  rec.vars({ a: norm(rawA), b: norm(rawB), n });
   rec.line('count');
   if (!n) {
     rec.step('No live document is in a segment yet, so there is nothing to rank. Flush the buffer first.');
@@ -780,6 +818,9 @@ export function rank(s: IndexState, rawA: number | string, rawB: number | string
     `Rank the documents that hold ${q}. A document scores tf × idf for each query term, added up. tf is how often the term is in it; idf = log10(N / df), where df is how many documents hold the term and N = ${n}, the live documents.`,
   );
   const tfs = new Map<string, Map<number, number>>(query.map((t) => [t, new Map()]));
+  const [qa, qb] = [norm(rawA), norm(rawB)];
+  const dict = (m: Map<number, number>) => `{${[...m].sort((x, y) => x[0] - y[0]).map(([d, tf]) => `${d}: ${tf}`).join(', ')}}`;
+  const tfVars = () => (rec.recording ? { [`tfs[${qa}]`]: dict(tfs.get(qa)!), ...(qb !== qa ? { [`tfs[${qb}]`]: dict(tfs.get(qb)!) } : {}) } : {});
   s.segments.forEach((seg, k) => {
     const parts: string[] = [];
     const dead: number[] = [];
@@ -803,6 +844,7 @@ export function rank(s: IndexState, rawA: number | string, rawB: number | string
       }
     }
     rec.mark(hid(seg.gen), parts.length ? 'path' : 'dim');
+    rec.vars({ a: qa, b: qb, n, seg: segName(k), ...tfVars() });
     rec.line('gather');
     rec.step(
       `${segName(k)}: ${parts.length ? parts.join('; ') : 'neither term'} (${plural(made, 'term comparison')}).${dead.length ? ` ${list(dead)} ${dead.length === 1 ? 'is' : 'are'} deleted and skipped.` : ''}`,
@@ -815,6 +857,8 @@ export function rank(s: IndexState, rawA: number | string, rawB: number | string
     const df = tfs.get(t)!.size;
     if (df) idf.set(t, Math.log10(n / df));
   }
+  const idfVars = () => (rec.recording ? Object.fromEntries([...idf].map(([t, w]) => [`idf[${t}]`, score3(w)])) : {});
+  rec.vars({ a: qa, b: qb, n, ...tfVars(), ...idfVars() });
   rec.line('idf');
   rec.step(
     query
@@ -838,6 +882,7 @@ export function rank(s: IndexState, rawA: number | string, rawB: number | string
     }
     row.score = score;
     scores.set(row.doc, score);
+    rec.vars({ ...idfVars(), doc: row.doc, 'scores[doc]': score3(score) });
     rec.mark(rid(row.doc), 'ok');
     rec.line('score');
     rec.step(`Document ${row.doc}: ${parts.join('; plus ')}. Score ${score3(score)}.`, {
@@ -846,6 +891,7 @@ export function rank(s: IndexState, rawA: number | string, rawB: number | string
   }
   const order = work.rows.map((r) => r.doc).sort((x, y) => scores.get(y)! - scores.get(x)! || x - y);
   work.rows.sort((x, y) => order.indexOf(x.doc) - order.indexOf(y.doc));
+  rec.vars({ a: qa, b: qb, scores: rec.recording ? `{${[...scores].map(([d, x]) => `${d}: ${score3(x)}`).join(', ')}}` : undefined });
   rec.line('sort');
   if (!order.length) {
     rec.step(`No live document holds ${q}.`);

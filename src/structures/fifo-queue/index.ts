@@ -74,6 +74,7 @@ function reframe(s: FifoState): boolean {
 
 /** Join the back of the queue. Returns false only when the page's drawing limit is reached. */
 export function enqueue(s: FifoState, key: number, rec: Rec): boolean {
+  rec.vars({ key, size: s.size });
   rec.line('node');
   if (s.size >= s.maxSize) {
     rec.step(
@@ -86,6 +87,7 @@ export function enqueue(s: FifoState, key: number, rec: Rec): boolean {
   const probe: Probe = { text: String(key), at: nid(node) };
   const before = s.size;
   if (rec.recording) s.draft = node;
+  rec.vars({ key, node: key, head: s.head?.key ?? null, tail: s.tail?.key ?? null, size: s.size });
   rec.mark(nid(node), 'key');
   rec.step(
     `Make a node for ${key}. Its next pointer is null because it will be last in line. Nothing points at it yet, so it is not in the queue.` +
@@ -96,11 +98,13 @@ export function enqueue(s: FifoState, key: number, rec: Rec): boolean {
   const old = s.tail;
   if (!old) {
     s.head = node;
+    rec.vars({ key, node: key, head: key, tail: null, size: s.size });
     rec.count('writes');
     rec.line('first');
     rec.step(`The queue is empty, so the new node is the front as well as the back. Point head at it.`, { probe });
   } else {
     old.next = node;
+    rec.vars({ key, node: key, head: s.head?.key ?? null, tail: old.key, 'tail.next': key, size: s.size });
     rec.count('writes');
     rec.markEdge(eid(old), 'ok');
     rec.line('link');
@@ -111,12 +115,14 @@ export function enqueue(s: FifoState, key: number, rec: Rec): boolean {
   }
 
   s.tail = node;
+  rec.vars({ key, node: key, head: s.head?.key ?? null, tail: key, size: s.size });
   rec.count('writes');
   s.draft = null;
   rec.line('tail');
   rec.step(`Move tail to the new node. ${key} is now the back of the queue.`, { probe });
 
   s.size++;
+  rec.vars({ key, node: key, head: s.head?.key ?? null, tail: key, size: s.size });
   rec.clearMarks();
   rec.mark(nid(node), 'key');
   rec.line('count');
@@ -133,6 +139,7 @@ export function enqueue(s: FifoState, key: number, rec: Rec): boolean {
 /** Take the front item off and return it, or null when the queue is empty. */
 export function dequeue(s: FifoState, rec: Rec): number | null {
   const node = s.head;
+  rec.vars({ head: node?.key ?? null, tail: s.tail?.key ?? null, size: s.size });
   if (!node) {
     rec.mark(NULL_ID, 'bad');
     rec.line('empty');
@@ -141,6 +148,7 @@ export function dequeue(s: FifoState, rec: Rec): number | null {
   }
   const key = node.key;
   const probe: Probe = { text: String(key), at: nid(node) };
+  rec.vars({ node: key, head: key, tail: s.tail?.key ?? null, size: s.size });
   rec.count('reads');
   rec.mark(nid(node), 'key');
   rec.line('front');
@@ -148,6 +156,7 @@ export function dequeue(s: FifoState, rec: Rec): number | null {
 
   const next = node.next;
   s.head = next;
+  rec.vars({ node: key, 'node.next': next?.key ?? null, head: next?.key ?? null, tail: s.tail?.key ?? null, size: s.size });
   rec.count('writes');
   let writes = 1;
   if (rec.recording) s.ghost = node;
@@ -162,6 +171,7 @@ export function dequeue(s: FifoState, rec: Rec): number | null {
 
   if (!next) {
     s.tail = null;
+    rec.vars({ node: key, 'node.next': null, head: null, tail: null, size: s.size });
     rec.count('writes');
     writes++;
     rec.line('clear_tail');
@@ -172,6 +182,7 @@ export function dequeue(s: FifoState, rec: Rec): number | null {
   }
 
   s.size--;
+  rec.vars({ node: key, 'node.key': key, head: s.head?.key ?? null, tail: s.tail?.key ?? null, size: s.size });
   s.ghost = null;
   rec.clearMarks();
   rec.line('count');
@@ -185,6 +196,7 @@ export function dequeue(s: FifoState, rec: Rec): number | null {
 /** Read the front item without removing it, or null when the queue is empty. */
 export function peek(s: FifoState, rec: Rec): number | null {
   const node = s.head;
+  rec.vars({ head: node?.key ?? null, 'head.key': node?.key });
   if (!node) {
     rec.mark(NULL_ID, 'bad');
     rec.line('empty');

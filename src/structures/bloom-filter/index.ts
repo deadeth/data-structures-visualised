@@ -73,6 +73,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 /** Add a key. Returns how many bits changed from 0 to 1. */
 export function add(s: BloomState, key: number, rec: Rec): number {
   const label = String(key);
+  rec.vars({ key, fresh: 0 });
   rec.line('start');
   rec.step(`Add ${key}. The filter does not store the key. Each of its ${K} hash functions turns ${key} into a bit position, and that bit is set to 1.`);
   const mine: number[] = [];
@@ -82,6 +83,7 @@ export function add(s: BloomState, key: number, rec: Rec): number {
     const bit = hash(i, key, s.m);
     probe = { text: label, at: bid(bit) };
     const again = mine.includes(bit);
+    rec.vars({ key, fresh, i, bit, 'bits[bit]': s.bits[bit] });
     if (rec.recording) {
       if (!again) rec.mark(bid(bit), 'path');
       rec.line('hash');
@@ -93,6 +95,7 @@ export function add(s: BloomState, key: number, rec: Rec): number {
       s.ones++;
       fresh++;
       mine.push(bit);
+      rec.vars({ key, fresh, i, bit, 'bits[bit]': 1 });
       rec.count('writes');
       rec.mark(bid(bit), 'ok');
       rec.line('set');
@@ -115,6 +118,7 @@ export function add(s: BloomState, key: number, rec: Rec): number {
   if (rec.recording) {
     const cost = `Cost: ${K} hashes and ${plural(fresh, 'bit write', 'bit writes')}, however many keys are in the filter.`;
     const fill = `${s.ones} of ${s.m} bits are 1.`;
+    rec.vars({ key, fresh });
     rec.line('done');
     rec.step(
       repeat
@@ -131,6 +135,7 @@ export function add(s: BloomState, key: number, rec: Rec): number {
 /** Check a key. Returns false for "definitely not in the set", true for "probably present". */
 export function check(s: BloomState, key: number, rec: Rec): boolean {
   const label = String(key);
+  rec.vars({ key });
   rec.line('start');
   rec.step(`Check ${key}. Hash it the same ${K} ways and read those bits. A single 0 proves ${key} was never added.`);
   const seen: number[] = [];
@@ -138,6 +143,7 @@ export function check(s: BloomState, key: number, rec: Rec): boolean {
   for (let i = 0; i < K; i++) {
     const bit = hash(i, key, s.m);
     probe = { text: label, at: bid(bit) };
+    rec.vars({ key, i, bit, 'bits[bit]': s.bits[bit] });
     if (rec.recording) {
       rec.mark(bid(bit), 'compare');
       rec.line('hash');
@@ -170,6 +176,7 @@ export function check(s: BloomState, key: number, rec: Rec): boolean {
     if (!seen.includes(bit)) seen.push(bit);
   }
   // The filter gives one answer here. Only the page can tell a real hit from a false positive.
+  rec.vars({ key });
   rec.line('probably');
   if (s.added.has(key)) {
     if (rec.recording) {

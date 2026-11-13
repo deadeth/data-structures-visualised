@@ -121,6 +121,8 @@ export function create(threshold = 2): SimState {
 }
 
 export const toBits = (n: number) => n.toString(2).padStart(BITS, '0');
+/** A fingerprint or hash as the strip shows it: a Python binary literal, bit 7 first. */
+const lit = (n: number) => `0b${toBits(n)}`;
 const signed = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '0');
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const quote = (words: readonly string[]) => `“${words.join(' ')}”`;
@@ -165,6 +167,8 @@ function vote(w: VoteWork, rec: Rec, brief: boolean): number {
     row.hash = h;
     const probe: Probe = { text: row.word, at: wid(r), place: 'left' };
     rec.mark(wid(r), 'key');
+    // totals is indexed by bit number, so totals[0] is the rightmost column.
+    if (rec.recording) rec.vars({ word: row.word, h: lit(h), totals: [...w.totals] });
     if (rec.recording && !brief) {
       rec.line('hash');
       rec.step(
@@ -177,6 +181,7 @@ function vote(w: VoteWork, rec: Rec, brief: boolean): number {
       rec.mark(vid(col(bit)), 'ok');
     }
     if (rec.recording) {
+      rec.vars({ word: row.word, h: lit(h), totals: [...w.totals] });
       const after = `That is the score after ${r + 1} of ${plural(n, 'word')}.`;
       rec.line(...(brief ? ['hash', 'vote'] : ['vote']));
       rec.step(
@@ -199,6 +204,7 @@ function vote(w: VoteWork, rec: Rec, brief: boolean): number {
     w.bits[bit] = one ? 1 : 0;
     rec.mark(vid(c), 'compare');
     rec.mark(fid(c), 'ok');
+    if (rec.recording) rec.vars({ bit, 'totals[bit]': total, fp: lit(fp) });
     rec.line(...(one ? ['sign', 'set_bit'] : ['sign']));
     rec.compare(`total ${signed(total)}`, one ? '>' : '≤', 0, `bit ${bit} is ${one ? 1 : 0}`, {
       probe: { text: `bit ${bit}`, at: fid(c), place: 'below' },
@@ -230,6 +236,7 @@ const noSuchPage = (n: number) => `There is no page ${n}. The library holds page
 /** Fingerprint a library page and store it. Returns the fingerprint, or null when nothing was stored. */
 export function fingerprint(s: SimState, n: number, rec: Rec): number | null {
   rec.clearMarks();
+  rec.vars({ page: n });
   rec.line('known_test');
   const p = pageOf(n);
   if (!p) {
@@ -239,17 +246,20 @@ export function fingerprint(s: SimState, n: number, rec: Rec): number | null {
   const have = stored(s, n);
   if (have) {
     rec.mark(did(n), 'path');
+    rec.vars({ page: n, 'pages[page]': lit(have.fp) });
     rec.line('known_test', 'known');
     rec.step(`Page ${n} is already stored with fingerprint ${toBits(have.fp)}. The same words always give the same fingerprint, so there is nothing to do.`);
     return null;
   }
   const w = startVote(s, n);
+  rec.vars({ page: n, words: [...p.words], totals: [...w.totals] });
   rec.line('known_test', 'start');
   rec.step(
     `Fingerprint page ${n}: ${quote(p.words)}. Each word is hashed to ${BITS} bits and then votes on every bit. All ${BITS} totals start at 0.`,
   );
   const fp = vote(w, rec, false);
   rec.clearMarks();
+  rec.vars({ page: n, 'pages[page]': lit(fp) });
   rec.line('store');
   if (s.docs.length >= MAX_DOCS) {
     const oldest = s.docs[0];
@@ -276,6 +286,7 @@ export function fingerprint(s: SimState, n: number, rec: Rec): number | null {
 /** Count the bits in which two stored pages differ. Returns the distance, or null when a page is not stored. */
 export function compare(s: SimState, a: number, b: number, rec: Rec): number | null {
   rec.clearMarks();
+  rec.vars({ a, b });
   rec.line('call');
   const da = stored(s, a);
   const db = stored(s, b);
@@ -296,6 +307,7 @@ export function compare(s: SimState, a: number, b: number, rec: Rec): number | n
     showXor: false,
   };
   s.work = work;
+  rec.vars({ a, b, 'pages[a]': lit(da.fp), 'pages[b]': lit(db.fp) });
   rec.mark(did(a), 'path');
   rec.mark(did(b), 'path');
   rec.step(
@@ -305,6 +317,8 @@ export function compare(s: SimState, a: number, b: number, rec: Rec): number | n
   );
   const x = da.fp ^ db.fp;
   work.showXor = true;
+  // Inside hamming, a and b are the two fingerprints.
+  rec.vars({ a: lit(da.fp), b: lit(db.fp), x: lit(x), distance: 0 });
   rec.line('xor');
   rec.step(`XOR the two fingerprints. The result has a 1 wherever they differ and a 0 wherever they agree: ${toBits(x)}. Now count the 1s.`);
 
@@ -316,6 +330,7 @@ export function compare(s: SimState, a: number, b: number, rec: Rec): number | n
     rec.mark(aid(c), 'compare');
     rec.mark(bid(c), 'compare');
     rec.mark(xid(c), 'compare');
+    if (rec.recording) rec.vars({ a: lit(da.fp), b: lit(db.fp), x: lit(x), bit, 'x >> bit & 1': differs ? 1 : 0, distance: distance + (differs ? 1 : 0) });
     if (differs) {
       distance++;
       rec.line('bit', 'differ');
@@ -350,6 +365,7 @@ export function compare(s: SimState, a: number, b: number, rec: Rec): number | n
   } else {
     message = `${bitsApart}, over the threshold of ${s.threshold}, so pages ${a} and ${b} are not near-duplicates. Different words cast different votes, and the fingerprints end up far apart. ${BITS} bit tests.`;
   }
+  rec.vars({ a, b, distance, threshold: s.threshold });
   rec.line('threshold');
   rec.compare(`distance ${distance}`, isNear ? '≤' : '>', s.threshold, isNear ? 'near-duplicate' : 'not a near-duplicate', {
     probe: { text: toBits(da.fp), at: did(b), place: 'left' },
@@ -361,6 +377,7 @@ export function compare(s: SimState, a: number, b: number, rec: Rec): number | n
 /** Find the stored pages within the threshold of a library page, without storing it. Returns their page numbers. */
 export function near(s: SimState, n: number, rec: Rec): number[] {
   rec.clearMarks();
+  rec.vars();
   rec.line('near_start');
   const p = pageOf(n);
   if (!p) {
@@ -368,6 +385,7 @@ export function near(s: SimState, n: number, rec: Rec): number[] {
     return [];
   }
   const w = startVote(s, n);
+  rec.vars({ words: [...p.words], totals: [...w.totals] });
   rec.line('near_start', 'start');
   rec.step(
     `Is page ${n}, ${quote(p.words)}, a near copy of anything stored? First work out its fingerprint, exactly as Fingerprint does, shown here one word to a step. The page is not stored.`,
@@ -386,6 +404,7 @@ export function near(s: SimState, n: number, rec: Rec): number[] {
     work.bottom = { label: `page ${doc.page}`, fp: doc.fp, from: did(doc.page) };
     work.showXor = true;
     probe = { text: toBits(fp), at: did(doc.page), place: 'left' };
+    if (rec.recording) rec.vars({ fp: lit(fp), page: doc.page, other: lit(doc.fp), distance, found: [...found] });
     if (rec.recording) {
       rec.mark(did(doc.page), 'compare');
       for (let bit = 0; bit < BITS; bit++) rec.mark(xid(col(bit)), (x >> bit) & 1 ? 'ok' : 'dim');
@@ -401,6 +420,7 @@ export function near(s: SimState, n: number, rec: Rec): number[] {
       distances.push(distance);
     }
     rec.mark(did(doc.page), within ? 'ok' : 'dim');
+    if (rec.recording) rec.vars({ fp: lit(fp), page: doc.page, other: lit(doc.fp), distance, found: [...found] });
     rec.line(...(within ? ['near_test', 'near_keep'] : ['near_test']));
     rec.compare(`distance ${distance}`, within ? '≤' : '>', s.threshold, within ? 'near-duplicate, keep it' : 'too far, move on', {
       probe,
@@ -427,6 +447,7 @@ export function near(s: SimState, n: number, rec: Rec): number[] {
             ? `Page ${n} matches ${which}. ${wrong.length === 1 ? `Page ${wrong[0]} is` : `Pages ${list(wrong)} are`} a false positive, a different page that happens to land close. The rest are real near copies, so a crawler would skip page ${n}.`
             : `Page ${n} is a near-duplicate of ${which}. A crawler would not index it again or follow its links.`;
     }
+    rec.vars({ fp: lit(fp), found: [...found] });
     rec.line('near_done');
     rec.step(`${outcome} ${scan}`.trim(), probe ? { probe } : {});
   }

@@ -142,13 +142,16 @@ export function mergeSort(s: MSState, rec: Rec): void {
   s.finished = false;
   letter(s);
   const kind = kindOf(values(s));
+  rec.vars();
   if (n < 2) {
+    rec.vars({ lo: 0, hi: n });
     rec.line('start', 'base');
     rec.step(n === 0 ? 'The array is empty, so there is nothing to sort.' : `One item is already sorted. sort(0, 1) returns at once, with nothing to compare.`);
     s.finished = n === 1;
     return;
   }
   s.buf = s.a.map(() => null);
+  rec.vars({ 'len(a)': n });
   rec.line('buffer');
   rec.step(
     `Merge sort needs a buffer as long as the array: the ${n} empty slots at the bottom. Every merge writes into it, then copies back. That buffer is the O(n) extra memory an in-place sort does without.`,
@@ -160,6 +163,7 @@ export function mergeSort(s: MSState, rec: Rec): void {
   s.copied = null;
   s.finished = true;
   rec.clearMarks();
+  rec.vars({ 'len(a)': n });
   rec.line('done');
   rec.step(finalMessage(s, kind, run));
   s.last = { n, kind, comparisons: run.comparisons, writes: run.writes };
@@ -203,6 +207,7 @@ function sort(s: MSState, lo: number, hi: number, rec: Rec, run: Run): void {
   s.stack.push({ lo, hi, mid, merging: false });
   s.tags = { mid };
   s.copied = null;
+  rec.vars({ lo, hi, mid });
   if (rec.recording) {
     const range = s.a.slice(lo, hi);
     const call = `sort(${lo}, ${hi})`;
@@ -239,6 +244,8 @@ function merge(s: MSState, lo: number, mid: number, hi: number, rec: Rec, run: R
   s.tags = { i, j, k };
   s.copied = null;
   run.merges++;
+  const show = () => rec.vars({ lo, mid, hi, i, j, k });
+  show();
   rec.line('merge_call', 'merge_start');
   if (rec.recording) {
     const first = run.merges === 1 ? ` The page Merging sorted lists shows this step on its own.` : '';
@@ -252,6 +259,7 @@ function merge(s: MSState, lo: number, mid: number, hi: number, rec: Rec, run: R
     rec.mark(nid(L), 'compare');
     rec.mark(nid(R), 'compare');
     run.comparisons++;
+    show();
     const left = L.value <= R.value;
     const win = left ? L : R;
     const probe: Probe = { text: lab(win), at: nid(win) };
@@ -283,6 +291,7 @@ function merge(s: MSState, lo: number, mid: number, hi: number, rec: Rec, run: R
     const slot = k;
     k++;
     s.tags = { i: i < mid ? i : undefined, j: j < hi ? j : undefined, k: k < hi ? k : undefined };
+    show();
     rec.line(left ? 'take_left' : 'take_right');
     rec.step(`Copy ${lab(win)} into buffer slot ${slot} and move ${left ? 'i' : 'j'} on to the next item ${left ? 'in the left half' : 'in the right half'}.`, {
       probe: { ...probe, place: 'below' },
@@ -297,6 +306,7 @@ function merge(s: MSState, lo: number, mid: number, hi: number, rec: Rec, run: R
     run.writes += count;
     rec.count('writes', count);
     s.tags = {};
+    show();
     rec.line(restLeft ? 'rest_left' : 'rest_right');
     if (rec.recording) {
       const other = restLeft ? 'right' : 'left';
@@ -318,6 +328,7 @@ function merge(s: MSState, lo: number, mid: number, hi: number, rec: Rec, run: R
   rec.count('writes', size);
   s.tags = {};
   s.copied = { lo, hi };
+  show();
   rec.line('copy_back');
   if (rec.recording) {
     const done = s.stack.length === 1 ? 'That was the last merge.' : `sort(${lo}, ${hi}) is done and its bracket comes off the stack.`;
@@ -331,6 +342,7 @@ function merge(s: MSState, lo: number, mid: number, hi: number, rec: Rec, run: R
 /** Set the array from typed numbers, such as "38 27 43 3". */
 export function setArray(s: MSState, arg: number | string | undefined, rec: Rec): void {
   const parsed = typeof arg === 'string' ? parseNumbers(arg) : typeof arg === 'number' ? [arg] : null;
+  rec.vars();
   rec.line('set');
   if (!parsed) {
     rec.step(`Sorry, "${arg ?? ''}" is not a list of whole numbers from 0 to 999. Type them with spaces between, such as 38 27 43 3.`);
@@ -338,6 +350,7 @@ export function setArray(s: MSState, arg: number | string | undefined, rec: Rec)
   }
   const v = parsed.slice(0, MAX_ITEMS);
   setValues(s, v);
+  rec.vars({ values: parsed, a: v });
   const cut = parsed.length > MAX_ITEMS ? ` This page stops at ${MAX_ITEMS} items, so the rest were left off.` : '';
   const ties = s.a.some((it) => it!.tag) ? ' Equal values get letters, so you can check that the sort keeps them in order.' : '';
   rec.step(`The array is now ${list(s.a)}: ${plural(v.length, 'item')}.${ties}${cut}`);
@@ -373,6 +386,7 @@ export function makeInput(kind: LoadKind, n: number, rnd: () => number = Math.ra
  */
 export function load(s: MSState, kind: LoadKind, arg: number | string | undefined, rec: Rec): void {
   let v: number[];
+  rec.vars();
   if (typeof arg === 'string') {
     const parsed = parseNumbers(arg);
     if (!parsed) {
@@ -386,6 +400,7 @@ export function load(s: MSState, kind: LoadKind, arg: number | string | undefine
     v = makeInput(kind, n);
   }
   setValues(s, v);
+  rec.vars({ kind, n: v.length, a: v });
   rec.line(LOADS[kind].anchor);
   rec.step(`Loaded ${plural(v.length, 'item')} ${LOADS[kind].say}.`);
 }

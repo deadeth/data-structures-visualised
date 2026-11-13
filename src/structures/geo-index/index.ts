@@ -156,6 +156,9 @@ function clearMap(rec: Rec): void {
   for (let x = 0; x < SIZE; x++) for (let y = 0; y < SIZE; y++) rec.unmark(cid(x, y));
 }
 const onCell = (text: string, x: number, y: number): Probe => ({ text, at: cid(x, y) });
+/** A code as the listing's int would print in binary, for the Variables strip. */
+const bin = (code: number, bits = BITS) => `0b${bitStr(code, bits) || '0'}`;
+const names = (ns: QNode[]) => ns.map((n) => nodeName(n.id));
 
 // ---- geohash --------------------------------------------------------------
 
@@ -180,6 +183,7 @@ function encodeShown(s: GeoState, p: Pt, rec: Rec, lead: string[]): number {
     code = code * 2 + bit;
     s.bits[i] = String(bit);
     rec.markCell(BUILDER, i, 'compare');
+    rec.vars({ x: p.x, y: p.y, i, mid, bit, code: bin(code, i + 1) });
     const side = isX ? (bit ? 'right' : 'left') : bit ? 'top' : 'bottom';
     rec.line(...lead, 'encode', isX ? 'test_x' : 'test_y', 'append');
     rec.compare(`${p.name}: ${isX ? 'x' : 'y'} ${v}`, bit ? '≥' : '<', `mid ${mid}`, `${side} half, append ${bit}`, {
@@ -211,6 +215,7 @@ function seek(s: GeoState, code: number): number {
 }
 
 function geoInsert(s: GeoState, p: Pt, rec: Rec, lead: string[] = []): void {
+  rec.vars({ name: p.name, x: p.x, y: p.y });
   if (!lead.length) {
     rec.line('start');
     rec.mark(cid(p.x, p.y), 'key');
@@ -223,6 +228,7 @@ function geoInsert(s: GeoState, p: Pt, rec: Rec, lead: string[] = []): void {
   const i = seek(s, code);
   s.entries.splice(i, 0, { code, name: p.name });
   rec.mark(eid(p.name), 'key');
+  rec.vars({ name: p.name, x: p.x, y: p.y, code: bin(code), i });
   const before = s.entries[i - 1];
   const after = s.entries[i + 1];
   const where = before && after ? `between ${before.name} and ${after.name}` : before ? `at the end, after ${before.name}` : after ? `at the front, before ${after.name}` : `as the only entry`;
@@ -264,6 +270,7 @@ function geoNear(s: GeoState, q: { x: number; y: number; r: number }, rec: Rec):
     if (!at(s, q.x, q.y)) rec.mark(cid(q.x, q.y), 'key');
   };
   keyQ();
+  rec.vars({ qx: q.x, qy: q.y, r: q.r, side, bits, 'bx, by': `${bx}, ${by}` });
   rec.line('side');
   rec.step(
     `Find every point within ${q.r} of Q at (${q.x}, ${q.y}). First pick a block at least ${q.r} wide: ${side}×${side} cells, which is a ${plural(bits, 'bit')} prefix. ` +
@@ -295,6 +302,7 @@ function geoNear(s: GeoState, q: { x: number; y: number; r: number }, rec: Rec):
     rec.count('ranges');
     for (const n of inRange) rec.mark(eid(n), 'path');
     const span = `${bitStr(lo)} to ${bitStr(hi - 1)}`;
+    rec.vars({ 'cx, cy': `${cx}, ${cy}`, bits, lo: bin(lo), hi: bin(hi), i });
     rec.line('block', 'prefix', 'seek');
     rec.step(
       (b === 0
@@ -312,6 +320,7 @@ function geoNear(s: GeoState, q: { x: number; y: number; r: number }, rec: Rec):
       const ok = dist <= sq(q.r);
       rec.mark(eid(e.name), 'compare');
       rec.mark(cid(p.x, p.y), 'compare');
+      rec.vars({ i, name: e.name, x: p.x, y: p.y, found: ok ? [...found, e.name] : [...found] });
       rec.line('scan', 'dist');
       rec.compare(`${e.name}: d² = ${dist}`, ok ? '≤' : '>', `r² = ${sq(q.r)}`, ok ? `within ${q.r}, keep ${e.name}` : `too far, drop ${e.name}`, {
         probe,
@@ -325,6 +334,7 @@ function geoNear(s: GeoState, q: { x: number; y: number; r: number }, rec: Rec):
     }
     if (b === 0) {
       // The boundary problem: what stopping here would miss.
+      rec.vars({ 'cx, cy': `${cx}, ${cy}`, found: [...found] });
       const missed = s.pts.filter((p) => d2(p.x, p.y, q.x, q.y) <= sq(q.r) && !(p.x >= bx && p.x < bx + side && p.y >= by && p.y < by + side));
       rec.line('block');
       rec.step(
@@ -337,6 +347,7 @@ function geoNear(s: GeoState, q: { x: number; y: number; r: number }, rec: Rec):
   }
   s.builder = '';
   s.bits = Array(BITS).fill('');
+  rec.vars({ qx: q.x, qy: q.y, r: q.r, found });
   rec.line('done');
   rec.step(
     `${found.length ? `Found ${list(found)}` : 'Nothing found'} within ${q.r} of Q. Cost: ${plural(ranges, 'range scan')}, one seek each, and ${plural(reads, 'entry', 'entries')} read. A real geohash index does the same 9 range reads, in Redis or any ordered key-value store.`,
@@ -351,6 +362,7 @@ function geoBox(s: GeoState, x1: number, y1: number, x2: number, y2: number, rec
   const probe = onCell('Q', x1, y1);
   s.builder = 'lo';
   s.bits = bitStr(lo).split('');
+  rec.vars({ x1, y1, x2, y2, lo: bin(lo), hi: bin(hi) });
   rec.line('b_corners');
   rec.step(
     `Box from (${x1}, ${y1}) to (${x2}, ${y2}). A code only grows when x or y grows, so every point in the box has a code between lo = code(${x1}, ${y1}) = ${bitStr(lo)} and hi = code(${x2}, ${y2}) = ${bitStr(hi)}. One range scan covers the box.`,
@@ -361,6 +373,7 @@ function geoBox(s: GeoState, x1: number, y1: number, x2: number, y2: number, rec
   for (let j = i; j < s.entries.length && s.entries[j].code <= hi; j++) inRange.push(s.entries[j].name);
   for (const n of inRange) rec.mark(eid(n), 'path');
   rec.count('ranges');
+  rec.vars({ x1, y1, x2, y2, lo: bin(lo), hi: bin(hi), i });
   rec.line('b_seek');
   rec.step(
     `Seek to ${bitStr(lo)} and read up to ${bitStr(hi)}: ${plural(inRange.length, 'entry', 'entries')}${inRange.length ? ` (${list(inRange)})` : ''}. Each must still be checked, because the code range is wider than the box.`,
@@ -376,6 +389,7 @@ function geoBox(s: GeoState, x1: number, y1: number, x2: number, y2: number, rec
     const inside = p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2;
     rec.mark(eid(e.name), inside ? 'ok' : 'bad');
     rec.mark(cid(p.x, p.y), inside ? 'ok' : 'bad');
+    rec.vars({ hi: bin(hi), i, name: e.name, x: p.x, y: p.y, found: inside ? [...found, e.name] : [...found] });
     rec.line('b_scan', 'b_inside');
     if (inside) {
       found.push(e.name);
@@ -390,6 +404,7 @@ function geoBox(s: GeoState, x1: number, y1: number, x2: number, y2: number, rec
   }
   s.builder = '';
   s.bits = Array(BITS).fill('');
+  rec.vars({ x1, y1, x2, y2, found });
   rec.line('b_done');
   rec.step(
     `${found.length ? `Found ${list(found)}` : 'Nothing found'} in the box. Read ${plural(inRange.length, 'entry', 'entries')}, ${wasted} of them wasted on the detour. Real systems split the box into a few smaller ranges to cut that waste.`,
@@ -417,12 +432,14 @@ function descend(s: GeoState, p: Pt, rec: Rec, lead: string[], anchor: string): 
     const east = p.x >= node.x + half;
     const north = p.y >= node.y + half;
     const q = 2 * (east ? 1 : 0) + (north ? 1 : 0);
+    rec.vars({ x: p.x, y: p.y, node: nodeName(node.id), half, east: east ? 1 : 0 });
     rec.line(...lead, anchor, 'q_test_x');
     rec.compare(`${p.name}: x ${p.x}`, east ? '≥' : '<', `mid ${node.x + half}`, east ? 'east half' : 'west half', {
       probe,
       message: `At ${nodeName(node.id)} (${dims(node)}). Is ${p.name} in the west or east half? x = ${p.x}, the halves meet at ${node.x + half}: ${east ? 'east' : 'west'}.`,
     });
     rec.markCell(tid(node.id), q, 'path');
+    rec.vars({ x: p.x, y: p.y, node: nodeName(node.id), half, east: east ? 1 : 0, north: north ? 1 : 0 });
     rec.line(...lead, anchor, 'q_test_y');
     rec.compare(`${p.name}: y ${p.y}`, north ? '≥' : '<', `mid ${node.y + half}`, `go ${QUAD[q]}`, {
       probe,
@@ -444,6 +461,7 @@ function split(s: GeoState, node: QNode, p: Pt, rec: Rec, lead: string[]): void 
   node.pts = [];
   rec.count('splits');
   showPath(s, node.id);
+  rec.vars({ node: nodeName(node.id), half });
   rec.line(...lead, 'q_split_call', 'q_kids');
   rec.step(`Split ${nodeName(node.id)}: four ${half}×${half} children, one per quadrant. Then hand each of its ${moving.length} points down to the child it falls in.`, {
     probe: onCell(p.name, p.x, p.y),
@@ -453,6 +471,7 @@ function split(s: GeoState, node: QNode, p: Pt, rec: Rec, lead: string[]): void 
     node.kids[q].pts.push(m);
     rec.count('comparisons', 2);
     rec.markCell(tid(node.id), q, 'ok');
+    rec.vars({ node: nodeName(node.id), half, name: m.name, x: m.x, y: m.y, 'node.quadrant(x, y)': q });
     rec.line(...lead, 'q_hand');
     rec.step(
       `${m.name} at (${m.x}, ${m.y}): x ${m.x} ${m.x >= node.x + half ? '≥' : '<'} ${node.x + half} and y ${m.y} ${m.y >= node.y + half ? '≥' : '<'} ${node.y + half}, so it goes to ${QUAD[q]}.`,
@@ -463,6 +482,7 @@ function split(s: GeoState, node: QNode, p: Pt, rec: Rec, lead: string[]): void 
   const over = node.kids.filter((k) => k.pts.length > s.capacity);
   rec.count('comparisons', 4);
   if (!over.length) {
+    rec.vars({ node: nodeName(node.id), 'self.capacity': s.capacity });
     rec.line(...lead, 'q_again');
     rec.step(`No child holds more than ${s.capacity}, so the split stops here.`, { probe: onCell(p.name, p.x, p.y) });
     return;
@@ -472,6 +492,7 @@ function split(s: GeoState, node: QNode, p: Pt, rec: Rec, lead: string[]): void 
     clearMap(rec);
     tint(rec, k.x, k.y, k.size, k.size, 'compare');
     rec.mark(cid(p.x, p.y), 'key');
+    rec.vars({ node: nodeName(node.id), kid: nodeName(k.id), 'len(kid.points)': k.pts.length, 'self.capacity': s.capacity });
     rec.line(...lead, 'q_again');
     rec.step(
       `${nodeName(k.id)} got all ${k.pts.length} points (${list(k.pts.map((m) => m.name))}), still more than ${s.capacity}. Crowded areas split again and again; empty ones stay as one big leaf.`,
@@ -488,6 +509,7 @@ function leafOf(s: GeoState, x: number, y: number): QNode {
 }
 
 function qtInsert(s: GeoState, p: Pt, rec: Rec, lead: string[] = []): void {
+  rec.vars({ name: p.name, x: p.x, y: p.y, node: 'root' });
   if (!lead.length) {
     rec.line('q_start');
     rec.mark(cid(p.x, p.y), 'key');
@@ -498,6 +520,7 @@ function qtInsert(s: GeoState, p: Pt, rec: Rec, lead: string[] = []): void {
   const leaf = descend(s, p, rec, lead, 'q_descend');
   leaf.pts.push({ ...p });
   rec.markCell(tid(leaf.id), leaf.pts.length - 1, 'key');
+  rec.vars({ name: p.name, x: p.x, y: p.y, node: nodeName(leaf.id), 'node.points': leaf.pts.map((m) => m.name), 'self.capacity': s.capacity });
   rec.line(...lead, 'q_add');
   rec.step(`${nodeName(leaf.id)} is a leaf (${dims(leaf)}). Add ${p.name}: it now holds ${list(leaf.pts.map((m) => m.name))}.`, { probe: onCell(p.name, p.x, p.y) });
   const full = leaf.pts.length > s.capacity;
@@ -511,6 +534,7 @@ function qtInsert(s: GeoState, p: Pt, rec: Rec, lead: string[] = []): void {
   showPath(s, home.id);
   clearMap(rec);
   rec.mark(cid(p.x, p.y), 'ok');
+  rec.vars({ name: p.name, x: p.x, y: p.y, node: nodeName(home.id) });
   rec.line(...lead, 'q_inserted');
   rec.step(
     `${p.name} is stored in leaf ${nodeName(home.id)} at depth ${home.id.length - 1}. ` +
@@ -526,6 +550,7 @@ function qtNear(s: GeoState, q: { x: number; y: number; r: number }, rec: Rec): 
     if (!at(s, q.x, q.y)) rec.mark(cid(q.x, q.y), 'key');
   };
   keyQ();
+  rec.vars({ qx: q.x, qy: q.y, r: q.r, found: [], stack: ['root'] });
   rec.line('q_begin');
   rec.step(`Find every point within ${q.r} of Q at (${q.x}, ${q.y}). Start at the root. At each node, skip any child whose box is further than ${q.r} from Q: nothing inside it can be close enough.`, { probe });
   const found: string[] = [];
@@ -538,6 +563,7 @@ function qtNear(s: GeoState, q: { x: number; y: number; r: number }, rec: Rec): 
     tint(rec, node.x, node.y, node.size, node.size, 'path');
     keyQ();
     if (!node.kids) {
+      rec.vars({ node: nodeName(node.id), 'node.points': node.pts.map((m) => m.name), found: [...found], stack: names(stack) });
       rec.line('q_pop', 'q_leaf');
       rec.step(`Leaf ${nodeName(node.id)} (${dims(node)}) holds ${node.pts.length ? `${list(node.pts.map((m) => m.name))}. Check each against Q.` : 'nothing.'}`, { probe });
       node.pts.forEach((m, i) => {
@@ -545,6 +571,7 @@ function qtNear(s: GeoState, q: { x: number; y: number; r: number }, rec: Rec): 
         const ok = dist <= sq(q.r);
         rec.mark(cid(m.x, m.y), 'compare');
         rec.markCell(tid(node.id), i, 'compare');
+        rec.vars({ node: nodeName(node.id), name: m.name, x: m.x, y: m.y, found: ok ? [...found, m.name] : [...found] });
         rec.line('q_leaf', 'q_dist');
         rec.compare(`${m.name}: d² = ${dist}`, ok ? '≤' : '>', `r² = ${sq(q.r)}`, ok ? `within ${q.r}, keep ${m.name}` : `too far, drop ${m.name}`, {
           probe,
@@ -556,12 +583,14 @@ function qtNear(s: GeoState, q: { x: number; y: number; r: number }, rec: Rec): 
       });
       continue;
     }
+    rec.vars({ node: nodeName(node.id), found: [...found], stack: names(stack) });
     rec.line('q_pop');
     rec.step(`Visit ${nodeName(node.id)} (${dims(node)}). It is split, so test its four children's boxes against the circle around Q.`, { probe });
     node.kids.forEach((k, i) => {
       const g = gap2(k, q.x, q.y);
       const keep = g <= sq(q.r);
       rec.markCell(tid(node.id), i, 'compare');
+      rec.vars({ node: nodeName(node.id), kid: nodeName(k.id), 'kid.gap2(qx, qy)': g, found: [...found], stack: names(keep ? [...stack, k] : stack) });
       rec.line('q_prune');
       rec.compare(`${QUAD[i]} box: gap² = ${g}`, keep ? '≤' : '>', `r² = ${sq(q.r)}`, keep ? `visit ${QUAD[i]}` : `prune ${QUAD[i]}`, {
         probe,
@@ -581,6 +610,7 @@ function qtNear(s: GeoState, q: { x: number; y: number; r: number }, rec: Rec): 
       }
     });
   }
+  rec.vars({ qx: q.x, qy: q.y, r: q.r, found });
   rec.line('q_done');
   rec.step(
     `${found.length ? `Found ${list(found)}` : 'Nothing found'} within ${q.r} of Q. ${plural(pruned, 'box was', 'boxes were')} pruned without reading what is inside. No boundary problem: a child is pruned only when no part of it is close enough.`,
@@ -591,6 +621,7 @@ function qtNear(s: GeoState, q: { x: number; y: number; r: number }, rec: Rec): 
 
 function qtBox(s: GeoState, x1: number, y1: number, x2: number, y2: number, rec: Rec): string[] {
   const probe = onCell('Q', x1, y1);
+  rec.vars({ x1, y1, x2, y2, found: [], stack: ['root'] });
   rec.line('q_box_begin');
   rec.step(`Find every point in the box from (${x1}, ${y1}) to (${x2}, ${y2}). Start at the root and visit only children whose box overlaps the query box.`, { probe });
   const found: string[] = [];
@@ -602,6 +633,7 @@ function qtBox(s: GeoState, x1: number, y1: number, x2: number, y2: number, rec:
     showPath(s, node.id);
     tint(rec, node.x, node.y, node.size, node.size, 'path');
     if (!node.kids) {
+      rec.vars({ node: nodeName(node.id), 'node.points': node.pts.map((m) => m.name), found: [...found], stack: names(stack) });
       rec.line('q_box_pop', 'q_box_leaf');
       rec.step(`Leaf ${nodeName(node.id)} (${dims(node)}) holds ${node.pts.length ? list(node.pts.map((m) => m.name)) : 'nothing'}.`, { probe });
       node.pts.forEach((m, i) => {
@@ -609,12 +641,14 @@ function qtBox(s: GeoState, x1: number, y1: number, x2: number, y2: number, rec:
         rec.count('comparisons', 4);
         rec.mark(cid(m.x, m.y), inside ? 'ok' : 'bad');
         rec.markCell(tid(node.id), i, inside ? 'ok' : 'bad');
+        rec.vars({ node: nodeName(node.id), name: m.name, x: m.x, y: m.y, found: inside ? [...found, m.name] : [...found] });
         rec.line('q_box_leaf', 'q_inside');
         rec.step(`${m.name} at (${m.x}, ${m.y}) is ${inside ? 'inside the box: keep it' : 'outside the box: skip it'}.`, { probe });
         if (inside) found.push(m.name);
       });
       continue;
     }
+    rec.vars({ node: nodeName(node.id), found: [...found], stack: names(stack) });
     rec.line('q_box_pop');
     rec.step(`Visit ${nodeName(node.id)} (${dims(node)}). Test each child's box against the query box.`, { probe });
     node.kids.forEach((k, i) => {
@@ -630,10 +664,12 @@ function qtBox(s: GeoState, x1: number, y1: number, x2: number, y2: number, rec:
         tint(rec, k.x, k.y, k.size, k.size, 'dim');
       }
     });
+    rec.vars({ node: nodeName(node.id), found: [...found], stack: names(stack) });
     rec.line('q_overlap');
     const kept = node.kids.map((k, i) => (overlaps(k, x1, y1, x2, y2) ? QUAD[i] : null)).filter(Boolean) as string[];
     rec.step(`${kept.length ? `${list(kept)} overlap${kept.length === 1 ? 's' : ''} the box` : 'No child overlaps the box'}; ${4 - kept.length ? `the other ${4 - kept.length} ${4 - kept.length === 1 ? 'is' : 'are'} pruned` : 'nothing is pruned'}.`, { probe });
   }
+  rec.vars({ x1, y1, x2, y2, found });
   rec.line('q_box_done');
   rec.step(`${found.length ? `Found ${list(found)}` : 'Nothing found'} in the box. ${plural(pruned, 'box was', 'boxes were')} pruned. Unlike one Z-order range, the tree never reads a point outside a box it kept for nothing: only the leaves that overlap are read.`, { probe });
   return found;
@@ -652,6 +688,7 @@ function qtRemove(s: GeoState, p: Pt, rec: Rec): void {
   clearMap(rec);
   rec.mark(cid(p.x, p.y), 'bad');
   rec.markCell(tid(leaf.id), leaf.pts.findIndex((m) => m.name === p.name), 'bad');
+  rec.vars({ name: p.name, x: p.x, y: p.y, path: names(path), 'path[-1].points': leaf.pts.filter((m) => m.name !== p.name).map((m) => m.name) });
   rec.line('q_unlink', 'q_walk', 'q_drop');
   rec.step(`${p.name} leaves (${p.x}, ${p.y}). Walk down to its leaf, ${nodeName(leaf.id)}, the same way as an insert, and drop it there.`, { probe: onCell(p.name, p.x, p.y) });
   leaf.pts = leaf.pts.filter((m) => m.name !== p.name);
@@ -662,6 +699,7 @@ function qtRemove(s: GeoState, p: Pt, rec: Rec): void {
     const total = n.kids!.reduce((a, k) => a + k.pts.length, 0);
     const fold = total <= s.capacity;
     showPath(s, n.id);
+    rec.vars({ name: p.name, node: nodeName(n.id), points: n.kids!.flatMap((k) => k.pts.map((m) => m.name)), 'self.capacity': s.capacity });
     rec.line('q_unlink', 'q_merge_test');
     rec.compare(`${nodeName(n.id)}: ${plural(total, 'point')}`, fold ? '≤' : '>', `capacity ${s.capacity}`, fold ? 'fold back into one leaf' : 'stay split', {
       probe: onCell(p.name, p.x, p.y),
@@ -670,6 +708,7 @@ function qtRemove(s: GeoState, p: Pt, rec: Rec): void {
     n.pts = n.kids!.flatMap((k) => k.pts);
     n.kids = null;
     rec.count('merges');
+    rec.vars({ name: p.name, node: nodeName(n.id), 'node.points': n.pts.map((m) => m.name), 'node.kids': null });
     rec.line('q_unlink', 'q_merge');
     rec.step(`${nodeName(n.id)}'s four children together hold ${plural(total, 'point')}, which fits in one leaf. Fold them back, so the tree does not keep splits that emptied out.`, {
       probe: onCell(p.name, p.x, p.y),
@@ -685,6 +724,7 @@ const inMap = (v: number) => Number.isInteger(v) && v >= 0 && v < SIZE;
 export function insert(s: GeoState, x: number, y: number, rec: Rec): boolean {
   s.query = null;
   const start = s.mode === 'geohash' ? 'start' : 'q_start';
+  rec.vars({ x, y });
   if (!inMap(x) || !inMap(y)) {
     rec.line(start);
     rec.step(`(${x}, ${y}) is off the map. x and y run from 0 to ${SIZE - 1}.`);
@@ -714,6 +754,7 @@ export function insert(s: GeoState, x: number, y: number, rec: Rec): boolean {
 export function near(s: GeoState, x: number, y: number, r: number, rec: Rec): string[] {
   s.query = null;
   const begin = s.mode === 'geohash' ? 'side' : 'q_begin';
+  rec.vars({ qx: x, qy: y, r });
   if (!inMap(x) || !inMap(y) || !(r >= 1 && r <= 3)) {
     rec.line(begin);
     rec.step(`Pick a cell on the map (0 to ${SIZE - 1}) and a radius from 1 to 3.`);
@@ -725,6 +766,7 @@ export function near(s: GeoState, x: number, y: number, r: number, rec: Rec): st
 
 export function box(s: GeoState, ax: number, ay: number, bx: number, by: number, rec: Rec): string[] {
   s.query = null;
+  rec.vars({ x1: ax, y1: ay, x2: bx, y2: by });
   if (![ax, ay, bx, by].every(inMap)) {
     rec.line(s.mode === 'geohash' ? 'b_corners' : 'q_box_begin');
     rec.step(`Both corners must be on the map: 0 to ${SIZE - 1}.`);
@@ -739,6 +781,7 @@ export function move(s: GeoState, name: string, x: number, y: number, rec: Rec):
   s.query = null;
   const geo = s.mode === 'geohash';
   const p = byName(s, String(name).trim().toUpperCase());
+  rec.vars({ name: p ? p.name : String(name), x, y });
   if (!p) {
     rec.line(geo ? 'm_start' : 'q_m_start');
     rec.step(`There is no point called ${name}. The points are ${list(s.pts.map((m) => m.name))}.`);
@@ -765,6 +808,7 @@ export function move(s: GeoState, name: string, x: number, y: number, rec: Rec):
     const old = encode(p.x, p.y);
     rec.mark(eid(p.name), 'bad');
     rec.mark(cid(p.x, p.y), 'bad');
+    rec.vars({ name: p.name, x, y, old: `(${p.x}, ${p.y})`, i: seek(s, old) });
     rec.line('unlink');
     rec.step(`${p.name} moves from (${p.x}, ${p.y}) to (${x}, ${y}), into a different cell, so its code changes. An index cannot edit a key in place: delete the entry under the old code ${bitStr(old)}, then insert under the new one.`, {
       probe: onCell(p.name, p.x, p.y),
@@ -789,6 +833,7 @@ export function move(s: GeoState, name: string, x: number, y: number, rec: Rec):
 export function rebuild(s: GeoState, rec: Rec): void {
   s.query = null;
   const to: Mode = s.mode === 'geohash' ? 'quadtree' : 'geohash';
+  rec.vars({ kind: to, 'len(index.where)': s.pts.length });
   rec.line('switch');
   rec.step(
     to === 'quadtree'
@@ -817,6 +862,7 @@ export function rebuild(s: GeoState, rec: Rec): void {
 const silent: Rec = {
   recording: false,
   step() {},
+  vars() {},
   compare() {},
   count() {},
   line() {},

@@ -1152,6 +1152,19 @@ svg.scene {
 }
 
 /* Categorical tints for grouping. They never signal a state. */
+/*
+ * A node whose colour is its data (a red-black tree). A solid fill with white text, kept under every tone: the tone
+ * shows as the outline. Solid crimson is not the pale, dashed red of "removed or missed".
+ */
+.ink-black .cell { fill: #101b2d; }
+.ink-red .cell { fill: #c1272d; }
+.ink-black .cell.tone-idle { stroke: #101b2d; }
+.ink-red .cell.tone-idle { stroke: #8f1a1f; }
+.ink-black .cell-text,
+.ink-red .cell-text { fill: #fff; }
+.ink-black .cell.tone-bad,
+.ink-red .cell.tone-bad { stroke: #fff; outline: 2.5px dashed var(--bad); outline-offset: 1px; }
+
 .hue-0 .cell.tone-idle { fill: #dff3f1; stroke: #17807c; }
 .hue-1 .cell.tone-idle { fill: #e9e3fb; stroke: #5f45c9; }
 .hue-2 .cell.tone-idle { fill: #ece8dc; stroke: #6b5f3a; }
@@ -1798,6 +1811,79 @@ td.num {
   color: var(--ink);
 }
 
+/* The listing's variables at this step: a slim strip of name = value pairs between the header and the code. */
+.code-vars {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 12px 6px 14px;
+  border-top: 1px solid var(--rule);
+  background: #f6f8fb;
+  flex: none;
+}
+
+.code-vars[hidden] {
+  display: none;
+}
+
+.code-vars-title {
+  flex: none;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.code-vars dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 0;
+  min-width: 0;
+  /* Takes the row's remaining width and no more, so entries wrap inside the panel. */
+  flex: 1 1 0;
+}
+
+.code-vars dl > div {
+  display: flex;
+  max-width: 100%;
+  align-items: baseline;
+  gap: 5px;
+  padding: 1px 7px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  background: #fff;
+  font: 500 0.84rem var(--mono);
+  color: var(--ink);
+}
+
+.code-vars dt {
+  color: var(--ink-2);
+}
+
+.code-vars dt::after {
+  content: ' =';
+}
+
+.code-vars dd {
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+/* What changed since the step before: a heavier outline, not a state colour. */
+.code-vars dl > div.changed {
+  border: 1.5px solid var(--ink);
+  padding: 0.5px 6.5px;
+}
+
+/* In the short window under the canvas the strip is one row that scrolls sideways. */
+.code-window .code-vars dl {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+
 .code-view,
 .code-window-view {
   position: relative;
@@ -1917,7 +2003,7 @@ td.num {
  */
 .code-mores {
   position: absolute;
-  top: -29px;
+  top: calc(-29px - var(--vars-h, 0px));
   left: 62px;
   z-index: 1;
   display: flex;
@@ -2054,7 +2140,7 @@ td.num {
   }
 
   .code-window .code-mores {
-    top: -25px;
+    top: calc(-25px - var(--vars-h, 0px));
   }
 }
 

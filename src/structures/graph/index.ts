@@ -153,12 +153,17 @@ function begin(s: GraphState, algo: Algo, start: number, target: number): Run {
 }
 
 function notANode(s: GraphState, arg: number | string, rec: Rec): void {
+  rec.vars();
   rec.line('call');
   rec.step(`Sorry, "${arg}" is not a node in this graph. Please pick a letter from ${s.names[0]} to ${s.names[s.names.length - 1]}.`);
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const list = (s: GraphState, nodes: number[], sep = ', ') => nodes.map((i) => s.names[i]).join(sep);
+/** Names of the nodes, for the Variables strip. */
+const names = (s: GraphState, nodes: number[]) => nodes.map((i) => s.names[i]);
+/** A set as the strip shows it: its members in alphabetical order. */
+const members = (s: GraphState, flags: boolean[]) => s.names.filter((_, i) => flags[i]);
 
 // ---- breadth-first search ----------------------------------------------------
 
@@ -169,6 +174,7 @@ export function bfs(s: GraphState, start: number, rec: Rec): number[] {
   run.seen[start] = true;
   run.dist[start] = 0;
   run.frontier.push({ node: start, from: -1, edge: -1, d: 0 });
+  rec.vars({ start: S, seen: [S], queue: [S] });
   rec.line('begin');
   rec.step(`Breadth-first search from ${S}: mark ${S} as seen and put it in the queue. Weights are ignored here, so every edge counts as one hop.`, {
     probe: { text: S, at: nid(start) },
@@ -180,6 +186,13 @@ export function bfs(s: GraphState, start: number, rec: Rec): number[] {
     const probe = { text: U, at: nid(u) };
     run.order.push(u);
     rec.count('reads');
+    /** The strip for BFS. `order` is left out here: the visit-order tray shows it, and the strip stays short. */
+    const watch = (v?: string) => {
+      if (rec.recording) {
+        rec.vars({ start: S, u: U, v, seen: members(s, run.seen), queue: names(s, run.frontier.slice(run.head).map((e) => e.node)) });
+      }
+    };
+    watch();
     rec.line('take');
     rec.step(
       u === start
@@ -201,10 +214,12 @@ export function bfs(s: GraphState, start: number, rec: Rec): number[] {
         run.parent[v] = u;
         run.parentEdge[v] = link.edge;
         run.frontier.push({ node: v, from: u, edge: link.edge, d: 0 });
+        watch(V);
         rec.line('check', 'enqueue');
         rec.compare(V, '=', 'new', `not seen before, add ${V} to the back of the queue`, { probe });
         rec.markEdge(edge.id, 'path');
       } else {
+        watch(V);
         rec.line('check');
         rec.compare(V, '=', 'seen', `already seen, skip`, { probe });
         rec.markEdge(edge.id, run.parentEdge[u] === link.edge || run.parentEdge[v] === link.edge ? 'path' : 'dim');
@@ -215,6 +230,7 @@ export function bfs(s: GraphState, start: number, rec: Rec): number[] {
   run.done = true;
   if (rec.recording) {
     rec.clearMarks();
+    rec.vars({ start: S, order: names(s, run.order) });
     rec.line('done');
     rec.step(
       `BFS order: ${list(s, run.order)}, nearest first, so each node was reached by the fewest hops. ` +
@@ -232,6 +248,7 @@ export function dfs(s: GraphState, start: number, rec: Rec): number[] {
   const n = s.names.length;
   const S = s.names[start];
   run.frontier.push({ node: start, from: -1, edge: -1, d: 0 });
+  rec.vars({ start: S, visited: [], stack: [S] });
   rec.line('begin');
   rec.step(`Depth-first search from ${S}, with a stack doing the job recursion would do. Push ${S}.`, { probe: { text: S, at: nid(start) } });
   let checks = 0;
@@ -242,7 +259,14 @@ export function dfs(s: GraphState, start: number, rec: Rec): number[] {
     const u = top.node;
     const U = s.names[u];
     const probe = { text: U, at: nid(u) };
+    /** The strip for DFS. `order` is left out here: the visit-order tray shows it, and the strip stays short. */
+    const watch = (v?: string) => {
+      if (rec.recording) {
+        rec.vars({ start: S, u: U, v, visited: members(s, run.seen), stack: names(s, run.frontier.map((e) => e.node)) });
+      }
+    };
     if (run.seen[u]) {
+      watch();
       rec.line('pop', 'stale');
       rec.compare(U, '=', 'visited', `old entry, discard`, {
         probe,
@@ -258,6 +282,7 @@ export function dfs(s: GraphState, start: number, rec: Rec): number[] {
     if (top.edge >= 0) rec.markEdge(s.edges[top.edge].id, 'path');
     const F = top.from >= 0 ? s.names[top.from] : '';
     // The test that found it new, then the visit it leads to.
+    watch();
     rec.line('pop', 'seen', 'visit');
     rec.compare(U, '=', 'new', `visit ${U}`, {
       probe,
@@ -285,10 +310,12 @@ export function dfs(s: GraphState, start: number, rec: Rec): number[] {
       if (!run.seen[v]) {
         run.frontier.push({ node: v, from: u, edge: link.edge, d: 0 });
         lastPushed++;
+        watch(V);
         rec.line('check', 'push');
         rec.compare(V, '=', 'new', `not visited, push ${V}`, { probe });
         rec.markEdge(edge.id, 'idle');
       } else {
+        watch(V);
         rec.line('check');
         rec.compare(V, '=', 'visited', `already visited, skip`, { probe });
         rec.markEdge(edge.id, run.parentEdge[u] === link.edge || run.parentEdge[v] === link.edge ? 'path' : 'dim');
@@ -302,6 +329,7 @@ export function dfs(s: GraphState, start: number, rec: Rec): number[] {
   if (rec.recording) {
     const left = run.frontier.length;
     rec.clearMarks();
+    rec.vars({ start: S, order: names(s, run.order) });
     if (run.order.length === n) rec.line('all_visited', 'done');
     else rec.line('done');
     rec.step(
@@ -386,6 +414,7 @@ export function dijkstra(s: GraphState, from: number, to: number, rec: Rec): { p
   const T = s.names[to];
   run.dist[from] = 0;
   heapPush(run.frontier, { node: from, from: -1, edge: -1, d: 0 });
+  rec.vars({ source: S, target: T, 'dist[source]': 0, heap: [`(0, ${S})`] });
   rec.line('begin');
   rec.step(`Dijkstra from ${S} to ${T}: every node starts at distance ∞ except ${S}, which is 0. Put ${S} in the priority queue.`, {
     probe: { text: `${S} 0`, at: nid(from) },
@@ -396,6 +425,7 @@ export function dijkstra(s: GraphState, from: number, to: number, rec: Rec): { p
     const u = top.node;
     const U = s.names[u];
     const probe = { text: `${U} ${top.d}`, at: nid(u) };
+    rec.vars({ target: T, d: top.d, u: U });
     if (run.seen[u]) {
       rec.line('pop', 'stale');
       rec.step(`Take ${U} ${top.d} from the priority queue. ${U} was already settled at ${run.dist[u]}, so this older entry is out of date and is discarded.`, { probe });
@@ -433,6 +463,8 @@ export function dijkstra(s: GraphState, from: number, to: number, rec: Rec): { p
       checks++;
       rec.mark(nid(v), 'compare');
       rec.markEdge(edge.id, 'compare');
+      // dist[v] as the code holds it after this frame's lines: updated on an improvement.
+      rec.vars({ target: T, d: top.d, u: U, v: V, candidate: cand, 'dist[v]': Math.min(cand, cur) === Infinity ? '∞' : Math.min(cand, cur) });
       if (cand < cur) {
         const old = run.parentEdge[v];
         run.dist[v] = cand;
@@ -471,11 +503,13 @@ export function dijkstra(s: GraphState, from: number, to: number, rec: Rec): { p
   if (rec.recording) {
     rec.clearMarks();
     if (!run.path.length) {
+      rec.vars({ source: S, target: T });
       rec.line('unreachable');
       rec.step(`The priority queue is empty and ${T} was never reached. There is no route from ${S} to ${T}.`);
     } else {
       const edges = run.path.length - 1;
       const few = fewestHops(s, from, to);
+      rec.vars({ source: S, target: T, path: names(s, run.path), 'dist[target]': run.cost });
       rec.line('trace', 'done');
       rec.step(
         `Shortest path: ${list(s, run.path, ' → ')}, total weight ${run.cost}, found by settling ${run.order.length} of ${s.names.length} nodes with ${plural(checks, 'relaxation check')}.` +

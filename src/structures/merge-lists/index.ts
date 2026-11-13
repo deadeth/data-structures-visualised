@@ -78,6 +78,12 @@ export function mergeTwo(s: MergeState, rec: Rec): Item[] {
   reset(s, 'two');
   const [a, b] = s.lists;
   const n = a.length + b.length;
+  // The listing's variables: the two front pointers, the fronts they read, and out.
+  const show = () =>
+    rec.recording &&
+    rec.vars({ i: s.ptr[0], j: s.ptr[1], 'a[i]': a[s.ptr[0]]?.key, 'b[j]': b[s.ptr[1]]?.key, out: values(s.out) });
+  rec.vars();
+  show();
   rec.line('start');
   const aside = s.lists.length > 2 ? ` A two-way merge reads two lists, so ${s.lists.length === 3 ? 'C waits' : 'C and D wait'}: Merge k takes them all.` : '';
   rec.step(
@@ -93,6 +99,7 @@ export function mergeTwo(s: MergeState, rec: Rec): Item[] {
     rec.mark(iid(x), 'compare');
     rec.mark(iid(y), 'compare');
     const probe: Probe = { text: String(x.key), at: iid(x) };
+    show();
     if (x.key <= y.key) {
       rec.line('compare', 'take_a');
       if (x.key === y.key) {
@@ -112,6 +119,7 @@ export function mergeTwo(s: MergeState, rec: Rec): Item[] {
       take(s, x, rec);
       i++;
       s.ptr[0] = i;
+      show();
       rec.line('take_a');
       rec.step(
         i < a.length
@@ -130,6 +138,7 @@ export function mergeTwo(s: MergeState, rec: Rec): Item[] {
       take(s, y, rec);
       j++;
       s.ptr[1] = j;
+      show();
       rec.line('take_b');
       rec.step(
         j < b.length
@@ -149,6 +158,7 @@ export function mergeTwo(s: MergeState, rec: Rec): Item[] {
       const it = list[s.ptr[l]];
       take(s, it, rec);
       s.ptr[l]++;
+      show();
       rec.line(anchor);
       const left = list.length - s.ptr[l];
       rec.step(
@@ -199,6 +209,7 @@ export function mergeK(s: MergeState, rec: Rec): Item[] {
   reset(s, 'k');
   const k = s.lists.length;
   const n = s.lists.reduce((t, l) => t + l.length, 0);
+  rec.vars({ heap: [] });
   rec.line('start_k');
   rec.step(
     `Merge all ${k} lists, ${n} items, at once. Comparing every front each time would cost k - 1 comparisons per item. Instead a min-heap holds one front item per list, so the smallest front is always at the root. The heap is drawn as its array: index 0 is the root, and the children of index i are at 2i + 1 and 2i + 2.`,
@@ -208,6 +219,7 @@ export function mergeK(s: MergeState, rec: Rec): Item[] {
   const ctx = { cmp: 0 };
   for (let l = 0; l < k; l++) {
     const list = s.lists[l];
+    rec.vars({ n: l, items: values(list), heap: heapVals(s.heap) });
     if (!list.length) {
       rec.line('seed');
       rec.step(`List ${letter(l)} is empty, so it puts nothing in the heap.`);
@@ -215,6 +227,7 @@ export function mergeK(s: MergeState, rec: Rec): Item[] {
     }
     const it = list[0];
     heap.push(it);
+    rec.vars({ heap: heapVals(heap), entry: rec.recording ? tup(it) : undefined });
     rec.mark(hid(it), 'key');
     rec.line('seed', 'push');
     const probe: Probe = { text: String(it.key), at: hid(it) };
@@ -228,11 +241,16 @@ export function mergeK(s: MergeState, rec: Rec): Item[] {
     rec.unmark(hid(it));
   }
 
+  // merge_k's own variables: value, n, i come from the root entry.
+  const showK = (top: Item, root: Item) =>
+    rec.recording &&
+    rec.vars({ heap: heapVals(s.heap, root), value: top.key, n: top.list, i: top.idx, out: values(s.out) });
   while (heap.length) {
     const top = heap[0];
     const l = top.list;
     take(s, top, rec);
     s.heap[0] = null;
+    showK(top, top);
     rec.line('pop');
     rec.step(
       s.out.length === 1
@@ -245,6 +263,7 @@ export function mergeK(s: MergeState, rec: Rec): Item[] {
     if (s.ptr[l] < list.length) {
       const next = list[s.ptr[l]];
       heap[0] = next;
+      showK(top, next);
       rec.mark(hid(next), 'key');
       rec.line('refill', 'replace');
       rec.step(`${letter(l)} has more. Its next item, ${next.key}, goes into the root, where ${top.key} was. It may be too large there, so sift it down.`, {
@@ -255,6 +274,7 @@ export function mergeK(s: MergeState, rec: Rec): Item[] {
     } else if (heap.length > 1) {
       const last = heap.pop()!;
       heap[0] = last;
+      showK(top, last);
       rec.mark(hid(last), 'key');
       rec.line('drained', 'shrink');
       rec.step(
@@ -265,12 +285,14 @@ export function mergeK(s: MergeState, rec: Rec): Item[] {
       rec.unmark(hid(last));
     } else {
       heap.pop();
+      showK(top, top);
       rec.line('drained', 'shrink');
       rec.step(`${letter(l)} has run out too. It was the last list with items left, so the heap is empty and the merge is over.`);
     }
   }
 
   rec.clearMarks();
+  rec.vars({ heap: [], out: values(s.out) });
   rec.line('done_k');
   rec.step(
     n === 0
@@ -278,6 +300,14 @@ export function mergeK(s: MergeState, rec: Rec): Item[] {
       : `Done: ${n} items from ${k} lists, ${plural(ctx.cmp, 'comparison')}. Each item passed once through a heap of at most k = ${k}: O(n log k).`,
   );
   return s.out;
+}
+
+/** A heap entry as the listing holds it: (value, list number, index in that list). */
+const tup = (it: Item) => `(${it.key}, ${it.list}, ${it.idx})`;
+
+/** The heap's values, root first. root stands in for the hole at index 0. */
+function heapVals(heap: (Item | null)[], root?: Item): number[] {
+  return heap.map((it, k) => (k === 0 && root ? root : it)).filter((it): it is Item => it !== null).map((it) => it.key);
 }
 
 function siftUp(s: MergeState, start: number, rec: Rec, ctx: { cmp: number }): void {
@@ -288,6 +318,7 @@ function siftUp(s: MergeState, start: number, rec: Rec, ctx: { cmp: number }): v
   while (i > 0) {
     const p = (i - 1) >> 1;
     const parent = heap[p];
+    if (rec.recording) rec.vars({ heap: heapVals(heap), entry: tup(it), i, parent: p, 'heap[parent]': tup(parent) });
     rec.mark(hid(parent), 'compare');
     ctx.cmp++;
     const where = `The parent of index ${i} is index ${p}, ${parent.key} from ${letter(parent.list)}.`;
@@ -315,6 +346,7 @@ function siftUp(s: MergeState, start: number, rec: Rec, ctx: { cmp: number }): v
     });
     heap[p] = it;
     heap[i] = parent;
+    if (rec.recording) rec.vars({ heap: heapVals(heap), entry: tup(it), i: p, parent: p, 'heap[parent]': tup(it) });
     rec.unmark(hid(parent));
     rec.line('seed', 'up_swap');
     rec.step(`Swap: ${it.key} rises to index ${p} and ${parent.key} drops to index ${i}.`, { probe });
@@ -330,8 +362,12 @@ function siftDown(s: MergeState, rec: Rec, ctx: { cmp: number }): void {
   let i = 0;
   for (;;) {
     const l = 2 * i + 1;
+    const showD = (child: number) =>
+      rec.recording &&
+      rec.vars({ heap: heapVals(heap), i, child, right: l + 1, 'heap[i]': tup(heap[i]), 'heap[child]': heap[child] ? tup(heap[child]) : undefined });
     if (l >= size) {
       if (i === 0) {
+        showD(l);
         rec.line('children', 'leaf');
         rec.step(`${it.key} is the only entry in the heap, so there is nothing to compare it with.`, { probe });
       }
@@ -350,12 +386,14 @@ function siftDown(s: MergeState, rec: Rec, ctx: { cmp: number }): void {
       ctx.cmp++;
       if (less(right, left)) {
         c = r;
+        showD(c);
         rec.line('children', 'pick', 'pick_right');
         rec.compare(left.key, op === '=' ? '=' : '>', right.key, op === '=' ? `a tie: ${letter(right.list)} is earlier, so the right child` : 'the right child is smaller', {
           probe,
           message: `${where} Find the smaller child first: only it could sit above the other.`,
         });
       } else {
+        showD(c);
         rec.line('children', 'pick');
         rec.compare(left.key, op === '=' ? '=' : '<', right.key, op === '=' ? `a tie: ${letter(left.list)} is earlier, so the left child` : 'the left child is smaller', {
           probe,
@@ -365,6 +403,7 @@ function siftDown(s: MergeState, rec: Rec, ctx: { cmp: number }): void {
       rec.unmark(hid(c === l ? right : left));
       lead = `Now test ${it.key} against the smaller child, ${heap[c].key}.`;
     } else {
+      showD(c);
       rec.mark(hid(heap[l]), 'compare');
       lead = `Index ${i} has one child, at index ${l}: ${heap[l].key} from ${letter(heap[l].list)}.`;
     }
@@ -394,6 +433,8 @@ function siftDown(s: MergeState, rec: Rec, ctx: { cmp: number }): void {
     });
     heap[i] = child;
     heap[c] = it;
+    // i = child is on the same lit line, so the strip shows i after it.
+    if (rec.recording) rec.vars({ heap: heapVals(heap), i: c, child: c, right: l + 1, 'heap[i]': tup(it), 'heap[child]': tup(it) });
     rec.unmark(hid(child));
     rec.line('down_swap');
     rec.step(`Swap: ${child.key} rises to index ${i} and ${it.key} drops to index ${c}.`, { probe });
@@ -450,6 +491,7 @@ export function load(s: MergeState, name: string, rec: Rec): void {
   const n = s.presses[name] ?? 0;
   s.presses[name] = n + 1;
   setLists(s, n === 0 ? preset.first : preset.random());
+  rec.vars();
   rec.clearMarks();
   rec.line('load');
   rec.step(`Loaded ${s.lists.map((l, i) => `${letter(i)}: ${values(l).join(' ') || 'empty'}`).join('; ')}. ${preset.say}`);
@@ -469,6 +511,7 @@ export function parseNumbers(raw: string | number): number[] | null {
  * dropped: typing a list means a two-way merge.
  */
 export function setList(s: MergeState, l: 0 | 1, raw: string | number, rec: Rec): void {
+  rec.vars();
   rec.clearMarks();
   rec.line('load');
   const vals = parseNumbers(raw);
@@ -492,6 +535,7 @@ export function setList(s: MergeState, l: 0 | 1, raw: string | number, rec: Rec)
   lists[l] = sorted.slice(0, CAP[2]);
   for (let i = 0; i < 2; i++) lists[i] = lists[i].slice(0, CAP[2]);
   setLists(s, lists);
+  rec.vars({ values: vals });
   rec.step(`List ${letter(l)} is now ${values(s.lists[l]).join(' ')}. ${notes.join(' ')}`.trim());
 }
 

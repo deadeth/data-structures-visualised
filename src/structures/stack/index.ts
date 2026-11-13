@@ -45,6 +45,7 @@ function grow(s: StackState, rec: Rec, probe: Probe): number {
   const old = s.slots;
   const bigger = new Array<number | null>(old.length * 2).fill(null);
   if (rec.recording) s.next = bigger;
+  rec.vars({ size: s.size, 'len(items)': old.length, 'len(bigger)': bigger.length });
   rec.line('allocate');
   rec.step(
     `Allocate a new array with twice the room: ${bigger.length} slots. An array cannot be stretched where it sits, so every item has to move to the new one.`,
@@ -56,6 +57,7 @@ function grow(s: StackState, rec: Rec, probe: Probe): number {
     rec.count('writes');
     rec.mark(slotId(s.gen, i), 'path');
     rec.mark(slotId(s.gen + 1, i), 'ok');
+    rec.vars({ size: s.size, i, 'items[i]': old[i], 'bigger[i]': bigger[i] });
     rec.line('copy');
     rec.step(
       i === 0
@@ -68,6 +70,7 @@ function grow(s: StackState, rec: Rec, probe: Probe): number {
   s.gen++;
   s.next = null;
   rec.clearMarks();
+  rec.vars({ size: s.size, 'len(items)': bigger.length });
   rec.line('swap');
   rec.step(
     `Point the stack at the new array and let the old one go. Capacity is now ${bigger.length}, so ${plural(bigger.length - s.size, 'slot')} are free.`,
@@ -82,6 +85,7 @@ export function push(s: StackState, key: number, rec: Rec): boolean {
   const waiting: Probe = { text: label, at: SIZE };
   const capacity = s.slots.length;
   let copies = 0;
+  rec.vars({ key, size: s.size, 'len(items)': capacity });
   rec.mark(SIZE, 'compare');
   rec.line('full');
   if (s.size === capacity) {
@@ -105,6 +109,7 @@ export function push(s: StackState, key: number, rec: Rec): boolean {
   s.slots[at] = key;
   rec.count('writes');
   rec.mark(slotId(s.gen, at), 'key');
+  rec.vars({ key, size: s.size, 'items[size]': key });
   const probe: Probe = { text: label, at: slotId(s.gen, at) };
   rec.line('write');
   rec.step(`Write ${key} into slot ${at}. The first free slot is always at index size, so there is nothing to search for and nothing to shift.`, {
@@ -112,6 +117,7 @@ export function push(s: StackState, key: number, rec: Rec): boolean {
   });
 
   s.size++;
+  rec.vars({ key, size: s.size, 'len(items)': s.slots.length });
   rec.mark(SIZE, 'ok');
   rec.line('up');
   const free = s.slots.length - s.size;
@@ -129,6 +135,7 @@ export function push(s: StackState, key: number, rec: Rec): boolean {
 
 /** Take the top item off and return it, or null when the stack is empty. */
 export function pop(s: StackState, rec: Rec): number | null {
+  rec.vars({ size: s.size });
   rec.mark(SIZE, 'compare');
   rec.line('empty');
   if (s.size === 0) {
@@ -145,16 +152,19 @@ export function pop(s: StackState, rec: Rec): number | null {
   rec.unmark(SIZE);
 
   rec.mark(slotId(s.gen, at), 'key');
+  rec.vars({ size: s.size, 'size - 1': at, key });
   rec.line('read');
   rec.step(`The top item is always at index size - 1, which is slot ${at}. Read ${key} from it. It was pushed last, so it leaves first.`, { probe });
 
   s.slots[at] = null;
+  rec.vars({ size: s.size, 'size - 1': at, key, 'items[size - 1]': null });
   rec.count('writes');
   rec.mark(slotId(s.gen, at), 'bad');
   rec.line('clear');
   rec.step(`Clear slot ${at} so the stack no longer holds on to ${key}.`, { probe });
 
   s.size--;
+  rec.vars({ size: s.size, key });
   rec.clearMarks();
   rec.mark(SIZE, 'ok');
   rec.line('down');
@@ -168,6 +178,7 @@ export function pop(s: StackState, rec: Rec): number | null {
 
 /** Read the top item without removing it, or null when the stack is empty. */
 export function peek(s: StackState, rec: Rec): number | null {
+  rec.vars({ size: s.size });
   rec.mark(SIZE, 'compare');
   rec.line('empty');
   if (s.size === 0) {
@@ -183,6 +194,7 @@ export function peek(s: StackState, rec: Rec): number | null {
   rec.compare(`size ${s.size}`, '>', 0, `the stack is not empty, so there is a top item to read`, { probe });
   rec.unmark(SIZE);
   rec.mark(slotId(s.gen, at), 'ok');
+  rec.vars({ size: s.size, 'size - 1': at, 'items[size - 1]': key });
   rec.line('read');
   rec.step(`The top item is ${key}, at index size - 1, which is slot ${at}. Peek reads it and leaves it where it is: one check and no writes.`, { probe });
   return key;

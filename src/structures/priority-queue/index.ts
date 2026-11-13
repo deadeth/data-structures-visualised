@@ -46,6 +46,7 @@ const range = (a: number, b: number) => (a === b ? `slot ${a} is` : `slots ${a} 
 export function insert(s: PQState, key: number, rec: Rec): boolean {
   const label = String(key);
   const n = s.size;
+  rec.vars({ key, size: n });
   if (n === s.slots.length) {
     rec.line('full');
     rec.step(
@@ -59,6 +60,7 @@ export function insert(s: PQState, key: number, rec: Rec): boolean {
   let comparisons = 0;
   const middle = () => (lo + hi) >> 1;
   if (rec.recording) s.window = { lo, hi };
+  rec.vars({ key, size: n, lo, hi });
   rec.line('window');
   rec.step(
     n === 0
@@ -76,6 +78,7 @@ export function insert(s: PQState, key: number, rec: Rec): boolean {
         ? `Only slot ${mid} is left in the window, and it holds ${there}.`
         : `The window is slots ${lo} to ${hi - 1}, so the middle is slot ${mid}, which holds ${there}.`;
     comparisons++;
+    rec.vars({ key, size: n, lo, hi, mid, 'items[mid]': there });
     rec.mark(itemId(there), 'compare');
     // One three-way decision per middle key, as in the listing. The frame that says which half is ruled out
     // already shows it dimmed and the tag moved, with the test and the branch it takes lit together.
@@ -84,6 +87,7 @@ export function insert(s: PQState, key: number, rec: Rec): boolean {
       for (let i = lo; i < mid; i++) rec.mark(at(s, i), 'dim');
       lo = mid + 1;
       if (rec.recording) s.window = { lo, hi };
+      rec.vars({ key, size: n, lo, hi, mid, 'items[mid]': there });
       rec.line('mid', 'less', 'right');
       rec.compare(key, '<', there, `go right`, {
         probe,
@@ -95,6 +99,7 @@ export function insert(s: PQState, key: number, rec: Rec): boolean {
       const top = hi - 1;
       hi = mid;
       if (rec.recording) s.window = { lo, hi };
+      rec.vars({ key, size: n, lo, hi, mid, 'items[mid]': there });
       rec.line('mid', 'more', 'left');
       rec.compare(key, '>', there, `go left`, {
         probe,
@@ -132,6 +137,7 @@ export function insert(s: PQState, key: number, rec: Rec): boolean {
     const moved = s.slots[i - 1] as number;
     s.slots[i] = moved;
     s.slots[i - 1] = null;
+    rec.vars({ key, size: n, lo: pos, i, 'items[i]': moved });
     rec.count('writes');
     rec.mark(itemId(moved), 'ok');
     rec.line('shift');
@@ -144,6 +150,7 @@ export function insert(s: PQState, key: number, rec: Rec): boolean {
   }
 
   s.slots[pos] = key;
+  rec.vars({ key, size: n, lo: pos, 'items[lo]': key });
   rec.count('writes');
   rec.clearMarks();
   rec.mark(itemId(key), 'key');
@@ -159,6 +166,7 @@ export function insert(s: PQState, key: number, rec: Rec): boolean {
   );
 
   s.size++;
+  rec.vars({ key, size: s.size, lo: pos });
   rec.line('done');
   const cost = `${key} is queued after ${plural(comparisons, 'comparison')} and ${plural(shifts, 'shift')}.`;
   rec.step(
@@ -176,6 +184,7 @@ export function insert(s: PQState, key: number, rec: Rec): boolean {
 
 /** Take out the smallest key and return it, or null when the queue is empty. */
 export function popMin(s: PQState, rec: Rec): number | null {
+  rec.vars({ size: s.size });
   if (s.size === 0) {
     rec.line('empty');
     rec.step(`The queue is empty, so there is nothing to take.`);
@@ -184,6 +193,7 @@ export function popMin(s: PQState, rec: Rec): number | null {
   const last = s.size - 1;
   const key = s.slots[last] as number;
   const label = String(key);
+  rec.vars({ size: s.size, 'size - 1': last, key });
   rec.mark(itemId(key), 'key');
   rec.line('last');
   rec.step(`The most urgent item is always in the last slot in use, at index size - 1, which is slot ${last}. That is ${key}. There is no search and no comparison.`, {
@@ -191,6 +201,7 @@ export function popMin(s: PQState, rec: Rec): number | null {
   });
 
   s.slots[last] = null;
+  rec.vars({ size: s.size, 'size - 1': last, key, 'items[size - 1]': null });
   rec.count('writes');
   rec.clearMarks();
   rec.mark(emptyId(last), 'bad');
@@ -200,6 +211,7 @@ export function popMin(s: PQState, rec: Rec): number | null {
   });
 
   s.size--;
+  rec.vars({ size: s.size, key });
   rec.clearMarks();
   rec.line('done');
   rec.step(
@@ -211,6 +223,7 @@ export function popMin(s: PQState, rec: Rec): number | null {
 
 /** Read the smallest key without removing it, or null when the queue is empty. */
 export function peek(s: PQState, rec: Rec): number | null {
+  rec.vars({ size: s.size });
   if (s.size === 0) {
     rec.line('empty');
     rec.step(`The queue is empty, so there is no most urgent item to read.`);
@@ -218,6 +231,7 @@ export function peek(s: PQState, rec: Rec): number | null {
   }
   const last = s.size - 1;
   const key = s.slots[last] as number;
+  rec.vars({ size: s.size, 'size - 1': last, 'items[size - 1]': key });
   rec.mark(itemId(key), 'ok');
   rec.line('last');
   rec.step(`The most urgent item is ${key}. It is always in the last slot in use, here slot ${last}, so peek reads it with no comparisons and no writes.`, {

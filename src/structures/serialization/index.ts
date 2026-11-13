@@ -1,6 +1,6 @@
 import { CAPTION_ROOM, LABEL_MAX, PROBE_H, SUB_ROOM, labelWidth } from '../../core/fit';
 import { CELL_H, TRAY_PAD, cellsWidth } from '../../core/geometry';
-import type { Cell, Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef, Tone } from '../../core/types';
+import type { Cell, Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef, Tone, VarValue } from '../../core/types';
 import java from './code/Serialization.java?raw';
 import python from './code/serialization.py?raw';
 import { info } from './info';
@@ -251,6 +251,8 @@ interface VarintOpts {
   intro?: string;
   /** Show the 7-bit groups and the bytes on the bench. */
   bits?: boolean;
+  /** The caller's variables, shown before write_varint's own n. */
+  ctx?: Record<string, VarValue>;
 }
 
 /** Write n as a varint into group g, one comparison per byte, as write_varint does. */
@@ -269,6 +271,7 @@ function writeVarint(s: SerState, rec: Rec, g: Group, n: number, o: VarintOpts):
     const cell = g.bytes.length - 1;
     if (o.bits) s.bench[1].push({ text: `${last ? 0 : 1} ${bin(rest % 128, 7)}`, sub: hex(b) });
     rec.markCell(g.id, cell, 'key');
+    rec.vars({ ...o.ctx, n: rest });
     rec.line(...o.lead, last ? 'w_last' : 'w_more');
     const lead = i === 0 && o.intro ? `${o.intro} ` : '';
     rec.compare(`${o.what}: ${rest}`, last ? '<' : '≥', 128, last ? 'last byte: top bit clear' : 'more bytes follow: top bit set', {
@@ -291,6 +294,9 @@ function pushBytes(rec: Rec, g: Group, bytes: number[], roles: (i: number) => st
   rec.count('written', bytes.length);
   return bytes.map((_, i) => from + i);
 }
+
+/** A string's UTF-8 bytes as Python prints them. */
+const pyBytes = (v: string) => `b'${v}'`;
 
 const chars = (v: string) => {
   const list = [...v];
@@ -322,6 +328,7 @@ function encodeProtoAnim(s: SerState, rec: Rec, level: Level): void {
     if (detail) markRow(rec, row, 'path');
     if (v === null || (Array.isArray(v) && v.length === 0)) {
       if (detail) {
+        rec.vars({ f: f.name, value: v });
         rec.line('e_field', 'e_absent');
         rec.step(`Field ${f.num}, ${f.name}, is unset. Nothing is written for it, not even a key: an absent field costs 0 bytes.`, { probe: atRow });
         unmarkRow(rec, row);
@@ -331,7 +338,9 @@ function encodeProtoAnim(s: SerState, rec: Rec, level: Level): void {
     const wire = wireOf(f.kind);
     const g = newGroup(s, f);
     const type = typeName('protobuf', f.kind);
+    const ctx: Record<string, VarValue> = { f: f.name, value: v, wire };
     if (detail) {
+      rec.vars(ctx);
       rec.line('e_field');
       rec.step(
         `Field ${f.num}, ${f.name} = ${show(v, true)}. Its type, ${type}, travels as wire type ${wire}, ${wire === 0 ? 'a varint' : 'length-delimited: a length, then that many bytes'}.`,
@@ -346,15 +355,17 @@ function encodeProtoAnim(s: SerState, rec: Rec, level: Level): void {
       what: `${f.name} key`,
       follow: f.name,
       roles: () => 'key',
+      ctx,
       intro: `The key is (field number << 3) | wire type = (${f.num} << 3) | ${wire} = ${key}. The name "${f.name}" is never sent.`,
     });
     if (typeof v === 'string') {
       const b = utf8(v);
       if (detail) s.bench = [];
-      writeVarint(s, rec, g, b.length, { detail, lead: ['e_len'], what: `${f.name} length`, follow: f.name, roles: () => 'len', intro: `Then the length: "${v}" is ${bytesWord(b.length)} of UTF-8.` });
+      writeVarint(s, rec, g, b.length, { detail, lead: ['e_len'], what: `${f.name} length`, follow: f.name, roles: () => 'len', ctx: { ...ctx, data: pyBytes(v) }, intro: `Then the length: "${v}" is ${bytesWord(b.length)} of UTF-8.` });
       const cells = pushBytes(rec, g, b, chars(v));
       if (detail) {
         for (const c of cells) rec.markCell(g.id, c, 'key');
+        rec.vars({ ...ctx, data: pyBytes(v), 'len(out)': flat(s).length });
         rec.line('e_bytes');
         rec.step(`Then the ${bytesWord(b.length)} themselves: ${b.map(hex).join(' ')}. A reader that does not know field ${f.num} can jump over them using the length alone.`, {
           probe: { text: f.name, at: g.id, cell: cells[0] },
@@ -369,6 +380,7 @@ function encodeProtoAnim(s: SerState, rec: Rec, level: Level): void {
         const xb = varintBytes(x);
         if (detail) {
           s.bench[0].push(...xb.map((b) => ({ text: hex(b), sub: String(x) })));
+          rec.vars({ ...ctx, v: x, n: x, 'len(packed)': packed.length });
           rec.line('e_pack', xb.length > 1 ? 'w_more' : 'w_last');
           rec.compare(`${f.name}: ${x}`, xb.length > 1 ? '≥' : '<', 128, xb.length > 1 ? 'more than one byte' : 'one byte', {
             probe: { text: f.name, at: 'b0', cell: s.bench[0].length - 1 },
@@ -378,7 +390,7 @@ function encodeProtoAnim(s: SerState, rec: Rec, level: Level): void {
         }
         packed.push(...xb);
       }
-      writeVarint(s, rec, g, packed.length, { detail, lead: ['e_len'], what: `${f.name} length`, follow: f.name, roles: () => 'len', intro: `The packed values take ${bytesWord(packed.length)}, so the length is ${packed.length}.` });
+      writeVarint(s, rec, g, packed.length, { detail, lead: ['e_len'], what: `${f.name} length`, follow: f.name, roles: () => 'len', ctx: { ...ctx, 'len(packed)': packed.length }, intro: `The packed values take ${bytesWord(packed.length)}, so the length is ${packed.length}.` });
       const cells = pushBytes(rec, g, packed, (i) => {
         let at = 0;
         for (const x of v) {
@@ -390,6 +402,7 @@ function encodeProtoAnim(s: SerState, rec: Rec, level: Level): void {
       });
       if (detail) {
         for (const c of cells) rec.markCell(g.id, c, 'key');
+        rec.vars({ ...ctx, 'len(packed)': packed.length, 'len(out)': flat(s).length });
         rec.line('e_bytes');
         rec.step(`Then the packed bytes: ${packed.map(hex).join(' ')}. Two numbers under one key and one length.`, { probe: { text: f.name, at: g.id, cell: cells[0] } });
         for (const c of cells) rec.markCell(g.id, c, 'ok');
@@ -398,6 +411,7 @@ function encodeProtoAnim(s: SerState, rec: Rec, level: Level): void {
       const n = f.kind === 'sint' ? zigzag(v) : v;
       if (f.kind === 'sint' && detail) {
         s.bench = [[{ text: String(v), sub: 'value' }], [{ text: String(n), sub: 'zigzag' }]];
+        rec.vars({ ...ctx, n: v, 'zigzag(n)': n });
         rec.line('e_zigzag', 'z_enc');
         rec.step(`sint32 zigzags first: zigzag(${v}) = ${n}. Small negative numbers then stay short, but the bytes are different from int32's.`, { probe: { text: f.name, at: g.id, cell: 0 } });
       }
@@ -407,6 +421,7 @@ function encodeProtoAnim(s: SerState, rec: Rec, level: Level): void {
         what: f.name,
         follow: f.name,
         roles: varintRoles(varintBytes(n).length),
+        ctx,
         intro: `Now the value as a varint: 7 bits per byte, lowest group first, with the top bit of each byte saying whether another follows. ${n} = ${bin(n, 0)} in binary.`,
         bits: true,
       });
@@ -416,6 +431,7 @@ function encodeProtoAnim(s: SerState, rec: Rec, level: Level): void {
   const total = flat(s).length;
   const jsonLen = sizeIn('json', s.wrote);
   sizesBench(s);
+  rec.vars({ 'len(out)': total });
   rec.line('e_done');
   if (level === 'none') return;
   rec.step(
@@ -433,7 +449,9 @@ function encodeAvroAnim(s: SerState, rec: Rec, level: Level): void {
     if (level !== 'none') markRow(rec, row, 'path');
     const g = newGroup(s, f);
     const atRow: Probe = { text: f.name, at: firstCell(s, row), place: 'left' };
+    const ctx: Record<string, VarValue> = { f: f.name, type_: typeName('avro', f.kind), value: v };
     if (detail) {
+      rec.vars(ctx);
       rec.line('a_field');
       rec.step(
         idx === 0
@@ -442,7 +460,7 @@ function encodeAvroAnim(s: SerState, rec: Rec, level: Level): void {
         { probe: atRow },
       );
     }
-    const o = (lead: string[], what: string, roles: (i: number) => string, intro?: string, bits = false): VarintOpts => ({ detail, lead, what, follow: f.name, roles, intro, bits });
+    const o = (lead: string[], what: string, roles: (i: number) => string, intro?: string, bits = false): VarintOpts => ({ detail, lead, what, follow: f.name, roles, intro, bits, ctx });
     if (f.kind === 'opt') {
       if (v === null) writeVarint(s, rec, g, 0, o(['a_branch'], `${f.name} branch`, () => 'null', `${f.name} is a union of null and string, and it is null: write the branch number, 0, zigzagged, which is 0.`));
       else {
@@ -457,6 +475,7 @@ function encodeAvroAnim(s: SerState, rec: Rec, level: Level): void {
       const cells = pushBytes(rec, g, b, chars(v));
       if (detail) {
         for (const c of cells) rec.markCell(g.id, c, 'key');
+        rec.vars({ ...ctx, data: pyBytes(v), 'len(out)': flat(s).length });
         rec.line('a_bytes');
         rec.step(`Then the ${bytesWord(b.length)} of "${v}": ${b.map(hex).join(' ')}.`, { probe: { text: f.name, at: g.id, cell: cells[0] } });
         for (const c of cells) rec.markCell(g.id, c, 'ok');
@@ -471,6 +490,7 @@ function encodeAvroAnim(s: SerState, rec: Rec, level: Level): void {
       const n = zigzag(v ?? 0);
       if (detail) {
         s.bench = [[{ text: String(v), sub: 'value' }], [{ text: String(n), sub: 'zigzag' }]];
+        rec.vars({ ...ctx, 'zigzag(value)': n });
         rec.line('a_int', 'z_enc');
         rec.step(`Avro zigzags every int: zigzag(${v}) = ${n}. 0, −1, 1, −2 become 0, 1, 2, 3, so small negative numbers stay one byte.`, { probe: { text: f.name, at: g.id } });
       }
@@ -478,6 +498,7 @@ function encodeAvroAnim(s: SerState, rec: Rec, level: Level): void {
     }
     if (level === 'field') {
       for (let c = 0; c < g.bytes.length; c++) rec.markCell(g.id, c, 'ok');
+      rec.vars({ ...ctx, 'len(out)': flat(s).length });
       rec.line('a_field', ...anchorsForAvroWrite(f.kind));
       rec.step(
         (idx === 0 ? `In Avro, values go out in the writer's schema order with no keys and no names. ` : ``) +
@@ -488,6 +509,7 @@ function encodeAvroAnim(s: SerState, rec: Rec, level: Level): void {
     if (level !== 'none') unmarkRow(rec, row);
   });
   sizesBench(s);
+  rec.vars({ 'len(out)': flat(s).length });
   rec.line('a_done');
   if (level === 'none') return;
   rec.step(
@@ -518,6 +540,7 @@ function encodeJsonAnim(s: SerState, rec: Rec, level: Level): void {
     if (level === 'full') markRow(rec, row, 'path');
     if (!part) {
       if (level === 'full') {
+        rec.vars({ f: f.name, value: null });
         rec.line('j_field');
         rec.step(`${f.name} is null, so the key is left out.`, { probe: { text: f.name, at: firstCell(s, row), place: 'left' } });
         unmarkRow(rec, row);
@@ -530,6 +553,7 @@ function encodeJsonAnim(s: SerState, rec: Rec, level: Level): void {
     rec.count('written', g.bytes.length);
     if (level === 'full') {
       rec.markCell(g.id, 0, 'key');
+      rec.vars({ f: f.name, value: valueOf(s.wrote, f), text: part.text.replace(/^[{,]|}$/g, '').slice(f.name.length + 3) });
       rec.line('j_field');
       rec.step(`${f.name}: ${part.text} is ${bytesWord(g.bytes.length)}. The name goes out in full, in quotes, on every record, and ${show(valueOf(s.wrote, f), true)} goes as text.`, {
         probe: { text: f.name, at: g.id },
@@ -539,6 +563,7 @@ function encodeJsonAnim(s: SerState, rec: Rec, level: Level): void {
     }
   }
   sizesBench(s);
+  rec.vars({ 'len(parts)': s.groups.length });
   rec.line('j_done');
   if (level === 'none') return;
   rec.step(`Done: ${bytesWord(flat(s).length)} of JSON, against ${sizeIn('protobuf', s.wrote)} for protobuf and ${sizeIn('avro', s.wrote)} for Avro. It needs no schema to read, and that is both its strength and its weakness.`);
@@ -580,6 +605,7 @@ function protoDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): voi
   let skipped = 0;
   let bad = 0;
   if (focus === 'all') {
+    rec.vars({ pos: 0, 'len(data)': bytes.length });
     rec.line('d_loop');
     rec.step(`The reader has ${bytesWord(bytes.length)} and its own schema, ${SCHEMAS[s.reader].label}. It does not need the writer's schema: every field carries its own number.`);
   }
@@ -602,6 +628,7 @@ function protoDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): voi
         const b = bytes[pos + i];
         const last = i === k.len - 1;
         rec.markCell(g.id, b.c, 'key');
+        if (rec.recording) rec.vars({ pos: pos + i + 1, b: `0x${hex(b.v)}`, n: readVarintAt(bytes.slice(pos, pos + i + 1), 0).n, shift: 7 * (i + 1) });
         rec.line('d_key', last ? 'v_stop' : 'v_bits');
         rec.compare(`key byte ${hex(b.v)}`, last ? '<' : '≥', '80', last ? 'top bit clear: the key ends here' : 'top bit set: read on', {
           probe: { text: hex(b.v), at: g.id, cell: b.c },
@@ -609,6 +636,7 @@ function protoDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): voi
         });
       }
       s.bench = [[{ text: bin(k.n, 8), sub: `key = ${k.n}` }], [{ text: bin(num, 5), sub: `field ${num}` }, { text: bin(wire, 3), sub: `wire ${wire}` }]];
+      rec.vars({ pos: pos + k.len, key: k.n, num, wire });
       rec.line('d_split');
       for (const c of keyCells) rec.markCell(g.id, c, 'path');
       rec.step(`Split the key ${k.n} = ${bin(k.n, 8)}: the low 3 bits are the wire type, ${wire}, and the rest is the field number, ${num}.`, { probe: { text: `field ${num}`, at: g.id, cell: keyCells[0] } });
@@ -616,6 +644,7 @@ function protoDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): voi
     pos += k.len;
     if (!known) {
       if (detail) {
+        rec.vars({ pos, key: k.n, num, wire, f: f ? f.name : null });
         rec.line('d_lookup', 'd_unknown');
         if (f) rec.compare(`field ${num} wire ${wire}`, '≠', `wire ${wireOf(f.kind)}`, 'wrong wire type: skip it as unknown', { probe: { text: `field ${num}`, at: g.id, cell: keyCells[0] } });
         else
@@ -631,6 +660,7 @@ function protoDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): voi
         rec.line('s_varint');
       } else if (wire === 2) {
         const len = readVarintAt(bytes, pos);
+        rec.vars({ pos: pos + len.len, num, wire, size: len.n });
         rec.line('s_len', 'v_stop');
         if (detail) rec.markCell(g.id, bytes[pos]?.c ?? 0, 'key');
         if (detail)
@@ -647,6 +677,7 @@ function protoDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): voi
       skipped++;
       g.state = 'skipped';
       rec.unmark(g.id);
+      rec.vars({ pos, num, wire });
       if (detail)
         rec.step(
           `Jump ${bytesWord(pos - start)} ahead without looking at them. The old reader carries on with the next key. This is forward compatibility: old code reads data written by new code.`,
@@ -672,8 +703,10 @@ function protoDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): voi
         const sofar = acc;
         const shift = i * 7;
         mul *= 128;
+        const at = pos + i + 1;
         frames.push(() => {
           rec.markCell(b.g.id, b.c, 'key');
+          rec.vars({ f: field.name, pos: at, b: `0x${hex(b.v)}`, n: sofar, shift: shift + 7 });
           rec.line('d_varint', 'v_bits', last ? 'v_stop' : 'v_bits');
           rec.compare(`${field.name}: byte ${hex(b.v)}`, last ? '<' : '≥', '80', last ? 'last byte' : 'more bytes follow', {
             probe: { text: field.name, at: b.g.id, cell: b.c },
@@ -686,14 +719,17 @@ function protoDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): voi
       value = field.kind === 'sint' ? unzigzag(v.n) : v.n;
       if (field.kind === 'sint')
         frames.push(() => {
+          rec.vars({ f: field.name, pos, n: value as number });
           rec.line('d_zigzag', 'z_dec');
           rec.step(`sint32: undo the zigzag. ${v.n} becomes ${value}.`, { probe: { text: field.name, at: g.id, cell: keyCells[0] } });
         });
     } else {
       const len = readVarintAt(bytes, pos);
       const lb = bytes[pos];
+      const lenAt = pos + len.len;
       frames.push(() => {
         rec.markCell(lb.g.id, lb.c, 'key');
+        rec.vars({ f: field.name, pos: lenAt, size: len.n, end: lenAt + len.n });
         rec.line('d_len', 'v_stop');
         rec.compare(`${field.name} length byte ${hex(lb.v)}`, '<', '80', 'one byte: the length', {
           probe: { text: field.name, at: lb.g.id, cell: lb.c },
@@ -712,7 +748,9 @@ function protoDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): voi
           const cells = body.slice(p, p + it.len);
           items.push(it.n);
           const sofar = [...items];
+          const itemEnd = pos + p + it.len;
           frames.push(() => {
+            rec.vars({ f: field.name, pos: itemEnd, end: pos + len.n, v: it.n, values: sofar });
             for (const b of cells) rec.markCell(b.g.id, b.c, 'key');
             rec.line('d_unpack', 'v_stop');
             rec.compare(`${field.name}: byte ${hex(cells[cells.length - 1].v)}`, '<', '80', `item ${it.n}`, {
@@ -726,8 +764,10 @@ function protoDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): voi
         value = items;
       } else {
         value = new TextDecoder().decode(new Uint8Array(body.map((b) => b.v)));
+        const textAt = pos;
         frames.push(() => {
           for (const b of body) rec.markCell(b.g.id, b.c, 'key');
+          rec.vars({ f: field.name, pos: textAt, size: len.n, end, 'record[f.name]': value });
           rec.line('d_text');
           rec.step(`The next ${bytesWord(body.length)}, ${body.map((b) => hex(b.v)).join(' ')}, are the string in UTF-8: "${value}".`, { probe: { text: field.name, at: g.id, cell: body[0]?.c ?? 0 } });
           for (const b of body) rec.markCell(b.g.id, b.c, 'path');
@@ -739,6 +779,7 @@ function protoDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): voi
     const row = rrow(field.name);
     if (detail) {
       markRow(rec, row, 'compare');
+      rec.vars({ pos: valueStart, key: k.n, num, wire, f: field.name });
       rec.line('d_lookup');
       rec.compare(`field ${num}`, '=', `${field.name} (${num})`, `known: read it as ${type}`, {
         probe: { text: `field ${num}`, at: row, place: 'right' },
@@ -754,6 +795,7 @@ function protoDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): voi
       rec.markCell(row, 0, 'bad');
     }
     if (detail) {
+      rec.vars({ pos, key: k.n, num, wire, f: field.name, 'record[f.name]': value });
       rec.line(wire === 0 ? 'd_varint' : field.kind === 'ints' ? 'd_unpack' : 'd_text');
       rec.step(
         wrong
@@ -763,6 +805,7 @@ function protoDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): voi
       );
     } else {
       markRow(rec, row, 'compare');
+      rec.vars({ pos, key: k.n, num, wire, f: field.name, 'record[f.name]': value });
       rec.line('d_lookup', wire === 0 ? 'd_varint' : field.kind === 'ints' ? 'd_unpack' : 'd_text');
       rec.compare(`field ${num}`, '=', `${field.name} (${num})`, `known: ${field.name} = ${show(value)}`, {
         probe: { text: `field ${num}`, at: row, place: 'right' },
@@ -773,6 +816,7 @@ function protoDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): voi
   }
   const defaults = finishDefaults(s, rec, 'd_default');
   rec.clearMarks();
+  rec.vars({ pos, 'len(data)': bytes.length, record: Object.keys(s.read) });
   rec.line('d_done');
   rec.step(
     `Read ${bytesWord(bytes.length)}: ${Object.keys(s.read).length - defaults} fields from the bytes, ${skipped} skipped, ${defaults} from defaults.` +
@@ -791,6 +835,7 @@ function finishDefaults(s: SerState, rec: Rec, anchor: string): number {
     setRead(s, f.name, { text: show(d), def: f.kind !== 'opt', tone: lost ? 'bad' : undefined });
     n++;
     markRow(rec, row, 'compare');
+    rec.vars({ f: f.name, 'record[f.name]': d ?? null });
     rec.line(anchor);
     rec.step(
       lost
@@ -853,6 +898,7 @@ function avroReadAnim(s: SerState, rec: Rec, focus: Set<string> | 'all', asWrite
   let pos = 0;
   let bad = 0;
   let skipped = 0;
+  rec.vars({ pos: 0, writer: wSchema.label, reader: SCHEMAS[s.reader].label });
   rec.line('r_read');
   rec.step(
     asWriter
@@ -871,6 +917,7 @@ function avroReadAnim(s: SerState, rec: Rec, focus: Set<string> | 'all', asWrite
     const probeAt: Probe = cells.length ? { text: wf.name, at: cells[0].g.id, cell: cells[0].c } : { text: wf.name, at: firstCell(s, wrow(actual[0].name)), place: 'left' };
     if (detail) {
       for (const b of cells) rec.markCell(b.g.id, b.c, 'key');
+      rec.vars({ f: wf.name, 'f.type': typeName('avro', wf.kind), value: r.value, pos });
       rec.line('r_read', 'r_varint', readAnchor(wf.kind));
       rec.step(`Read ${wf.name} with the ${asWriter ? "reader's" : "writer's"} type, ${typeName('avro', wf.kind)}: ${cells.map((b) => hex(b.v)).join(' ') || 'no bytes left'}, ${r.how}.`, { probe: probeAt });
       for (const b of cells) rec.markCell(b.g.id, b.c, wrong ? 'bad' : 'path');
@@ -881,6 +928,7 @@ function avroReadAnim(s: SerState, rec: Rec, focus: Set<string> | 'all', asWrite
       if (wrong) bad++;
       for (const b of cells) b.g.state = wrong ? 'bad' : 'read';
       markRow(rec, row, 'compare');
+      rec.vars({ f: wf.name, 'f.type': typeName('avro', wf.kind), value: r.value, pos, mine: mine.name });
       rec.line('r_match', 'r_keep');
       rec.compare(`writer ${wf.name}`, '=', `reader ${mine.name}`, 'same name: keep it', {
         probe: { text: wf.name, at: row, place: 'right' },
@@ -895,6 +943,7 @@ function avroReadAnim(s: SerState, rec: Rec, focus: Set<string> | 'all', asWrite
       rec.count('skipped');
       skipped++;
       for (const b of cells) b.g.state = 'skipped';
+      rec.vars({ f: wf.name, 'f.type': typeName('avro', wf.kind), value: r.value, pos, mine: null });
       rec.line('r_match', 'r_drop');
       rec.compare(`writer ${wf.name}`, '≠', 'any reader field', 'not in the reader: drop it', {
         probe: probeAt,
@@ -911,6 +960,7 @@ function avroReadAnim(s: SerState, rec: Rec, focus: Set<string> | 'all', asWrite
     if (f.noDefault) {
       setRead(s, f.name, { text: 'error', tone: 'bad' });
       rec.markCell(row, 0, 'bad');
+      rec.vars({ pos, f: f.name, 'f.default': 'MISSING' });
       rec.line('r_missing', 'r_error');
       rec.step(
         `${f.name} is in the reader's schema but not the writer's, and it has no default. Avro cannot make a value up, so the read fails with an error. A schema registry checking backward compatibility would have refused this schema before it shipped.`,
@@ -923,6 +973,7 @@ function avroReadAnim(s: SerState, rec: Rec, focus: Set<string> | 'all', asWrite
     const d = defaultOf('avro', f);
     setRead(s, f.name, { text: show(d), def: f.kind !== 'opt' });
     defaults++;
+    rec.vars({ pos, f: f.name, 'f.default': d ?? null });
     rec.line('r_missing', 'r_default');
     rec.step(`${f.name} is in the reader's schema but the writer never wrote it. The reader's schema gives a default, ${show(d, true)}, so it is used. This is backward compatibility: new code reads data written by old code.`, {
       probe: { text: f.name, at: row, place: 'right' },
@@ -930,6 +981,7 @@ function avroReadAnim(s: SerState, rec: Rec, focus: Set<string> | 'all', asWrite
     unmarkRow(rec, row);
   }
   rec.clearMarks();
+  rec.vars({ pos, 'len(data)': bytes.length, record: Object.keys(s.read) });
   rec.line('r_done');
   const left = bytes.length - pos;
   rec.step(
@@ -950,6 +1002,7 @@ function jsonDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): void
   const want = reader(s);
   let skipped = 0;
   let bad = 0;
+  rec.vars({ wanted: want.map((f) => f.name) });
   if (focus === 'all') {
     rec.line('j_key');
     rec.step(`The reader parses the text and looks each key up by name. There is no schema: whatever keys arrive, arrive.`);
@@ -964,6 +1017,7 @@ function jsonDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): void
       skipped++;
       g.state = 'skipped';
       rec.markCell(g.id, 0, 'key');
+      rec.vars({ wanted: want.map((x) => x.name), name: f.name, value: v });
       rec.line('j_key', 'j_skip');
       rec.compare(`"${f.name}"`, '≠', 'any reader key', 'unknown key: ignore it', {
         probe: { text: f.name, at: g.id },
@@ -980,6 +1034,7 @@ function jsonDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): void
     markRow(rec, row, 'compare');
     if (wrong) rec.markCell(row, 0, 'bad');
     const detail = focus === 'all' || wrong || focus.has(f.name);
+    rec.vars({ wanted: want.map((x) => x.name), name: f.name, value: v });
     rec.line('j_key', 'j_keep');
     rec.compare(`"${f.name}"`, '=', `reader ${mine.name}`, 'known key: keep it', {
       probe: { text: f.name, at: row, place: 'right' },
@@ -993,6 +1048,7 @@ function jsonDecodeAnim(s: SerState, rec: Rec, focus: Set<string> | 'all'): void
   }
   const defaults = finishDefaults(s, rec, 'j_default');
   rec.clearMarks();
+  rec.vars({ record: Object.keys(s.read) });
   rec.line('j_end');
   rec.step(
     `Read ${bytesWord(flat(s).length)} of text: ${Object.keys(s.read).length - defaults} keys used, ${skipped} ignored, ${defaults} from defaults.` +
@@ -1009,10 +1065,12 @@ function decodeAny(s: SerState, rec: Rec, focus: Set<string> | 'all'): void {
 // ---- operations ---------------------------------------------------------------
 
 export function encode(s: SerState, rec: Rec): void {
+  rec.vars();
   encodeAny(s, rec, 'full');
 }
 
 export function decode(s: SerState, rec: Rec): void {
+  rec.vars();
   decodeAny(s, rec, 'all');
 }
 
@@ -1023,6 +1081,7 @@ const firstReadAnchor = (s: SerState) => (s.format === 'protobuf' ? 'd_loop' : s
 
 /** old: an old reader meets new data. new: a new reader meets old data. */
 export function evolve(s: SerState, word: string, rec: Rec): boolean {
+  rec.vars();
   if (word !== 'old' && word !== 'new') {
     rec.line(firstReadAnchor(s));
     rec.step(`Type old, for an old reader meeting data from a newer writer, or new, for a new reader meeting old data.`);
@@ -1055,6 +1114,7 @@ export function evolve(s: SerState, word: string, rec: Rec): boolean {
 
 /** The mistakes schema rules exist to prevent. */
 export function breakIt(s: SerState, word: string, rec: Rec): boolean {
+  rec.vars();
   const words = BREAK_WORDS[s.format];
   if (!words.includes(word)) {
     rec.line(firstReadAnchor(s));
@@ -1096,6 +1156,7 @@ export function breakIt(s: SerState, word: string, rec: Rec): boolean {
 
 /** Switch to Avro: the same record, written with v1 and resolved against a v3 reader. */
 export function avro(s: SerState, rec: Rec): void {
+  rec.vars();
   s.format = 'avro';
   s.writer = 'v1';
   s.reader = 'v3';

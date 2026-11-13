@@ -232,6 +232,7 @@ export function arrive(s: StreamState, rawSide: number | string, rawAd: number |
   const side = asSide(rawSide);
   const ad = Number(rawAd);
   const t = Number(rawT);
+  rec.vars({ side: side ?? String(rawSide), ad: rawAd, t: rawT });
   rec.line('arrive');
   if (!side) {
     rec.step(`There are two streams to join: enter i for an impression or c for a click.`);
@@ -268,6 +269,7 @@ export function arrive(s: StreamState, rawSide: number | string, rawAd: number |
   const name = label(ev);
   const atEv: Probe = { text: name, at: eid(ev.seq) };
   const before = overtaken(s, side, t);
+  rec.vars({ side, ad, t });
   rec.mark(eid(ev.seq), 'key');
   rec.step(
     `${cap(NAME[side])} ${name} arrives: ad ${ad}, event time ${t}. ` +
@@ -280,6 +282,7 @@ export function arrive(s: StreamState, rawSide: number | string, rawAd: number |
 
   // ---- is it late? -----------------------------------------------------------
   rec.line('late_test');
+  rec.vars({ side, ad, t, wm: s.wm });
   if (t >= s.wm) {
     rec.compare(`t ${t}`, '≥', `wm ${s.wm}`, 'on time', {
       probe: atEv,
@@ -292,6 +295,7 @@ export function arrive(s: StreamState, rawSide: number | string, rawAd: number |
     });
     const floor = s.wm - L;
     rec.line('lateness_test');
+    rec.vars({ side, ad, t, wm: s.wm, lateness: L });
     if (accepted) {
       rec.compare(`t ${t}`, '≥', `wm ${s.wm} − ${L} = ${floor}`, 'late, but allowed: use it', {
         probe: atEv,
@@ -326,6 +330,7 @@ export function arrive(s: StreamState, rawSide: number | string, rawAd: number |
   mine.sort((a, b) => a.t - b.t || a.seq - b.seq);
   const atSt: Probe = { text: name, at: sid(ev.seq) };
   rec.mark(sid(ev.seq), 'key');
+  rec.vars({ side, ad, t, mine: mine.map((e) => e.t) });
   rec.line('store');
   rec.step(
     `Store time ${t} in ${NAME[side]} state under key ${ad}. A matching ${NAME[other(side)]} may still be on its way, and when it comes it will look here. Nothing about any other ad is touched.`,
@@ -336,6 +341,7 @@ export function arrive(s: StreamState, rawSide: number | string, rawAd: number |
   const theirs = s.state[o][String(ad)] ?? [];
   s.shade = side === 'c' ? { lane: 'i', from: t - W, to: t } : { lane: 'c', from: t, to: t + W };
   const where = side === 'c' ? `from tick ${Math.max(0, t - W)} to ${t}` : `from tick ${t} to ${t + W}`;
+  rec.vars({ side, ad, t, other: o, [`state["${o}"][ad]`]: theirs.map((e) => e.t), joined: 0 });
   rec.line('probe');
   if (!theirs.length) {
     const gone = dropped(s, o, ad);
@@ -365,6 +371,7 @@ export function arrive(s: StreamState, rawSide: number | string, rawAd: number |
     const at: Probe = { text: name, at: sid(e.seq) };
     const lhs = `gap ${click} − ${imp} = ${gap}`;
     rec.mark(sid(e.seq), 'compare');
+    rec.vars({ side, ad, t, u: e.t, imp, click, joined: joined.length });
     rec.line('in_window');
     if (gap < 0) {
       rec.compare(lhs, '<', '0', 'click before impression: no match', {
@@ -388,6 +395,7 @@ export function arrive(s: StreamState, rawSide: number | string, rawAd: number |
       rec.count('joined');
       rec.mark(sid(e.seq), 'ok');
       rec.mark(oid(r.id), 'ok');
+      rec.vars({ side, ad, t, u: e.t, imp, click, joined: joined.length });
       rec.line('emit');
       rec.step(`Emit the joined record ${r.text} to the output stream: ad ${ad}, shown at ${imp}, clicked at ${click}. Both events stay in state, since another event may match either of them.`, {
         probe: { text: name, at: oid(r.id) },
@@ -396,6 +404,7 @@ export function arrive(s: StreamState, rawSide: number | string, rawAd: number |
   }
 
   s.shade = null;
+  rec.vars({ side, ad, t, joined: joined.length });
   rec.line('done');
   rec.step(
     `${name}: ${joined.length ? `${plural(joined.length, 'joined record')}` : 'no match yet'}, from 1 lookup and ${plural(theirs.length, 'time comparison')}. ` +
@@ -422,6 +431,7 @@ function missing(s: StreamState, o: Side, ad: number): string {
 /** Move the watermark on, drop state that can no longer match, and close windows. Returns the entries dropped. */
 export function advance(s: StreamState, rawK: number | string, rec: Rec): number {
   const k = Number(rawK);
+  rec.vars({ ticks: rawK });
   rec.line('advance');
   if (!isInt(k, 1, 9)) {
     rec.step(`Advance the watermark by 1 to 9 ticks.`);
@@ -435,6 +445,7 @@ export function advance(s: StreamState, rawK: number | string, rec: Rec): number
   s.wm += k;
   const wmText = `wm ${s.wm}`;
   const atWm: Probe = { text: wmText, at: WM_TAG };
+  rec.vars({ ticks: k, wm: s.wm });
   rec.step(
     `The watermark moves from ${from} to ${s.wm}: a marker carried through the stream, promising that nothing before tick ${s.wm} should still arrive. You move it by hand here; a real source derives it from event times, such as the largest seen minus a fixed delay.`,
     { probe: atWm },
@@ -443,6 +454,7 @@ export function advance(s: StreamState, rawK: number | string, rec: Rec): number
   const W = s.window;
   const L = s.lateness;
   const keep = keepFrom(s);
+  rec.vars({ ticks: k, wm: s.wm, keep });
   rec.line('horizon');
   rec.step(
     `Which state can still be useful? An event is still used if its time is at least ${s.wm} − ${L} = ${s.wm - L}, and it can match only within ${ticks(W)}. So keep entries from ${s.wm} − ${W} − ${L} = ${keep} on and drop the rest.`,
@@ -459,6 +471,7 @@ export function advance(s: StreamState, rawK: number | string, rec: Rec): number
         const at: Probe = { text: wmText, at: sid(e.seq) };
         rec.mark(sid(e.seq), 'compare');
         if (e.t < keep) {
+          rec.vars({ wm: s.wm, keep, side, ad: Number(ad), 'times[0]': e.t, dropped: dropped + 1 });
           rec.line('expire_test', 'drop');
           rec.compare(`keep from ${keep}`, '>', `${side}${ad} at ${e.t}`, 'drop it', {
             probe: at,
@@ -468,6 +481,7 @@ export function advance(s: StreamState, rawK: number | string, rec: Rec): number
           dropped++;
           rec.count('expired');
         } else {
+          rec.vars({ wm: s.wm, keep, side, ad: Number(ad), 'times[0]': e.t, dropped });
           rec.line('expire_test');
           rec.compare(`keep from ${keep}`, '≤', `${side}${ad} at ${e.t}`, `keep it, and the rest for ad ${ad}`, {
             probe: at,
@@ -487,6 +501,7 @@ export function advance(s: StreamState, rawK: number | string, rec: Rec): number
     const end = w.start + SIZE;
     const at: Probe = { text: wmText, at: wid(w.start) };
     rec.mark(wid(w.start), 'compare');
+    rec.vars({ wm: s.wm, lateness: L, start: w.start, end });
     rec.line('close', 'open_test');
     if (end > s.wm) {
       rec.compare(wmText, '<', `end ${end}`, `[${w.start},${end}) stays open`, {
@@ -508,6 +523,7 @@ export function advance(s: StreamState, rawK: number | string, rec: Rec): number
       const r = emit(s, winText(w));
       rec.mark(wid(w.start), 'ok');
       rec.mark(oid(r.id), 'ok');
+      rec.vars({ wm: s.wm, lateness: L, start: w.start, end, n: w.count });
       rec.line('close', 'fire');
       rec.step(`Emit ${r.text}: ${plural(w.count, 'view')} between tick ${w.start} and ${end}. It goes out once the watermark says the window is complete, not when the clock on the wall passes ${end}.`, {
         probe: { text: wmText, at: oid(r.id) },
@@ -535,6 +551,7 @@ export function advance(s: StreamState, rawK: number | string, rec: Rec): number
     }
   }
 
+  rec.vars({ ticks: k, wm: s.wm, keep, dropped });
   rec.line('done');
   const held = entries(s, 'i') + entries(s, 'c');
   rec.step(
@@ -549,6 +566,7 @@ export function advance(s: StreamState, rawK: number | string, rec: Rec): number
 /** A page view arrives and is counted in its tumbling window. Returns the window start, or null. */
 export function view(s: StreamState, rawT: number | string, rec: Rec): number | null {
   const t = Number(rawT);
+  rec.vars({ t: rawT });
   rec.line('arrive');
   if (!isInt(t, 0, MAX_TIME)) {
     rec.step(`Event times on this page run from 0 to ${MAX_TIME}.`);
@@ -581,6 +599,7 @@ export function view(s: StreamState, rawT: number | string, rec: Rec): number | 
   );
 
   s.shade = { lane: 'v', from: start, to: end - 1 };
+  rec.vars({ t, start, end });
   rec.line('assign');
   rec.step(
     `Tumbling windows are ${ticks(SIZE)} long and never overlap: [0,4), [4,8), and so on. ${t} − ${t} mod ${SIZE} = ${start}, so ${name} belongs to [${start},${end}).` +
@@ -588,6 +607,7 @@ export function view(s: StreamState, rawT: number | string, rec: Rec): number | 
     { probe: atEv },
   );
 
+  rec.vars({ t, start, end, lateness: L, wm: s.wm });
   rec.line('kept_test');
   if (existing) rec.mark(wid(start), 'compare');
   const lhs = `[${start},${end}) end ${end} + ${L}`;
@@ -623,6 +643,7 @@ export function view(s: StreamState, rawT: number | string, rec: Rec): number | 
     s.windows.sort((a, b) => a.start - b.start);
   }
   w.count++;
+  rec.vars({ t, start, end, lateness: L, wm: s.wm, n: w.count });
   rec.mark(wid(start), 'ok');
   rec.line('count');
   rec.step(`Add 1 to [${start},${end}): it now holds ${plural(w.count, 'view')}. The state for a window is one number, not the views themselves.`, {
@@ -670,6 +691,7 @@ const validUser = (u: number) => isInt(u, 1, USERS);
 export function change(s: StreamState, rawUser: number | string, rawCountry: number | string, rec: Rec): string | null {
   const u = Number(rawUser);
   const c = String(rawCountry).trim().toUpperCase();
+  rec.vars({ user: rawUser, country: c });
   rec.line('arrive');
   if (!validUser(u)) {
     rec.step(`User ids on this page run from 1 to ${USERS}.`);
@@ -690,6 +712,7 @@ export function change(s: StreamState, rawUser: number | string, rawCountry: num
   const old = s.table[u] ?? null;
   s.table[u] = c;
   s.changes[u] = { from: old, to: c, seq: a.seq };
+  rec.vars({ user: u, country: c, old });
   rec.mark(tbid(u), 'key');
   rec.line('upsert');
   rec.step(
@@ -707,6 +730,7 @@ export function change(s: StreamState, rawUser: number | string, rawCountry: num
 /** An order arrives and is enriched with the user's country. Returns the country, or null when unknown. */
 export function order(s: StreamState, rawUser: number | string, rec: Rec): string | null {
   const u = Number(rawUser);
+  rec.vars({ user: rawUser });
   rec.line('arrive');
   if (!validUser(u)) {
     rec.step(`User ids on this page run from 1 to ${USERS}.`);
@@ -722,6 +746,7 @@ export function order(s: StreamState, rawUser: number | string, rec: Rec): strin
 
   const country = s.table[u] ?? null;
   if (country !== null) rec.mark(tbid(u), 'compare');
+  rec.vars({ user: u, country });
   rec.line('lookup');
   rec.step(
     `Look up user ${u} in the local copy of the profiles table. It is part of this processor's state, filled from the change stream, so this is a local read: no network call and no load on the database. ` +

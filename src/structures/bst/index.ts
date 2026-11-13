@@ -145,6 +145,7 @@ function descend(s: BstState, key: number, rec: Rec, mode: 'search' | 'insert' |
     w.comparisons++;
     if (key === k) {
       const verdict = mode === 'insert' ? 'match, already stored' : mode === 'delete' ? 'match, this is the node to delete' : 'match';
+      rec.vars(mode === 'delete' ? { key, parent: w.parent ? w.parent.key : null, node: k } : { key, node: k });
       rec.line('match');
       rec.compare(key, '=', k, verdict, { probe });
       w.node = node;
@@ -171,6 +172,8 @@ function descend(s: BstState, key: number, rec: Rec, mode: 'search' | 'insert' |
     }
     // An insert that finds the spot free stops on the test for it; every other move takes the child pointer.
     // The `key < node.key` test is lit either way: it is the comparison the readout shows, and the else follows from it.
+    // In delete's loop `parent = node` runs before the test, so parent is this node already.
+    rec.vars(mode === 'delete' ? { key, parent: k, node: k } : { key, node: k });
     rec.line('less', !next && mode === 'insert' ? `${side}_free` : side);
     rec.compare(key, goLeft ? '<' : '>', k, verdict, { probe, message });
     rec.mark(nid(node), 'path');
@@ -187,15 +190,18 @@ function descend(s: BstState, key: number, rec: Rec, mode: 'search' | 'insert' |
 
 export function search(s: BstState, key: number, rec: Rec): boolean {
   if (!s.root) {
+    rec.vars({ key, node: null });
     rec.line('start', 'missing');
     rec.step(`The tree is empty, so ${key} is not here.`);
     return false;
   }
+  rec.vars({ key, node: s.root.key });
   rec.line('start');
   rec.step(`Start at the root. Each comparison picks one side and throws the other away.`, { probe: { text: String(key), at: nid(s.root) } });
   const w = descend(s, key, rec, 'search');
   if (w.node) {
     rec.mark(nid(w.node), 'ok');
+    rec.vars({ key, node: w.node.key });
     rec.line('found');
     rec.step(`Found ${key} after ${plural(w.comparisons, 'comparison')}, one per level on the way down. A search never costs more than the height of the tree.`, {
       probe: { text: String(key), at: nid(w.node) },
@@ -204,6 +210,7 @@ export function search(s: BstState, key: number, rec: Rec): boolean {
   }
   const last = w.parent!;
   rec.mark(nid(last), 'bad');
+  rec.vars({ key, node: null });
   rec.line('missing');
   rec.step(`${key} is not in the tree. The empty ${w.side} spot under ${last.key} is the only place it could be. That took ${plural(w.comparisons, 'comparison')}.`);
   return false;
@@ -216,10 +223,12 @@ export function insert(s: BstState, key: number, rec: Rec): boolean {
     s.size++;
     rec.count('writes');
     rec.mark(nid(root), 'key');
+    rec.vars({ key, root: key });
     rec.line('root');
     rec.step(`The tree is empty, so ${key} becomes the root. No comparisons needed.`, { probe: { text: String(key), at: nid(root) } });
     return true;
   }
+  rec.vars({ key, node: s.root.key });
   rec.line('start');
   rec.step(`Start at the root. Smaller keys go left and larger keys go right, until the walk reaches an empty spot.`, {
     probe: { text: String(key), at: nid(s.root) },
@@ -227,6 +236,7 @@ export function insert(s: BstState, key: number, rec: Rec): boolean {
   const w = descend(s, key, rec, 'insert');
   if (w.node) {
     rec.mark(nid(w.node), 'ok');
+    rec.vars({ key, node: w.node.key });
     rec.line('duplicate');
     rec.step(`${key} is already stored, so nothing changes. The tree holds each key once.`);
     return false;
@@ -256,6 +266,7 @@ export function insert(s: BstState, key: number, rec: Rec): boolean {
 
   rec.mark(nid(node), 'key');
   rec.markEdge(eid(parent, node), 'ok');
+  rec.vars({ key, node: parent.key, [`node.${w.side}`]: key });
   rec.line(`attach_${w.side}`);
   rec.step(`Attach ${key} as the ${w.side} child of ${parent.key}. A new key always becomes a leaf, and nothing else in the tree moves.`, {
     probe: { text: String(key), at: nid(node) },
@@ -274,6 +285,7 @@ export function insert(s: BstState, key: number, rec: Rec): boolean {
   }
   rec.clearMarks();
   rec.mark(nid(node), 'key');
+  rec.vars({ key, node: parent.key });
   rec.line('done');
   rec.step(`${cost} ${shape}`);
   return true;
@@ -281,16 +293,19 @@ export function insert(s: BstState, key: number, rec: Rec): boolean {
 
 export function remove(s: BstState, key: number, rec: Rec): boolean {
   if (!s.root) {
+    rec.vars({ key, parent: null, node: null });
     rec.line('start', 'missing');
     rec.step(`The tree is empty, so there is nothing to delete.`);
     return false;
   }
+  rec.vars({ key, parent: null, node: s.root.key });
   rec.line('start');
   rec.step(`To delete ${key}, first find it, exactly as a search would.`, { probe: { text: String(key), at: nid(s.root) } });
   const w = descend(s, key, rec, 'delete');
   const node = w.node;
   if (!node) {
     rec.mark(nid(w.parent!), 'bad');
+    rec.vars({ key, parent: w.parent!.key, node: null });
     rec.line('missing');
     rec.step(`${key} is not in the tree, so there is nothing to delete. That took ${plural(w.comparisons, 'comparison')}.`);
     return false;
@@ -306,9 +321,11 @@ export function remove(s: BstState, key: number, rec: Rec): boolean {
   const relinkLine = (above: BstNode | null, old: BstNode) => (!above ? 'relink_root' : above.left === old ? 'relink_left' : 'relink_right');
   const probe: Probe = { text: String(key), at: nid(node) };
   let writes = 1;
+  const parentKey = parent ? parent.key : null;
 
   if (node.left && node.right) {
     rec.mark(nid(node), 'key');
+    rec.vars({ key, parent: parentKey, node: key });
     rec.line('two_children');
     rec.step(
       `${key} has two children, so it cannot simply be unlinked. Find its in-order successor, the smallest key larger than ${key}, and let that key take over.`,
@@ -319,6 +336,7 @@ export function remove(s: BstState, key: number, rec: Rec): boolean {
     rec.count('reads');
     rec.markEdge(eid(above, succ), 'path');
     rec.mark(nid(succ), 'compare');
+    rec.vars({ key, parent: parentKey, node: key, above: above.key, succ: succ.key });
     rec.line('succ_start');
     rec.step(`The successor is in the right subtree, where every key is larger than ${key}. Step right once, to ${succ.key}, then look for the smallest key there.`, { probe });
     rec.line('succ_left');
@@ -329,6 +347,7 @@ export function remove(s: BstState, key: number, rec: Rec): boolean {
       succ = succ.left;
       rec.count('reads');
       rec.mark(nid(succ), 'compare');
+      rec.vars({ key, parent: parentKey, node: key, above: above.key, succ: succ.key });
       if (rec.recording) rec.step(`${above.key} has a left child, so there is something smaller. Walk left to ${succ.key}.`, { probe });
     }
     rec.mark(nid(succ), 'ok');
@@ -338,11 +357,13 @@ export function remove(s: BstState, key: number, rec: Rec): boolean {
     rec.count('writes');
     rec.mark(nid(node), 'ok');
     rec.mark(nid(succ), 'bad');
+    rec.vars({ key, parent: parentKey, node: succ.key, above: above.key, succ: succ.key });
     rec.line('overwrite');
     rec.step(
       `Write ${succ.key} over ${key}. The node stays where it is and keeps both children: only its key changes. For a moment ${succ.key} is in the tree twice.`,
     );
     const up = succ.right;
+    rec.vars({ key, parent: parentKey, node: succ.key, above: above.key, succ: succ.key, 'succ.right': up ? up.key : null });
     rec.line('remove_succ', relinkLine(above, succ));
     relink(above, succ, up);
     rec.count('writes');
@@ -356,6 +377,7 @@ export function remove(s: BstState, key: number, rec: Rec): boolean {
     const child = (node.left ?? node.right)!;
     rec.mark(nid(node), 'bad');
     rec.mark(nid(child), 'ok');
+    rec.vars({ key, parent: parentKey, node: key, child: child.key });
     rec.line('one_child', relinkLine(parent, node));
     rec.step(
       parent
@@ -367,6 +389,7 @@ export function remove(s: BstState, key: number, rec: Rec): boolean {
     rec.count('writes');
   } else {
     rec.mark(nid(node), 'bad');
+    rec.vars({ key, parent: parentKey, node: key });
     rec.line('leaf', relinkLine(parent, node));
     rec.step(
       parent
@@ -383,6 +406,7 @@ export function remove(s: BstState, key: number, rec: Rec): boolean {
   rec.clearMarks();
   // In the two-children case the node survives, holding the successor's key.
   if (writes === 2) rec.mark(nid(node), 'ok');
+  rec.vars({ key });
   const cost = `${plural(w.comparisons, 'comparison')} to find it and ${plural(writes, 'write')} to remove it`;
   rec.line('done');
   rec.step(

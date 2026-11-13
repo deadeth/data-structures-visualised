@@ -1,7 +1,7 @@
 import { LABEL_MAX, PROBE_H } from '../../core/fit';
 import { CELL_H, TRAY_PAD, cellCentre } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
-import type { Cell, Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef, Tone } from '../../core/types';
+import type { Cell, Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef, Tone, VarValue } from '../../core/types';
 import java from './code/IdempotencyKeys.java?raw';
 import python from './code/idempotency_keys.py?raw';
 import { info } from './info';
@@ -133,6 +133,24 @@ const show = (r: Req) => `${r.key} ${money(r.amount)}`;
 const rowId = (key: string) => `kr-${key}`;
 const payId = (id: number) => `pr-${id}`;
 
+/** A string as the listing holds it, for the Variables strip. */
+const q = (x: string) => `"${x}"`;
+/** A response as the listing's tuple: (201, "p3"). */
+const tuple = (response: string) => {
+  const [code, body] = response.split(' ');
+  return body ? `(${code}, "${body}")` : code;
+};
+/** The client's variables: pay(amount) makes key; resend(key, amount) is given it. */
+function clientVars(rec: Rec, r: Req): void {
+  if (!rec.recording) return;
+  rec.vars(sendLine[0] === 'resend' ? { key: q(r.key), amount: r.amount } : { amount: r.amount, key: q(r.key) });
+}
+/** handle()'s variables. */
+function handleVars(rec: Rec, r: Req, h: number, extra: Record<string, VarValue> = {}): void {
+  if (!rec.recording) return;
+  rec.vars({ key: q(r.key), amount: r.amount, request_hash: h, ...extra });
+}
+
 const atClient = (r: Req): Probe => ({ text: show(r), at: 'client' });
 const atServer = (r: Req): Probe => ({ text: show(r), at: 'server' });
 const atRow = (r: Req, key = r.key): Probe => ({ text: show(r), at: rowId(key), place: 'right' });
@@ -156,6 +174,7 @@ function reset(s: IdemState, rec: Rec): void {
   s.serverNote = 'idle';
   s.clientNote = 'idle';
   rec.clearMarks();
+  rec.vars();
 }
 
 export function asAmount(raw: number | string): number | null {
@@ -184,6 +203,7 @@ interface Served {
 function arrive(s: IdemState, rec: Rec, r: Req, copies = 1): void {
   s.received += copies;
   rec.count('received', copies);
+  rec.vars({ key: q(r.key), amount: r.amount, use_keys: s.mode === 'keys' });
   rec.line('mode');
   rec.step(
     (copies > 1 ? `Both copies of ${show(r)} reach the server at the same moment. ` : `${show(r)} reaches the server. `) +
@@ -255,6 +275,7 @@ function servePlain(s: IdemState, rec: Rec, r: Req, crash: Crash): Served {
   s.payments.push(p);
   s.focusPay = p.id;
   rec.mark(payId(p.id), 'path');
+  rec.vars({ amount: r.amount, payment_id: q(pid(p.id)) });
   rec.line('plain_begin', 'plain_apply');
   rec.step(`Open a transaction and insert payment ${pid(p.id)} for ${money(r.amount)}. Nothing asks whether this request was seen before.`, { probe: atPay(r, p.id) });
   if (crash === 'before') {
@@ -291,6 +312,7 @@ function servePlain(s: IdemState, rec: Rec, r: Req, crash: Crash): Served {
  */
 function serveKeys(s: IdemState, rec: Rec, r: Req, crash: Crash, opts: { quietHash?: boolean } = {}): Served {
   const h = fingerprint(r.amount);
+  handleVars(rec, r, h);
   if (!opts.quietHash) {
     rec.line('hash');
     rec.step(`Fingerprint the body: (31 × ${r.amount} + 7) mod 1009 = ${h}. A retry must carry the same body, and this number is how the server will tell.`, { probe: atServer(r) });
@@ -317,10 +339,12 @@ function applyAndCommit(s: IdemState, rec: Rec, r: Req, k: KeyRow, crash: Crash)
   s.payments.push(p);
   s.focusPay = p.id;
   rec.mark(payId(p.id), 'path');
+  rec.vars({ key: q(r.key), amount: r.amount, payment_id: q(pid(p.id)) });
   rec.line('apply');
   rec.step(`In the same transaction, insert payment ${pid(p.id)} for ${money(r.amount)}.`, { probe: atPay(r, p.id) });
   k.status = 'done';
   k.response = `201 ${pid(p.id)}`;
+  rec.vars({ key: q(r.key), amount: r.amount, payment_id: q(pid(p.id)), response: tuple(k.response) });
   rec.line('store');
   rec.step(`Store the response, 201 ${pid(p.id)}, on row ${r.key} and mark it done. Still the same transaction.`, { probe: atRow(r) });
   if (crash === 'before') {
@@ -356,6 +380,7 @@ function existing(s: IdemState, rec: Rec, r: Req, row: KeyRow, h: number, woke =
   s.focusKey = row.key;
   if (!woke) {
     rec.mark(rowId(row.key), 'compare');
+    handleVars(rec, r, h);
     rec.line('begin', 'insert');
     rec.compare(r.key, '=', `stored ${row.key}`, 'key exists, read the row', {
       probe: atRow(r),
@@ -363,6 +388,7 @@ function existing(s: IdemState, rec: Rec, r: Req, row: KeyRow, h: number, woke =
     });
   }
   rec.mark(rowId(row.key), 'path');
+  rec.vars({ key: q(r.key), request_hash: h, 'row.hash': row.hash, 'row.response': tuple(row.response) });
   rec.line('read');
   rec.step(`Read row ${row.key}: hash ${row.hash}, ${row.status}, response ${row.response}.`, { probe: atRow(r) });
   const same = row.hash === h;
@@ -403,6 +429,7 @@ type Fate = 'ok' | 'request' | 'response';
 function attempt(s: IdemState, rec: Rec, r: Req, fate: Fate, crash: Crash = null): { got: string | null; served: Served | null } {
   if (fate === 'request') {
     s.req = { label: `${show(r)} lost`, tone: 'bad', dashed: true };
+    clientVars(rec, r);
     rec.line(...sendLine);
     rec.step(`The network drops the request. The server never sees it.`, { probe: atClient(r) });
     return { got: null, served: null };
@@ -418,6 +445,7 @@ function attempt(s: IdemState, rec: Rec, r: Req, fate: Fate, crash: Crash = null
   }
   s.res = { label: served.kind === 'replay' ? `${served.response} again` : served.response, tone: bad ? 'bad' : 'ok', dashed: bad };
   s.clientNote = `got ${served.response}`;
+  clientVars(rec, r);
   rec.line(...gotLine);
   rec.step(`The client gets ${served.response}.`, { probe: atClient(r) });
   return { got: served.response, served };
@@ -431,12 +459,14 @@ function send(s: IdemState, rec: Rec, r: Req, text: string): void {
   s.req = { label: show(r) };
   s.res = null;
   s.clientNote = `sent ${r.key}`;
+  clientVars(rec, r);
   rec.line(...sendLine);
   rec.step(text, { probe: atClient(r) });
 }
 
 function timeout(s: IdemState, rec: Rec, r: Req, anchor: string): void {
   s.clientNote = 'timed out';
+  clientVars(rec, r);
   rec.line(anchor);
   rec.step(
     `The client's timeout fires with no answer. It cannot tell a lost request from a lost response or a dead server, so it does not know whether ${money(r.amount)} was taken.`,
@@ -449,6 +479,7 @@ function restart(s: IdemState, rec: Rec, r: Req): void {
   s.serverUp = true;
   s.serverNote = 'restarted';
   rec.unmark('server');
+  clientVars(rec, r);
   rec.line('timeout');
   rec.step(`The server restarts. It remembers nothing in memory; everything it knows is in the database.`, { probe: atClient(r) });
 }
@@ -464,6 +495,7 @@ function closing(s: IdemState, r: Req, before: { applied: number; doubles: numbe
 function guard(s: IdemState, rec: Rec, raw: number | string, anchor: string): number | null {
   const amount = asAmount(raw);
   if (amount === null) {
+    rec.vars();
     rec.line(anchor);
     rec.step(`Enter an amount in whole pounds from 1 to ${MAX_AMOUNT}.`);
   }
@@ -504,6 +536,7 @@ function payWith(s: IdemState, rec: Rec, amount: number, fates: Fate[], crash: C
       restart(s, rec, r);
     }
   }
+  clientVars(rec, r);
   rec.line('send');
   rec.step(`${closing(s, r, before)}`, { probe: atClient(r) });
   return got;
@@ -534,6 +567,7 @@ export function crash(s: IdemState, when: number | string, raw: number | string,
   reset(s, rec);
   const w = String(when).trim().toLowerCase();
   if (w !== 'before' && w !== 'after') {
+    rec.vars();
     rec.line('commit');
     rec.step(`Say when the server dies: before (it commits nothing) or after (it commits, then dies before replying).`);
     return null;
@@ -550,6 +584,7 @@ export function retry(s: IdemState, rec: Rec): string | null {
   gotLine = ['resend'];
   const r = s.last;
   if (!r) {
+    rec.vars();
     rec.line('resend');
     rec.step(`The client has not sent anything yet, so there is nothing to retry. Pay first.`);
     return null;
@@ -557,6 +592,7 @@ export function retry(s: IdemState, rec: Rec): string | null {
   const before = tally(s);
   send(s, rec, r, `The client sends its last request again: key ${r.key}, ${money(r.amount)}, for order ${r.order}.`);
   const out = attempt(s, rec, r, 'ok');
+  clientVars(rec, r);
   rec.line('resend');
   rec.step(closing(s, r, before), { probe: atClient(r) });
   return out.got;
@@ -580,6 +616,7 @@ export function retryNewKey(s: IdemState, raw: number | string, rec: Rec): strin
   sendLine = ['retry_new', 'fresh_key', 'send_new'];
   send(s, rec, again, `It retries, and the loop makes a fresh key, ${again.key}. To the server this is a different payment that happens to have the same amount.`);
   attempt(s, rec, again, 'ok');
+  clientVars(rec, again);
   rec.line('send_new');
   rec.step(
     `${closing(s, r, before)} ` +
@@ -600,6 +637,7 @@ export function mismatch(s: IdemState, raw: number | string, rec: Rec): string |
   if (amount === null) return null;
   const last = s.last;
   if (!last) {
+    rec.vars();
     rec.line('resend');
     rec.step(`The client has not sent anything yet, so there is no key to reuse. Pay first.`);
     return null;
@@ -616,6 +654,7 @@ export function mismatch(s: IdemState, raw: number | string, rec: Rec): string |
       (amount === last.amount ? ` The amount happens to match, so the server cannot tell it from a retry.` : ``),
   );
   const out = attempt(s, rec, r, 'ok');
+  clientVars(rec, r);
   rec.line('resend');
   rec.step(
     out.served?.kind === 'mismatch'
@@ -644,9 +683,11 @@ export function concurrent(s: IdemState, raw: number | string, rec: Rec): string
   if (s.mode === 'none') {
     servePlain(s, rec, r, null);
     servePlain(s, rec, r, null);
+    rec.vars({ amount, payment_id: q(pid(s.nextPayment - 1)) });
     rec.line('plain_reply');
   } else {
     const h = fingerprint(amount);
+    handleVars(rec, r, h);
     rec.line('hash');
     rec.step(`Each copy fingerprints the body: (31 × ${amount} + 7) mod 1009 = ${h}.`, { probe: atServer(r) });
     // Copy 1 inserts the key row; its transaction stays open.
@@ -660,6 +701,7 @@ export function concurrent(s: IdemState, raw: number | string, rec: Rec): string
     s.focusKey = r.key;
     s.serverNote = 'copy 2 waits';
     rec.markCell(rowId(r.key), 0, 'key');
+    handleVars(rec, r, h, { 'key in db.held': true });
     rec.line('insert', 'wait');
     rec.compare(r.key, '=', `${r.key}, held by copy 1`, 'copy 2 waits', {
       probe: atRow(r),
@@ -668,6 +710,7 @@ export function concurrent(s: IdemState, raw: number | string, rec: Rec): string
     // Copy 1 finishes while copy 2 waits.
     applyAndCommit(s, rec, r, k, null);
     s.serverNote = 'copy 2 waits';
+    handleVars(rec, r, h, { 'key in db.keys': true });
     rec.line('insert', 'exists');
     rec.compare(r.key, '=', `committed ${r.key}`, 'copy 2 wakes, key exists', {
       probe: atRow(r),
@@ -679,6 +722,7 @@ export function concurrent(s: IdemState, raw: number | string, rec: Rec): string
   const second = `201 ${pid(s.nextPayment - 1)}`;
   s.res = { label: first === second ? `${first} ×2` : `${first}, ${second}`, tone: 'ok' };
   s.clientNote = 'got 2 answers';
+  clientVars(rec, r);
   rec.line(...gotLine);
   rec.step(
     `${closing(s, r, before)} ` +
@@ -704,6 +748,7 @@ export function expire(s: IdemState, raw: number | string, rec: Rec): string | n
   sendLine = ['send'];
   attempt(s, rec, r, 'response');
   s.clientNote = 'gave up';
+  clientVars(rec, r);
   rec.line('give_up');
   rec.step(
     `Every attempt times out (say the client's network stayed down) and it gives up for now, keeping ${r.key} and the amount in a queue to try again later. Order ${r.order} was in fact paid.`,
@@ -714,6 +759,7 @@ export function expire(s: IdemState, raw: number | string, rec: Rec): string | n
   s.res = null;
   s.req = null;
   s.serverNote = 'pruning';
+  rec.vars({ now: s.now });
   rec.line('scan');
   rec.step(`${hours(LATE)} pass. The pruning job scans idempotency_keys. It is now hour ${s.now}.`, { probe: atClient(r) });
   const old = s.keys.filter((k) => s.now - k.created >= WINDOW);
@@ -721,6 +767,7 @@ export function expire(s: IdemState, raw: number | string, rec: Rec): string | n
   if (mine) {
     s.focusKey = mine.key;
     rec.mark(rowId(mine.key), 'compare');
+    rec.vars({ now: s.now, key: q(mine.key), 'keys[key].created': mine.created, 'now - created': s.now - mine.created, WINDOW });
     rec.line('age');
     rec.compare(`${mine.key}: age ${s.now - mine.created} h`, s.now - mine.created >= WINDOW ? '≥' : '<', `window ${WINDOW} h`, 'drop it', { probe: atRow(r) });
   }
@@ -741,6 +788,7 @@ export function expire(s: IdemState, raw: number | string, rec: Rec): string | n
   gotLine = ['resend'];
   send(s, rec, r, `The client's queue finally resends ${r.key} and ${money(amount)}, ${hours(LATE)} after the first attempt.`);
   attempt(s, rec, r, 'ok');
+  clientVars(rec, r);
   rec.line('resend');
   rec.step(
     `${closing(s, r, before)} ` +
@@ -756,6 +804,7 @@ export function expire(s: IdemState, raw: number | string, rec: Rec): string | n
 export function setMode(s: IdemState, raw: number | string, rec: Rec): boolean {
   reset(s, rec);
   const m = asMode(raw);
+  rec.vars(m ? { use_keys: m === 'keys' } : undefined);
   rec.line('mode');
   if (!m) {
     rec.step(`Enter keys (the server checks idempotency keys) or none (it ignores them).`);

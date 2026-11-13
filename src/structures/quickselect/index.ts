@@ -106,6 +106,7 @@ export function setArray(s: QState, vals: number[]): void {
 }
 
 function loaded(s: QState, rec: Rec, what: string): void {
+  rec.vars({ a: s.items.map((it) => it.v), k: s.k });
   rec.line('input');
   const kNote = s.k > s.items.length ? ` k is ${s.k}, more than there are items: set k again.` : ` k is ${s.k}.`;
   rec.step(`${what}${kNote}`);
@@ -118,6 +119,7 @@ export function setFromText(s: QState, text: string, rec: Rec): boolean {
     .filter(Boolean)
     .map(Number)
     .filter((v) => Number.isInteger(v) && v >= 0 && v <= 999);
+  rec.vars();
   if (vals.length === 0) {
     rec.line('input');
     rec.step(`No whole numbers from 0 to 999 there, so the array is unchanged.`);
@@ -135,6 +137,7 @@ export const EXAMPLES = ['62 15 88 41 7 93 29 70 54 47', '90 80 70 60 50 40 30 2
 export function setK(s: QState, k: number, rec: Rec): boolean {
   reset(s);
   const n = s.items.length;
+  rec.vars({ k, 'len(a)': n });
   if (k < 1 || (n > 0 && k > n)) {
     rec.line('input', 'bad_k');
     rec.step(`k must be from 1 to the number of items, ${n}. It stays at ${s.k}.`);
@@ -183,6 +186,7 @@ export function kthSmallest(s: QState, rec: Rec): number | undefined {
   reset(s);
   const n = s.items.length;
   const k = s.k;
+  rec.vars({ k, 'len(a)': n });
   rec.line('bad_k');
   if (n === 0) {
     rec.step(`There is nothing to search: the array is empty. Set the array or load an input first.`);
@@ -197,6 +201,10 @@ export function kthSmallest(s: QState, rec: Rec): number | undefined {
   s.mode = 'select';
   s.lo = 0;
   s.hi = n - 1;
+  // kth_smallest's variables; p is set once the first partition returns.
+  let p: number | undefined;
+  const showK = () => rec.vars({ k, target: t, lo: s.lo, hi: s.hi, p });
+  showK();
   rec.line('start');
   rec.step(
     `Find the ${ordinal(k)} smallest. Once sorted it would sit at index ${t}, so the k tag marks index ${t}. Quickselect never sorts: it only has to get the right item into that one place.`,
@@ -216,6 +224,9 @@ export function kthSmallest(s: QState, rec: Rec): number | undefined {
     s.part = true;
     s.i = lo;
     s.j = lo;
+    // partition's variables, while it runs.
+    const showP = (j?: number) => rec.vars({ lo, hi, pivot: pv, i: s.i, j, 'a[j]': j === undefined ? undefined : a[j].v });
+    showP();
     rec.line('loop', 'call', 'pivot');
     rec.step(
       rounds === 1
@@ -228,6 +239,7 @@ export function kthSmallest(s: QState, rec: Rec): number | undefined {
       const x = a[j];
       rec.mark(nid(x), 'compare');
       comparisons++;
+      showP(j);
       rec.line('scan', 'compare');
       if (x.v < pv) {
         const i = s.i;
@@ -243,6 +255,7 @@ export function kthSmallest(s: QState, rec: Rec): number | undefined {
           a[j] = y;
           rec.count('writes', 2);
           s.i = i + 1;
+          showP(j);
           rec.line('swap');
           rec.step(`Swap ${x.v} and ${y.v}: ${x.v} joins the smaller part at index ${i}, and i moves on to ${i + 1}.`, { probe });
         } else {
@@ -254,13 +267,14 @@ export function kthSmallest(s: QState, rec: Rec): number | undefined {
       }
     }
     // The pivot goes between the two parts.
-    const p = s.i;
+    p = s.i;
     const y = a[p];
     a[p] = pivot;
     a[hi] = y;
     rec.count('writes', 2);
     s.j = hi + 1;
     s.placed[pivot.uid] = true;
+    showP();
     rec.line('place');
     const sides =
       p === lo
@@ -280,6 +294,7 @@ export function kthSmallest(s: QState, rec: Rec): number | undefined {
       s.answer = pivot.uid;
       s.lo = p;
       s.hi = p;
+      showK();
       rec.line('check', 'found');
       rec.step(
         `The pivot landed on the k tag, index ${t}, so ${pv} is the ${ordinal(k)} smallest. Stop: neither side needs any more work.`,
@@ -305,6 +320,7 @@ export function kthSmallest(s: QState, rec: Rec): number | undefined {
     s.part = false;
     s.i = -1;
     s.j = -1;
+    showK();
     msg +=
       dropped === 1
         ? `: only the pivot itself. That is the bad case, a whole pass over the range to rule out one item.`
@@ -315,6 +331,7 @@ export function kthSmallest(s: QState, rec: Rec): number | undefined {
   // One item left in the range: it is already in its place.
   const last = a[s.lo];
   s.answer = last.uid;
+  if (rec.recording) rec.vars({ k, target: t, lo: s.lo, hi: s.hi, p, 'a[lo]': last.v });
   rec.line('last');
   rec.step(
     rounds === 0
@@ -355,6 +372,7 @@ export function topK(s: QState, rec: Rec): number[] {
   const k = s.k;
   s.mode = 'heap';
   const h = s.heap;
+  rec.vars({ k, heap: [] });
   rec.line('input', 'begin');
   if (n === 0) {
     s.done = true;
@@ -373,6 +391,7 @@ export function topK(s: QState, rec: Rec): number[] {
     const probe: Probe = { text: String(x.v), at: nid(x) };
     if (h.length < k) {
       h.push(x);
+      if (rec.recording) rec.vars({ k, x: x.v, heap: h.map((it) => it.v) });
       rec.count('writes');
       rec.mark(nid(x), 'key');
       rec.line('read', 'push');
@@ -387,6 +406,7 @@ export function topK(s: QState, rec: Rec): number[] {
       continue;
     }
     const root = h[0];
+    if (rec.recording) rec.vars({ k, x: x.v, heap: h.map((it) => it.v), 'heap[0]': root.v });
     rec.mark(nid(x), 'key');
     rec.mark(nid(root), 'compare');
     comparisons++;
@@ -397,6 +417,7 @@ export function topK(s: QState, rec: Rec): number[] {
         message: `Read ${x.v}. The heap is full, so compare it with the root, ${root.v}: the smallest of the best ${k} so far. ${x.v} is larger, so it takes the root's place.`,
       });
       h[0] = x;
+      if (rec.recording) rec.vars({ k, x: x.v, heap: h.map((it) => it.v), 'heap[0]': x.v });
       s.out[root.uid] = true;
       rec.count('writes');
       kept++;
@@ -423,6 +444,7 @@ export function topK(s: QState, rec: Rec): number[] {
   s.done = true;
   rec.clearMarks();
   const got = h.map((it) => it.v);
+  rec.vars({ k, heap: got });
   s.result = `top ${h.length}: ${got.join(', ')}`;
   rec.line('done');
   const fewer = h.length < k ? ` The input had fewer than ${k} items, so all of them are kept.` : '';
@@ -452,6 +474,7 @@ function siftUp(s: QState, i: number, rec: Rec, probe: Probe): number {
   while (i > 0) {
     const p = (i - 1) >> 1;
     const parent = h[p];
+    if (rec.recording) rec.vars({ h: h.map((it) => it.v), i, p, 'h[i]': x.v, 'h[p]': parent.v });
     rec.mark(nid(parent), 'compare');
     c++;
     if (x.v >= parent.v) {
@@ -463,6 +486,8 @@ function siftUp(s: QState, i: number, rec: Rec, probe: Probe): number {
     rec.line('up_compare');
     rec.compare(x.v, '<', parent.v, `smaller than its parent at index ${p}, so swap up`, { probe });
     swapHeap(s, i, p);
+    // i = p is on the same lit line, so the strip shows i after it.
+    if (rec.recording) rec.vars({ h: h.map((it) => it.v), i: p, p, 'h[i]': x.v, 'h[p]': x.v });
     rec.count('writes', 2);
     rec.unmark(nid(parent));
     rec.line('up_swap');
@@ -489,6 +514,8 @@ function siftDown(s: QState, rec: Rec, probe: Probe): number {
       rec.mark(nid(l), 'compare');
       rec.mark(nid(r), 'compare');
       count++;
+      // c += 1 is on the lit line when the right child wins, so show c after it.
+      if (rec.recording) rec.vars({ h: h.map((it) => it.v), i, c: r.v < l.v ? c + 1 : c, 'h[i]': x.v, 'h[c]': (r.v < l.v ? r : l).v });
       rec.line('down_child', 'down_pick');
       if (r.v < l.v) {
         rec.compare(l.v, '>', r.v, `the right child, ${r.v}, is the smaller`, { probe });
@@ -503,6 +530,7 @@ function siftDown(s: QState, rec: Rec, probe: Probe): number {
       rec.mark(nid(h[c]), 'compare');
     }
     const child = h[c];
+    if (rec.recording) rec.vars({ h: h.map((it) => it.v), i, c, 'h[i]': x.v, 'h[c]': child.v });
     count++;
     const lines = both ? ['down_compare'] : ['down_child', 'down_compare'];
     if (x.v <= child.v) {
@@ -514,6 +542,7 @@ function siftDown(s: QState, rec: Rec, probe: Probe): number {
     rec.line(...lines);
     rec.compare(x.v, '>', child.v, `larger than its smaller child, so swap down`, { probe });
     swapHeap(s, i, c);
+    if (rec.recording) rec.vars({ h: h.map((it) => it.v), i: c, c, 'h[i]': x.v, 'h[c]': x.v });
     rec.count('writes', 2);
     rec.unmark(nid(child));
     rec.line('down_swap');
