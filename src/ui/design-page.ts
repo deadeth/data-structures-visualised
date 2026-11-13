@@ -2,7 +2,7 @@ import './design.css';
 import { h, tableRoles } from '../core/dom';
 import type { Extras } from '../designs/extras/types';
 import { extrasParts } from './design-extras';
-import { MODES, type Component, type Design, type Flow } from '../designs/types';
+import { MODES, type Component, type Design, type Example, type Flow } from '../designs/types';
 
 const NS = 'http://www.w3.org/2000/svg';
 const SPEEDS = [0.5, 1, 2] as const;
@@ -253,6 +253,20 @@ function altItem(a: { name: string; chosen?: boolean; what?: string; pros?: stri
     points('Pros', 'pro', pros),
     points('Cons', 'con', cons),
   );
+}
+
+/** Code and message examples, each in its own captioned block. Wide lines scroll inside the block, which takes focus so the keyboard can scroll it. */
+function exGrid(idBase: string, examples: Example[]): HTMLElement {
+  const langs = { sql: 'SQL', json: 'JSON', proto: 'Protocol Buffers', http: 'HTTP', text: 'Text' } as const;
+  return h('div.hld-ex-grid', null, examples.map((ex, i) => {
+    const id = `${idBase}-${i}`;
+    return h(
+      'figure.hld-ex', null,
+      h('figcaption', { id }, ex.title, h('span.hld-ex-lang', null, langs[ex.lang])),
+      h('pre', { tabIndex: 0, role: 'region', 'aria-labelledby': id }, h('code', null, ex.code)),
+      ex.note ? h('p.hld-ex-note', null, ex.note) : null,
+    );
+  }));
 }
 
 export async function mountDesign(host: HTMLElement, design: Design, open?: { kind: string; id: string }, extras?: Extras): Promise<() => void> {
@@ -1220,6 +1234,12 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
           h('h4', null, 'Talks to'), h('ul.hld-talks', null, talks.map(talkItem)),
         ),
         // The options take the panel's full width: what each is, then its pros, then its cons.
+        c.tables?.length
+          ? h('div.hld-examples', null, h('h4', null, 'What it stores'), h('p.hld-ex-lead', null, 'The tables, keys or objects this box would hold, with the names this page uses. A sketch to learn from, not a production schema.'), exGrid(`${design.id}-tb-${c.id}`, c.tables))
+          : null,
+        c.queries?.length
+          ? h('div.hld-examples', null, h('h4', null, 'Key queries'), h('p.hld-ex-lead', null, 'The reads and writes that matter most here, as they would be run.'), exGrid(`${design.id}-qy-${c.id}`, c.queries))
+          : null,
         h('div.hld-alt-block', null, h('h4', null, 'Alternatives'), h('ul.hld-alts', null, c.alternatives.map(alt))),
       ),
       h('p.hld-say', null, h('span.hld-k', null, 'Say: '), c.say),
@@ -1265,17 +1285,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
               'div.hld-examples', null,
               h('h4', null, 'What it looks like'),
               h('p.hld-ex-lead', null, 'An example with the names this page uses. It shows the shape of the call, not a real system\'s API.'),
-              h('div.hld-ex-grid', null, fl.examples.map((ex, i) => {
-                const id = `${design.id}-ex-${fl.id}-${i}`;
-                const langs = { sql: 'SQL', json: 'JSON', proto: 'Protocol Buffers', http: 'HTTP', text: 'Text' } as const;
-                return h(
-                  'figure.hld-ex', null,
-                  h('figcaption', { id }, ex.title, h('span.hld-ex-lang', null, langs[ex.lang])),
-                  // Wide lines scroll inside the block, which takes focus so the keyboard can scroll it.
-                  h('pre', { tabIndex: 0, role: 'region', 'aria-labelledby': id }, h('code', null, ex.code)),
-                  ex.note ? h('p.hld-ex-note', null, ex.note) : null,
-                );
-              })),
+              exGrid(`${design.id}-ex-${fl.id}`, fl.examples),
             )
           : null,
         fl.ways?.length

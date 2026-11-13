@@ -35,7 +35,7 @@ function build(): Promise<Doc[]> {
         kind: 'Component',
         title: c.name,
         also: [c.tech, ...c.alternatives.map((a) => a.name)],
-        text: [c.what, c.why, c.fails, ...(c.built ?? []).flatMap((b) => [b.name, b.what, b.why]), ...(c.numbers ?? []).flatMap((n) => (typeof n === 'string' ? [n] : [n.text, n.from])), ...c.alternatives.map((a) => [a.name + '.', a.what ?? '', a.good, a.cost, ...(a.pros ?? []), ...(a.cons ?? [])].join(' ')), c.say].join(' '),
+        text: [c.what, c.why, c.fails, ...(c.built ?? []).flatMap((b) => [b.name, b.what, b.why]), ...[...(c.tables ?? []), ...(c.queries ?? [])].flatMap((e) => [e.title, e.code, e.note ?? '']), ...(c.numbers ?? []).flatMap((n) => (typeof n === 'string' ? [n] : [n.text, n.from])), ...c.alternatives.map((a) => [a.name + '.', a.what ?? '', a.good, a.cost, ...(a.pros ?? []), ...(a.cons ?? [])].join(' ')), c.say].join(' '),
         href: `${base}/c/${c.id}`,
         where: `${d.name}: component`,
         from: d.name,

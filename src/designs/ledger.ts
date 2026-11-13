@@ -2906,7 +2906,7 @@ INSERT INTO ledger_entries
           path: ['placehold'],
           labels: ['PlaceHold 64900'],
           story: {
-            context: "The INITIATED row is committed in the Card service. The network is waiting. The Core Ledger is another service with its own database.",
+            context: "The INITIATED row is committed in the Card service. The network is waiting. The Core Ledger is another service, and its data is in the Ledger DB, a different database from the one the Card service just wrote to.",
             problem: "The answer is needed now, so this cannot go through a queue. But a synchronous call can time out, and the Card service may then call again without knowing whether the first call placed a hold.",
             consequence: "Without a key, a retried call would place a second hold of 64900 and take 129800 off the bakery's available credit for one purchase.",
             fix: "PlaceHold carries the auth_id as its idempotency key, and the ledger stores it in the hold itself as source_id. pending_holds has UNIQUE (source_type, source_id), so the same auth_id can never hold twice. The cost: the Core Ledger is on the authorisation hot path, so its latency is the card's.",
@@ -2992,7 +2992,7 @@ INSERT INTO ledger_entries
         },
         {
           title: 'TransactionPosted reaches the Card service',
-          text: "The CDC relay reads the committed TransactionPosted row from the ledger's log and publishes it on ledger-events, keyed by the card account. The Card service's consumer reads it and marks the authorisation CLEARED. Two services, two databases, now agree, and no transaction ever spanned them.",
+          text: "The CDC relay reads the committed TransactionPosted row from the ledger's log and publishes it on ledger-events, keyed by the card account. The Card service's consumer reads it and marks the authorisation CLEARED. The Card service's own database (the card_authorisations table, kept inside the Card service box and not drawn separately) now says CLEARED, and the Core Ledger's Ledger DB says POSTED. The two agree, and no transaction ever spanned them.",
           focus: ['db', 'relay', 'kafka', 'cardsvc'],
           path: ['cdc', 'publish', 'cardnews'],
           labels: ['outbox row', 'TransactionPosted', 'mark CLEARED'],
@@ -3121,10 +3121,10 @@ INSERT INTO ledger_entries
           path: ['cardnews'],
           labels: ['replayed HoldExpired'],
           story: {
-            context: "Two services, two databases, no shared transaction. Retries and events keep them in step almost always.",
+            context: "The Card service keeps card_authorisations in its own database (inside the Card service box). The Core Ledger keeps holds and transactions in the Ledger DB. No transaction spans the two. Retries and events keep them in step almost always.",
             problem: "Almost is not enough for money. A lost event, a consumer bug or a crash at the wrong moment leaves them apart, and nothing in either database looks wrong on its own.",
             consequence: "An authorisation stuck at APPROVED would make support think money is still held, and a later clearing would be matched against the wrong state. The other way round, an ACTIVE hold with no APPROVED row would keep the customer's credit held for days.",
-            fix: "The owner's self-healing reconciliation: APPROVED authorisations against ACTIVE holds, CLEARED authorisations against POSTED transactions through card_authorisations.hold_id = transactions.reference_id, one to one, both ways. The tables are in two databases, so the job exports keys from each replica up to a cut-off and compares them in its own database. Breaks are aged first, so events still in flight are not raised. The cost: a job across two services, and a team that owns its breaks.",
+            fix: "The owner's self-healing reconciliation: APPROVED authorisations against ACTIVE holds, CLEARED authorisations against POSTED transactions through card_authorisations.hold_id = transactions.reference_id, one to one, both ways. card_authorisations is in the Card service's database and pending_holds and transactions are in the Ledger DB, so no single query can join them: the job exports keys from a replica of each up to a cut-off and compares them in Reconciliation's own database. Breaks are aged first, so events still in flight are not raised. The cost: a job across two services, and a team that owns its breaks.",
           },
           explain: [
             { q: "Why on replicas?", a: "The job reads millions of rows; the primaries are busy taking payments. A replica a second behind is fine, because the job compares up to a cut-off an hour back." },
