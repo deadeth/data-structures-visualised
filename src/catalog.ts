@@ -10,7 +10,7 @@ export interface CatalogEntry {
   cheat: { lookup: string; insert: string; remove: string; ordered: string; pick: string };
 }
 
-export const GROUPS = ['Storage and indexes', 'Hashing and distribution', 'Caches and queues', 'Transactions', 'Replication and consensus', 'Data processing', 'Networking', 'Reliability patterns', 'Foundations'] as const;
+export const GROUPS = ['Storage and indexes', 'Hashing and distribution', 'Caches and queues', 'Transactions', 'Replication and consensus', 'Data processing', 'Networking', 'Reliability patterns', 'Foundations', 'Sorting and searching'] as const;
 
 /**
  * Every structure the site covers, in display order. A structure's page goes
@@ -332,6 +332,48 @@ export const CATALOG: CatalogEntry[] = [
     group: 'Foundations',
     blurb: 'Nodes and edges, explored breadth-first, depth-first, or by cheapest path.',
     cheat: { lookup: 'O(V + E) to traverse', insert: 'O(1) per edge', remove: 'O(degree)', ordered: 'No', pick: 'Dependencies, routing, social and service networks.' },
+  },
+  {
+    id: 'binary-search',
+    name: 'Binary search',
+    group: 'Sorting and searching',
+    blurb: 'Halve a sorted range until the key is found or there is nowhere left to look.',
+    cheat: { lookup: 'O(log n)', insert: 'Needs sorted input', remove: 'O(1) extra space', ordered: 'Yes: input must be', pick: 'Any lookup or boundary in sorted data: index pages, SSTable blocks, offsets.' },
+  },
+  {
+    id: 'merge-lists',
+    name: 'Merging sorted lists',
+    group: 'Sorting and searching',
+    blurb: 'Two sorted lists become one by always taking the smaller front item. With a heap, k lists do the same.',
+    cheat: { lookup: 'O(n + m), or O(n log k)', insert: 'O(n + m) output', remove: 'Stable: ties keep order', ordered: 'Yes: sorted in, sorted out', pick: 'Merge sort, LSM compaction, sort-merge joins, combining sorted shards.' },
+  },
+  {
+    id: 'merge-sort',
+    name: 'Merge sort',
+    group: 'Sorting and searching',
+    blurb: 'Split in half, sort each half, merge. The same cost on every input.',
+    cheat: { lookup: 'O(n log n) always', insert: 'O(n) extra space', remove: 'Stable', ordered: 'Output sorted', pick: 'Stable sorts, linked lists, and data too big for memory (external sort).' },
+  },
+  {
+    id: 'quicksort',
+    name: 'Quicksort',
+    group: 'Sorting and searching',
+    blurb: 'Pick a pivot, put smaller items left and larger right, then sort each side.',
+    cheat: { lookup: 'O(n log n) typical, O(n²) worst', insert: 'O(log n) stack', remove: 'Not stable', ordered: 'Output sorted', pick: 'In-memory sorting of arrays when stability does not matter.' },
+  },
+  {
+    id: 'insertion-sort',
+    name: 'Insertion sort',
+    group: 'Sorting and searching',
+    blurb: 'Take each item in turn and slide it left to its place. Slow in general, fast on nearly sorted data.',
+    cheat: { lookup: 'O(n²), O(n) if nearly sorted', insert: 'O(1) extra space', remove: 'Stable', ordered: 'Output sorted', pick: 'Small or nearly sorted arrays; the base case inside faster sorts.' },
+  },
+  {
+    id: 'quickselect',
+    name: 'Quickselect and top k',
+    group: 'Sorting and searching',
+    blurb: 'Find the k-th smallest, or the k largest, without sorting everything.',
+    cheat: { lookup: 'O(n) typical for the k-th', insert: 'O(n log k) with a heap of k', remove: 'O(k) space for the heap', ordered: 'No: only the cut is placed', pick: 'Medians, percentiles, leaderboards and top-k over a stream.' },
   },
 ];
 
