@@ -170,6 +170,7 @@ function begin(s: TpcState, rec: Rec, lead: string[]): number {
   }
   rec.mark(TXN, 'key');
   s.parts.forEach((_p, i) => rec.markCell(pid(i), LOCK_CELL, 'ok'));
+  rec.vars({ txn: t, 'p.locks': [t], 'p.state': 'working' });
   rec.line(...lead, 'begin', 'lock');
   rec.step(
     `${t} starts. It writes one row at each of ${everyone(s)}, and each participant locks its row first. Nothing is permanent yet: each of them could still undo its part.`,
@@ -186,6 +187,7 @@ function phaseOne(s: TpcState, rec: Rec, id: number, cost: Cost, refuse: number 
   s.phase = 'phase 1';
   s.msgs = s.parts.map((_p, i) => ({ to: i, back: false, text: 'prepare', tone: 'path' as Tone }));
   send(rec, cost, n);
+  rec.vars({ txn: t, yes: 0 });
   rec.line('phase_one', 'send_prepare');
   rec.step(
     `Phase 1. The coordinator sends prepare ${t} to ${everyone(s)}. It is asking each one: can you promise to commit ${t}, whatever happens to you next?`,
@@ -199,6 +201,7 @@ function phaseOne(s: TpcState, rec: Rec, id: number, cost: Cost, refuse: number 
     if (!p.up) {
       s.msgs = [{ to: i, back: false, text: 'no reply', tone: 'bad', dashed: true }];
       s.tally.cells[i] = `${p.name} —`;
+      rec.vars({ txn: t, yes, p: p.name, 'p.up': p.up });
       rec.line('phase_one', 'vote', 'silent');
       rec.step(`${p.name} does not answer: it is down. The coordinator waits until its timeout runs out, then counts the missing vote as a no.`, { probe: atPart(id, i) });
     } else if (refuse === i) {
@@ -210,6 +213,7 @@ function phaseOne(s: TpcState, rec: Rec, id: number, cost: Cost, refuse: number 
       s.msgs = [{ to: i, back: true, text: 'no', tone: 'bad' }];
       s.tally.cells[i] = `${p.name} no`;
       rec.markCell(lid(i), lastCell(p.log, PLOG_SHOWN), 'bad');
+      rec.vars({ txn: t, yes, p: p.name, 'p.up': p.up, 'p.state': p.state });
       rec.line('phase_one', 'vote', 'refuse');
       rec.step(
         `${p.name}'s check fails: say the write would take a balance below zero. It writes abort ${t} to its log, releases its lock at once and votes no. A participant that has not voted yes may abort on its own.`,
@@ -224,6 +228,7 @@ function phaseOne(s: TpcState, rec: Rec, id: number, cost: Cost, refuse: number 
       s.msgs = [{ to: i, back: true, text: 'yes', tone: 'ok' }];
       s.tally.cells[i] = `${p.name} yes`;
       rec.markCell(lid(i), lastCell(p.log, PLOG_SHOWN), 'ok');
+      rec.vars({ txn: t, yes, p: p.name, 'p.up': p.up, 'p.state': p.state });
       rec.line('phase_one', 'vote', 'prepared');
       rec.step(
         firstYes
@@ -240,6 +245,7 @@ function phaseOne(s: TpcState, rec: Rec, id: number, cost: Cost, refuse: number 
   s.msgs = [];
   const decision: Decision = yes === n ? 'commit' : 'abort';
   for (let i = 0; i < n; i++) rec.markCell(TALLY, i, 'compare');
+  rec.vars({ txn: t, yes, 'len(participants)': n, decision });
   rec.line('phase_one', 'count');
   rec.compare(`${t}: ${yes} yes`, yes === n ? '=' : '<', `${n} participants`, `decide ${decision}`, {
     probe: atCoord(id),
@@ -259,6 +265,7 @@ function decide(s: TpcState, rec: Rec, id: number, decision: Decision, cost: Cos
   s.coord.log.push({ kind: decision, txn: id });
   write(rec, cost, true);
   rec.markCell(CLOG, lastCell(s.coord.log, CLOG_SHOWN), decision === 'commit' ? 'ok' : 'bad');
+  rec.vars({ txn: t, decision });
   rec.line(...lead, 'decide');
   rec.step(
     decision === 'commit'
@@ -278,6 +285,7 @@ function phaseTwo(s: TpcState, rec: Rec, id: number, decision: Decision, cost: C
   s.msgs = s.parts.map((p, i) => ({ to: i, back: false, text: decision, tone: ok, dashed: !p.up }));
   send(rec, cost, n);
   if (decision === 'commit') s.tally = { kind: 'acks', cells: new Array<string>(n).fill('') };
+  rec.vars({ txn: t, decision, missing: [] });
   rec.line(via, 'send');
   rec.step(`Phase 2. The coordinator sends ${decision} ${t} to ${everyone(s)}.`, { probe: atCoord(id) });
 
@@ -287,6 +295,7 @@ function phaseTwo(s: TpcState, rec: Rec, id: number, decision: Decision, cost: C
     if (p.up) rec.mark(pid(i), 'path');
     if (!p.up) {
       missing.push(i);
+      rec.vars({ txn: t, decision, missing: missing.map((j) => s.parts[j].name), p: p.name, 'p.up': p.up });
       s.msgs = [{ to: i, back: false, text: decision, tone: 'bad', dashed: true }];
       if (decision === 'commit') {
         s.tally.cells[i] = `${p.name} —`;
@@ -314,6 +323,7 @@ function phaseTwo(s: TpcState, rec: Rec, id: number, decision: Decision, cost: C
         s.msgs = [{ to: i, back: true, text: 'ack', tone: 'ok' }];
         s.tally.cells[i] = `${p.name} ack`;
       } else s.msgs = [];
+      rec.vars({ txn: t, decision, missing: missing.map((j) => s.parts[j].name), p: p.name, 'p.up': p.up, 'p.state': p.state });
       rec.line(via, 'send', 'apply', 'release');
       const waited = wasDoubt && via === 'found' ? `${p.name} has been in doubt since the crash, holding its lock. ` : ``;
       rec.step(
@@ -334,6 +344,7 @@ function phaseTwo(s: TpcState, rec: Rec, id: number, decision: Decision, cost: C
     rec.unmark(lid(i));
   });
   s.msgs = [];
+  rec.vars({ txn: t, decision, missing: missing.map((j) => s.parts[j].name) });
 
   if (decision === 'abort') {
     rec.line(via, 'no_acks');
@@ -343,6 +354,7 @@ function phaseTwo(s: TpcState, rec: Rec, id: number, decision: Decision, cost: C
     );
   } else if (missing.length) {
     s.coord.waiting[id] = missing;
+    rec.vars({ txn: t, decision, missing: missing.map((j) => s.parts[j].name), 'waiting[txn]': missing.map((j) => s.parts[j].name) });
     rec.line(via, 'acks', 'missing');
     rec.step(
       `${n - missing.length} of ${n} acks are in. The coordinator keeps ${t} in memory and keeps resending commit to ${list(missing.map((i) => s.parts[i].name))} until it answers.`,
@@ -375,6 +387,7 @@ function askAndLearn(s: TpcState, rec: Rec, id: number, i: number, cost: Cost, l
   const shown = at >= shownFrom;
   if (shown) rec.markCell(CLOG, at - shownFrom, 'compare');
   rec.mark(pid(i), 'path');
+  rec.vars({ 'self.name': p.name, txn: t, 'self.state': p.state, decision });
   rec.line(...lead, 'doubt', 'ask', 'lookup');
   rec.compare(`${t} in log`, '=', found ?? 'no record', found ? `answer ${found}` : 'presumed abort', {
     probe: shown ? { text: t, at: CLOG, cell: at - shownFrom } : atCoord(id),
@@ -393,6 +406,7 @@ function askAndLearn(s: TpcState, rec: Rec, id: number, i: number, cost: Cost, l
   p.state = DONE[decision];
   s.msgs = [{ to: i, back: false, text: decision, tone: decision === 'commit' ? 'ok' : 'bad' }];
   rec.markCell(lid(i), lastCell(p.log, PLOG_SHOWN), decision === 'commit' ? 'ok' : 'bad');
+  rec.vars({ 'self.name': p.name, txn: t, 'self.state': p.state, decision });
   rec.line(...lead, 'learn', found ? 'known' : 'presumed', 'apply', 'release');
   rec.step(
     decision === 'commit'
@@ -408,6 +422,7 @@ function askAndLearn(s: TpcState, rec: Rec, id: number, i: number, cost: Cost, l
     send(rec, cost);
     s.msgs = [{ to: i, back: true, text: 'ack', tone: 'ok' }];
     s.tally.cells[i] = `${p.name} ack`;
+    rec.vars({ txn: t, name: p.name, missing: s.coord.waiting[id].map((j) => s.parts[j].name) });
     if (s.coord.waiting[id].length === 0) {
       delete s.coord.waiting[id];
       s.coord.log.push({ kind: 'end', txn: id });
@@ -432,6 +447,7 @@ function blocked(s: TpcState, rec: Rec): boolean {
   const t = label(s.inDoubt ?? s.txn);
   const p = s.parts[0];
   rec.markCell(pid(0), LOCK_CELL, 'compare');
+  rec.vars({ txn: label(s.txn + 1), 'self.name': p.name, 'self.locks': [t] });
   rec.line('wait');
   rec.compare(`${p.name} lock`, '=', t, 'wait for the lock', {
     message: `Sorry, no new transaction can go through now. This page has one coordinator and it is down, and ${t} is in doubt: ${everyone(s)} still hold its locks. A new transaction that writes the same rows stops at its first lock, here, and waits for as long as the coordinator is down. Use Recover coordinator.`,
@@ -454,6 +470,7 @@ function run(s: TpcState, rec: Rec, refuse: number | null, lead: string[]): Resu
   decide(s, rec, id, decision, cost, []);
   phaseTwo(s, rec, id, decision, cost, 'phase_two');
   finishTxn(s, decision);
+  rec.vars({ txn: label(id), decision });
   rec.line('done');
   rec.step(closing(s, id, decision, cost, refuse), { probe: atTxn(id) });
   return { txn: id, decision };
@@ -476,12 +493,14 @@ function closing(s: TpcState, id: number, decision: Decision, cost: Cost, refuse
 }
 
 export function commit(s: TpcState, rec: Rec): Result | null {
+  rec.vars();
   if (blocked(s, rec)) return null;
   return run(s, rec, null, []);
 }
 
 export function voteNo(s: TpcState, who: number | string, rec: Rec): Result | null {
   const i = asParticipant(s, who);
+  rec.vars();
   rec.line('arm');
   if (i === null) {
     rec.step(`There are participants ${everyone(s)} on this page. Enter ${either(s)} as the one to vote no.`);
@@ -489,6 +508,7 @@ export function voteNo(s: TpcState, who: number | string, rec: Rec): Result | nu
   }
   if (blocked(s, rec)) return null;
   rec.mark(pid(i), 'compare');
+  rec.vars({ txn: label(s.txn + 1), voter: s.parts[i].name, 'voter.refuse': true });
   rec.step(
     `${s.parts[i].name} will refuse the next transaction, ${label(s.txn + 1)}. When it is asked to prepare, a check will fail and it will vote no. Real causes: a constraint, a deadlock, a full disk, a timeout.`,
   );
@@ -500,6 +520,7 @@ export function voteNo(s: TpcState, who: number | string, rec: Rec): Result | nu
 export function crashParticipant(s: TpcState, who: number | string, when: number | string, rec: Rec): Result | null {
   const i = asParticipant(s, who);
   const w = String(when).trim().toLowerCase();
+  rec.vars();
   rec.line('crash');
   if (i === null) {
     rec.step(`There are participants ${everyone(s)} on this page. Enter ${either(s)} as the one to crash.`);
@@ -519,6 +540,7 @@ export function crashParticipant(s: TpcState, who: number | string, when: number
   if (!after) {
     p.up = false;
     p.lock = null;
+    rec.vars({ txn: t, victim: p.name, after_vote: after, 'victim.up': p.up, 'victim.locks': [] });
     rec.line('crash');
     rec.step(
       `${p.name} crashes before the prepare reaches it. Its lock and its half-done write were only in memory, so they are gone, and its log holds nothing about ${t}.`,
@@ -529,6 +551,7 @@ export function crashParticipant(s: TpcState, who: number | string, when: number
   if (after) {
     p.up = false;
     p.lock = null;
+    rec.vars({ txn: t, victim: p.name, after_vote: after, decision, 'victim.up': p.up, 'victim.locks': [] });
     rec.line('crash');
     rec.step(
       `${p.name} crashes just after its yes vote leaves. Its lock goes with its memory, but prepared ${t} is safe in its log. The coordinator has the vote and does not know ${p.name} is down.`,
@@ -541,9 +564,11 @@ export function crashParticipant(s: TpcState, who: number | string, when: number
   // The victim comes back and rebuilds from its log.
   p.up = true;
   rec.mark(pid(i), 'path');
+  rec.vars({ 'self.name': p.name, 'self.up': p.up });
   rec.line('restart_victim', 'restart');
   rec.step(`${p.name} restarts. Its memory starts empty, so it rebuilds what it knows from its log.`, { probe: atPart(id, i) });
   const doubt = inDoubt(p).includes(id);
+  rec.vars({ 'self.name': p.name, 'self.up': p.up, doubt: inDoubt(p).map(label) });
   if (doubt) rec.markCell(lid(i), lastCell(p.log, PLOG_SHOWN), 'compare');
   rec.line('restart_victim', 'scan');
   rec.compare(`${p.name} log: ${t}`, '=', doubt ? 'prepared' : 'no record', doubt ? 'in doubt: relock and ask' : 'never voted: roll back', {
@@ -555,12 +580,14 @@ export function crashParticipant(s: TpcState, who: number | string, when: number
   rec.unmark(lid(i));
   if (!doubt) {
     p.state = 'aborted';
+    rec.vars({ 'self.name': p.name, 'self.up': p.up, doubt: [], 'self.state': p.state });
     rec.line('restart_victim', 'undo');
     rec.step(`${p.name} rolls back its part of ${t}. Every participant now agrees: ${t} aborted.`, { probe: atPart(id, i) });
   } else {
     p.lock = id;
     p.state = 'prepared';
     rec.markCell(pid(i), LOCK_CELL, 'ok');
+    rec.vars({ 'self.name': p.name, 'self.up': p.up, doubt: [t], txn: t, 'self.locks': [t], 'self.state': p.state });
     rec.line('restart_victim', 'relock');
     rec.step(
       `${p.name} takes the lock on its row again before anything else runs. The prepared record has to hold enough to do that, or another transaction could change the row while ${t} is undecided.`,
@@ -571,6 +598,7 @@ export function crashParticipant(s: TpcState, who: number | string, when: number
   }
   rec.unmark(pid(i));
   finishTxn(s, decision);
+  rec.vars({ txn: t, victim: p.name, after_vote: after, decision });
   rec.line('done');
   rec.step(
     decision === 'commit'
@@ -584,6 +612,7 @@ export function crashParticipant(s: TpcState, who: number | string, when: number
 /** Run a transaction's phase 1, then crash the coordinator before it sends the decision. */
 export function crashCoordinator(s: TpcState, when: number | string, rec: Rec): Result | null {
   const w = String(when).trim().toLowerCase();
+  rec.vars();
   rec.line('logged');
   if (w !== 'before' && w !== 'after') {
     rec.step(`Enter before or after: does the coordinator crash before or after it writes its decision to its log?`);
@@ -602,6 +631,7 @@ export function crashCoordinator(s: TpcState, when: number | string, rec: Rec): 
   s.tally = { kind: s.tally.kind, cells: new Array<string>(s.parts.length).fill('') };
   s.inDoubt = id;
   s.phase = 'in doubt';
+  rec.vars({ txn: t, logged, decision, 'self.up': false, 'self.waiting': '{}' });
   rec.line('logged', 'crash');
   rec.step(
     logged
@@ -613,6 +643,7 @@ export function crashCoordinator(s: TpcState, when: number | string, rec: Rec): 
   const waiting = s.parts.map((_p, i) => i).filter((i) => inDoubt(s.parts[i]).includes(id));
   s.msgs = waiting.map((i) => ({ to: i, back: true, text: 'ask', tone: 'bad' as Tone, dashed: true }));
   send(rec, cost, waiting.length);
+  rec.vars({ 'self.name': s.parts[0].name, txn: t, decision: null });
   rec.line('wait_out', 'doubt', 'ask', 'no_answer');
   rec.step(
     `${everyone(s)} each wait for the decision, time out and ask the coordinator about ${t}. Nobody answers.`,
@@ -635,6 +666,7 @@ export function crashCoordinator(s: TpcState, when: number | string, rec: Rec): 
 
 /** Restart the coordinator: replay its log, finish a logged commit, and answer anyone still in doubt. */
 export function recoverCoordinator(s: TpcState, rec: Rec): Result | null {
+  rec.vars({ 'self.up': s.coord.up });
   if (s.coord.up) {
     rec.line('running');
     rec.step(`The coordinator is running, so there is nothing to recover. Use Crash coordinator first.`);
@@ -645,11 +677,14 @@ export function recoverCoordinator(s: TpcState, rec: Rec): Result | null {
   const cost: Cost = { messages: 0, writes: 0, forced: 0 };
   s.coord.up = true;
   rec.mark(TXN, 'key');
+  rec.vars({ 'self.up': s.coord.up });
   rec.line('reboot');
   rec.step(`The coordinator restarts. Its memory is empty: it knows only what its log says.`, { probe: atCoord(id) });
 
   const found = s.coord.log.some((e) => e.kind === 'commit' && e.txn === id) && !s.coord.log.some((e) => e.kind === 'end' && e.txn === id);
   if (found) rec.markCell(CLOG, lastCell(s.coord.log, CLOG_SHOWN), 'compare');
+  const ended = s.coord.log.filter((e) => e.kind === 'end').map((e) => label(e.txn));
+  rec.vars({ 'self.up': s.coord.up, ended, kind: found ? 'commit' : undefined, txn: found ? t : undefined });
   rec.line('replay', 'found');
   rec.compare(`${t} in log`, '=', found ? 'commit, no end' : 'no record', found ? 'send commit again' : 'nothing to resend', {
     probe: found ? atNewest(s, id) : atCoord(id),
@@ -671,6 +706,7 @@ export function recoverCoordinator(s: TpcState, rec: Rec): Result | null {
   }
   s.inDoubt = null;
   finishTxn(s, decision);
+  rec.vars({ 'self.up': s.coord.up, txn: t });
   rec.line(found ? 'found' : 'asked');
   rec.step(
     found

@@ -168,6 +168,7 @@ function shipAll(s: ReplState, f: Replica, rec: Rec | null, say?: (e: Entry, lsn
     if (rec) {
       rec.count('shipped');
       if (say) {
+        rec.vars({ f: f.name, 'f.pos()': pos(f), 'len(log)': pos(lead), sent });
         // These copies are not the write being followed, so they go straight to green and the chip stays where it was.
         rec.mark(eid(f.name, lsn, e.epoch), 'ok');
         rec.line(...anchors, 'copy');
@@ -195,6 +196,7 @@ function notFollower(s: ReplState, raw: number | string, r: Name | null): Refusa
 export function write(s: ReplState, rawKey: number | string, rawValue: number | string, rec: Rec): number | null {
   const key = asKey(rawKey);
   const value = Number(rawValue);
+  rec.vars({ key: key ?? String(rawKey), value });
   rec.line('append');
   if (!key) {
     rec.step(`Keys on this page are single letters, a to z. "${rawKey}" is not one.`);
@@ -215,6 +217,7 @@ export function write(s: ReplState, rawKey: number | string, rawValue: number | 
   lead.log.push({ epoch: s.epoch, key, value });
   const lsn = pos(lead);
   const mine = (r: Name) => eid(r, lsn, s.epoch);
+  rec.vars({ key, value, lead: L, 'self.epoch': s.epoch, 'lead.pos()': lsn });
   rec.mark(mine(L), 'key');
   rec.step(
     `${L} appends ${key} = ${value} to its log at LSN ${lsn}, stamped with epoch ${s.epoch}. LSN means log sequence number: the entry's place in the log. Every replica that applies this log in order ends up with the same data.`,
@@ -222,6 +225,7 @@ export function write(s: ReplState, rawKey: number | string, rawValue: number | 
   );
 
   const need = needed(s);
+  rec.vars({ key, value, lead: L, 'needed()': need.map((f) => f.name), acks: 0 });
   rec.line('wait');
   if (need.length === 0) {
     const sync = syncFollower(s);
@@ -236,6 +240,7 @@ export function write(s: ReplState, rawKey: number | string, rawValue: number | 
   }
   let acks = 0;
   for (const f of need) {
+    rec.vars({ key, value, lead: L, acks, f: f.name, 'f.held': f.held });
     if (f.held) {
       rec.markCell(hid(f.name), ROLE_CELL, 'compare');
       rec.line('held');
@@ -244,6 +249,7 @@ export function write(s: ReplState, rawKey: number | string, rawValue: number | 
         { probe: entryProbe(s, L, lsn, text) },
       );
       s.semiOff = true;
+      rec.vars({ key, value, lead: L, acks, f: f.name, 'self.semi_off': true });
       rec.markCell(hid(f.name), ROLE_CELL, 'bad');
       rec.line('timeout');
       rec.step(
@@ -254,6 +260,7 @@ export function write(s: ReplState, rawKey: number | string, rawValue: number | 
     } else {
       shipAll(s, f, rec);
       acks++;
+      rec.vars({ key, value, lead: L, acks, f: f.name, 'f.pos()': pos(f) });
       rec.mark(mine(L), 'ok');
       rec.mark(mine(f.name), 'key');
       rec.line('sync_copy', 'copy');
@@ -267,6 +274,7 @@ export function write(s: ReplState, rawKey: number | string, rawValue: number | 
 
   const ok = acks >= need.length;
   s.wrote = lsn;
+  rec.vars({ key, value, lead: L, acks, 'needed()': need.map((f) => f.name), 'self.wrote': lsn });
   rec.mark(mine(L), 'ok');
   rec.line('ack');
   rec.compare(`acks ${acks}`, ok ? '≥' : '<', `needed ${need.length}`, ok ? 'answer the client' : 'timed out: answer anyway', {
@@ -279,6 +287,7 @@ export function write(s: ReplState, rawKey: number | string, rawValue: number | 
 
   for (const f of followers(s)) {
     if (pos(f) >= lsn) continue;
+    rec.vars({ key, value, 'self.wrote': lsn, f: f.name, 'f.held': f.held, 'f.pos()': pos(f) });
     if (f.held) {
       rec.line('async');
       rec.step(
@@ -288,6 +297,7 @@ export function write(s: ReplState, rawKey: number | string, rawValue: number | 
       continue;
     }
     shipAll(s, f, rec);
+    rec.vars({ key, value, 'self.wrote': lsn, f: f.name, 'f.held': f.held, 'f.pos()': pos(f) });
     rec.mark(mine(f.name), 'key');
     rec.line('async_copy', 'copy');
     rec.step(
@@ -299,6 +309,7 @@ export function write(s: ReplState, rawKey: number | string, rawValue: number | 
 
   const holders = NAMES.filter((n) => s.replicas[n].alive && pos(s.replicas[n]) >= lsn && s.replicas[n].log[lsn - 1].epoch === s.epoch);
   const behind = followers(s).filter((f) => pos(f) < lsn).map((f) => f.name);
+  rec.vars({ key, value, 'self.wrote': lsn });
   rec.line('async');
   rec.step(
     `Written: ${key} = ${value} is at LSN ${lsn} on ${list(holders)}. The client waited for ${plural(acks, 'follower')}. ` +
@@ -318,6 +329,7 @@ export const wanted = (s: ReplState) => Math.min(Math.max(s.wrote, s.seen), pos(
 export function read(s: ReplState, rawName: number | string, rawKey: number | string, rec: Rec): { value: number | null; stale: boolean } | null {
   const name = asName(rawName);
   const key = asKey(rawKey);
+  rec.vars({ name: name ?? String(rawName), key: key ?? String(rawKey) });
   rec.line('r_pick');
   if (!name) {
     rec.step(`There are three replicas, A, B and C. Enter a, b or c, not "${rawName}".`);
@@ -334,6 +346,7 @@ export function read(s: ReplState, rawName: number | string, rawKey: number | st
   }
   const text = `read ${key}`;
   const L = s.leader;
+  rec.vars({ name, key, r: name });
   rec.step(
     name === L
       ? `The client reads ${key} from ${name}, the leader. It has every write, but every read sent here adds to the leader's load.`
@@ -345,6 +358,7 @@ export function read(s: ReplState, rawName: number | string, rawKey: number | st
   const p = pos(r);
   const behind = p < want;
   const own = want === s.wrote;
+  rec.vars({ name, key, r: name, want, 'r.pos()': p, behind });
   rec.markCell(hid(name), POS_CELL, 'compare');
   rec.line('want', 'stale');
   rec.compare(`${name} pos ${p}`, behind ? '<' : '≥', `want ${want}`, behind ? 'behind: answer anyway' : 'up to date', {
@@ -385,6 +399,7 @@ export function read(s: ReplState, rawName: number | string, rawKey: number | st
         (fresh && got ? `Had it just read ${key} from ${ahead.name}, it would see ${key} go back from ${fresh.value} to ${got.value}: two followers at different positions also break monotonic reads.` : `Use Read your writes to see the fix.`);
     }
   }
+  rec.vars({ name, key, want, behind, 'self.seen': s.seen, 'r.get(key)': got?.value ?? null });
   rec.line('serve');
   rec.step(message, { probe });
   return { value: got?.value ?? null, stale };
@@ -394,6 +409,7 @@ export function read(s: ReplState, rawName: number | string, rawKey: number | st
 export function readYourWrites(s: ReplState, rawName: number | string, rawKey: number | string, rec: Rec): { value: number | null; from: Name } | null {
   const name = asName(rawName);
   const key = asKey(rawKey);
+  rec.vars({ name: name ?? String(rawName), key: key ?? String(rawKey) });
   rec.line('y_pick');
   if (!name) {
     rec.step(`There are three replicas, A, B and C. Enter a, b or c, not "${rawName}".`);
@@ -409,6 +425,7 @@ export function readYourWrites(s: ReplState, rawName: number | string, rawKey: n
   }
   const text = `read ${key}`;
   const L = s.leader;
+  rec.vars({ name, key, r: name, 'self.wrote': s.wrote });
   rec.step(
     `The client reads ${key} from ${name} and sends along LSN ${s.wrote}, the position of its own last write. A replica may answer only once it has applied at least that much.`,
     { probe: atClient(text) },
@@ -421,6 +438,7 @@ export function readYourWrites(s: ReplState, rawName: number | string, rawKey: n
   } else {
     const p = pos(r);
     const behind = p < s.wrote;
+    rec.vars({ name, key, r: name, 'self.wrote': s.wrote, 'r.pos()': p });
     rec.markCell(hid(name), POS_CELL, 'compare');
     rec.compare(`${name} pos ${p}`, behind ? '<' : '≥', `wrote ${s.wrote}`, behind ? 'route to the leader' : 'serve here', {
       probe: { text, at: hid(name), cell: POS_CELL },
@@ -431,6 +449,7 @@ export function readYourWrites(s: ReplState, rawName: number | string, rawKey: n
     rec.markCell(hid(name), POS_CELL, 'idle');
     if (behind) {
       r = leaderOf(s);
+      rec.vars({ name, key, r: r.name, 'self.wrote': s.wrote, 'r.pos()': pos(r) });
       rec.line('route');
       rec.step(
         `It could wait until ${name} reaches LSN ${s.wrote}${s.replicas[name].held ? `, but ${name} is held back, so that wait could be long` : ''}. Instead the read goes to the leader, ${L}, which always has the client's writes. The cost is load on the leader.`,
@@ -444,6 +463,7 @@ export function readYourWrites(s: ReplState, rawName: number | string, rawKey: n
   rec.count('reads');
   if (got) rec.mark(eid(r.name, got.lsn, r.log[got.lsn - 1].epoch), 'key');
   const lost = s.wrote > pos(leaderOf(s));
+  rec.vars({ name, key, r: r.name, 'self.seen': s.seen, 'r.get(key)': got?.value ?? null });
   rec.line('ryw_serve');
   rec.step(
     `${r.name} answers ${got ? `${key} = ${got.value} (LSN ${got.lsn})` : `that it has no ${key}`}. ` +
@@ -458,6 +478,7 @@ export function readYourWrites(s: ReplState, rawName: number | string, rawKey: n
 /** Hold back a follower's link. Returns false when refused. */
 export function lag(s: ReplState, raw: number | string, rec: Rec): boolean {
   const name = asName(raw);
+  rec.vars({ name: name ?? String(raw) });
   rec.line('l_pick');
   const why = notFollower(s, raw, name);
   if (why) {
@@ -465,6 +486,7 @@ export function lag(s: ReplState, raw: number | string, rec: Rec): boolean {
     return false;
   }
   const f = s.replicas[name!];
+  rec.vars({ name, f: f.name, 'self.mode': s.mode, 'f.held': f.held });
   if (s.mode === SYNC) {
     rec.line('sync_only');
     rec.step(
@@ -478,6 +500,7 @@ export function lag(s: ReplState, raw: number | string, rec: Rec): boolean {
     return true;
   }
   f.held = true;
+  rec.vars({ name, f: f.name, 'self.mode': s.mode, 'f.held': true });
   const isSync = s.mode === SEMI && syncFollower(s) === f;
   rec.markCell(hid(f.name), ROLE_CELL, 'compare');
   rec.step(
@@ -490,6 +513,7 @@ export function lag(s: ReplState, raw: number | string, rec: Rec): boolean {
 /** Release a follower and send it what it missed. Returns how many entries were copied. */
 export function catchUp(s: ReplState, raw: number | string, rec: Rec): number {
   const name = asName(raw);
+  rec.vars({ name: name ?? String(raw) });
   rec.line('c_pick');
   const why = notFollower(s, raw, name);
   if (why) {
@@ -499,6 +523,7 @@ export function catchUp(s: ReplState, raw: number | string, rec: Rec): number {
   const f = s.replicas[name!];
   const lead = leaderOf(s);
   f.held = false;
+  rec.vars({ name, f: f.name, 'f.held': false });
   rec.line('release');
   rec.step(`${f.name}'s link is released. ${lead.name} sends it every entry it missed, oldest first, and ${f.name} applies them in order.`);
   let sent = 0;
@@ -507,6 +532,7 @@ export function catchUp(s: ReplState, raw: number | string, rec: Rec): number {
     const lp = pos(lead);
     const last = lead.log[Math.min(p, lp - 1)];
     const probe = last ? entryProbe(s, lead.name, Math.min(p + 1, lp), chip(last)) : undefined;
+    rec.vars({ f: f.name, 'f.pos()': p, 'len(log)': lp, sent });
     rec.markCell(hid(f.name), POS_CELL, 'compare');
     rec.line('ship', 'gap');
     if (p >= lp) {
@@ -519,6 +545,7 @@ export function catchUp(s: ReplState, raw: number | string, rec: Rec): number {
     const e = lead.log[p];
     f.log.push(e);
     sent++;
+    rec.vars({ f: f.name, 'f.pos()': p + 1, 'len(log)': lp, sent });
     rec.count('shipped');
     rec.mark(eid(f.name, p + 1, e.epoch), 'key');
     rec.line('ship', 'copy');
@@ -527,9 +554,11 @@ export function catchUp(s: ReplState, raw: number | string, rec: Rec): number {
   }
   if (s.semiOff && s.mode === SEMI && syncFollower(s) === f) {
     s.semiOff = false;
+    rec.vars({ name, f: f.name, sent, 'self.semi_off': false });
     rec.line('resync');
     rec.step(`${f.name} is the synchronous follower and has caught up, so semi-synchronous replication switches back on. The next write waits for ${f.name} again.`);
   }
+  rec.vars({ name, f: f.name, sent });
   rec.line('c_done');
   rec.step(
     sent
@@ -543,6 +572,7 @@ export function catchUp(s: ReplState, raw: number | string, rec: Rec): number {
 export function failLeader(s: ReplState, rec: Rec): number | null {
   const old = leaderOf(s);
   const fs = followers(s);
+  rec.vars({ old: old.name, 'followers()': fs.map((f) => f.name) });
   rec.line('f_check');
   if (fs.length === 0) {
     rec.step(`${old.name} is the only replica up. There is no follower to promote, so losing it would lose the database. Use Rejoin first.`);
@@ -552,12 +582,14 @@ export function failLeader(s: ReplState, rec: Rec): number | null {
   const last = old.log[old.log.length - 1];
   const probe = last ? entryProbe(s, old.name, pos(old), chip(last)) : undefined;
   if (last) rec.mark(eid(old.name, pos(old), last.epoch), 'key');
+  rec.vars({ old: old.name, 'old.alive': false, 'old.pos()': pos(old) });
   rec.line('die');
   rec.step(
     `${old.name}, the leader, crashes. ` + (last ? `Its newest entry is ${said(last)} at LSN ${pos(old)}. ` : ``) + `No writes can be taken until a follower is promoted.`,
     { probe },
   );
 
+  rec.vars({ old: old.name, 'old.pos()': pos(old), best: null });
   rec.line('candidates');
   rec.step(
     `Pick the follower that has applied the most: it is missing the fewest of ${old.name}'s writes. Before this, a real system must decide that ${old.name} is dead and not just slow, usually when heartbeats stop for a timeout.`,
@@ -568,12 +600,14 @@ export function failLeader(s: ReplState, rec: Rec): number | null {
     rec.markCell(hid(f.name), POS_CELL, 'compare');
     if (!best) {
       best = f;
+      rec.vars({ old: old.name, f: f.name, 'f.pos()': pos(f), best: f.name, 'best.pos()': pos(f) });
       rec.line('better', 'best');
       rec.step(`${f.name} is at LSN ${pos(f)}: the first candidate.`, { probe });
       rec.markCell(hid(f.name), POS_CELL, 'idle');
       continue;
     }
     const ahead = pos(f) > pos(best);
+    rec.vars({ old: old.name, f: f.name, 'f.pos()': pos(f), best: best.name, 'best.pos()': pos(best) });
     rec.line('better');
     rec.compare(`${f.name} pos ${pos(f)}`, ahead ? '>' : '≤', `${best.name} pos ${pos(best)}`, ahead ? `pick ${f.name}` : `keep ${best.name}`, {
       probe,
@@ -587,6 +621,7 @@ export function failLeader(s: ReplState, rec: Rec): number | null {
   b.epoch = s.epoch;
   b.held = false;
   s.leader = b.name;
+  rec.vars({ old: old.name, best: b.name, 'best.pos()': pos(b), 'self.epoch': s.epoch, 'self.leader': b.name });
   rec.line('promote');
   rec.markCell(hid(b.name), ROLE_CELL, 'ok');
   rec.step(
@@ -595,6 +630,7 @@ export function failLeader(s: ReplState, rec: Rec): number | null {
   );
 
   const lost = pos(old) - pos(b);
+  rec.vars({ old: old.name, best: b.name, 'old.pos()': pos(old), 'best.pos()': pos(b), lost });
   rec.line('lost');
   const gone = old.log.slice(pos(b)).map(said);
   for (let lsn = pos(b) + 1; lsn <= pos(old); lsn++) rec.mark(eid(old.name, lsn, old.log[lsn - 1].epoch), 'bad');
@@ -618,6 +654,7 @@ export function failLeader(s: ReplState, rec: Rec): number | null {
     rec.unmark(hid(f.name));
     shipAll(s, f, rec, (e, lsn) => `${f.name} now follows ${b.name} and copies the LSN ${lsn} it was missing: ${said(e)}.`, ['repoint'], probe);
   }
+  rec.vars({ old: old.name, best: b.name, 'self.epoch': s.epoch, lost, rest: rest.map((f) => f.name) });
   rec.line('repoint');
   rec.step(
     `Failover done: ${b.name} leads epoch ${s.epoch}` +
@@ -634,6 +671,7 @@ export function failLeader(s: ReplState, rec: Rec): number | null {
 /** A replica that was down comes back as a follower. Returns how many entries it discarded, or null when refused. */
 export function rejoin(s: ReplState, raw: number | string, rec: Rec): number | null {
   const name = asName(raw);
+  rec.vars({ name: name ?? String(raw) });
   rec.line('j_check');
   if (!name) {
     rec.step(`There are three replicas, A, B and C. Enter a, b or c, not "${raw}".`);
@@ -649,6 +687,7 @@ export function rejoin(s: ReplState, raw: number | string, rec: Rec): number | n
   const tail = r.log[r.log.length - 1];
   const probe = tail ? entryProbe(s, name, pos(r), chip(tail)) : undefined;
   rec.markCell(hid(name), ROLE_CELL, 'compare');
+  rec.vars({ name, lead: L, 'node.epoch': r.epoch, 'self.epoch': s.epoch });
   rec.line('fence');
   rec.compare(`${name} epoch ${r.epoch}`, '<', `epoch ${s.epoch}`, `step down, follow ${L}`, {
     probe,
@@ -663,6 +702,7 @@ export function rejoin(s: ReplState, raw: number | string, rec: Rec): number | n
     const theirs = lead.log[n - 1];
     const id = eid(name, n, mine.epoch);
     const at = entryProbe(s, name, n, chip(mine));
+    rec.vars({ name, lead: L, n, 'node.log[n-1].epoch': mine.epoch, 'lead.log[n-1].epoch': theirs ? theirs.epoch : null });
     rec.mark(id, 'compare');
     rec.line('match');
     if (theirs && theirs.epoch === mine.epoch) {
@@ -683,6 +723,7 @@ export function rejoin(s: ReplState, raw: number | string, rec: Rec): number | n
     n--;
   }
   const dropped = r.log.slice(n);
+  rec.vars({ name, lead: L, n, dropped: dropped.length });
   rec.line('truncate');
   if (dropped.length) {
     rec.step(
@@ -698,9 +739,11 @@ export function rejoin(s: ReplState, raw: number | string, rec: Rec): number | n
 
   r.alive = true;
   r.held = false;
+  rec.vars({ name, lead: L, n, dropped: dropped.length, 'node.alive': true });
   rec.line('follow');
   rec.step(`${name} is back, as a follower of ${L}. Now it copies whatever ${L} has that it lacks.`);
   shipAll(s, r, rec, (e, lsn) => `${name} copies LSN ${lsn} from ${L}: ${said(e)}.`, ['follow']);
+  rec.vars({ name, lead: L, dropped: dropped.length, 'node.pos()': pos(r) });
   rec.line('follow');
   rec.step(
     `${name} has rejoined at LSN ${pos(r)}, the same as ${L}, as ${role(s, r).startsWith('sync') ? 'its synchronous' : 'an asynchronous'} follower. ` +

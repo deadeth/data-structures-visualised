@@ -116,6 +116,9 @@ function medianOfThree(s: QState, lo: number, hi: number, popped: boolean, rec: 
   const v = s.view;
   const mid = (lo + hi) >> 1;
   v.mid = mid;
+  // median_of_three's variables, read from the array as it stands.
+  const showM = () => rec.recording && rec.vars({ lo, hi, mid, 'a[lo]': a[lo].v, 'a[mid]': a[mid].v, 'a[hi]': a[hi].v });
+  showM();
   const head = popped ? ['pop', 'median'] : ['median'];
   rec.line(...head, 'm_mid');
   rec.step(
@@ -130,6 +133,7 @@ function medianOfThree(s: QState, lo: number, hi: number, popped: boolean, rec: 
         message: `Compare the ${which}. ${nm(a[y])} is smaller than ${nm(a[x])}, so they swap.`,
       });
       swap(s, x, y, rec);
+      showM();
       rec.line('median', `${anchor}_swap`);
       rec.step(`Swap: ${nm(a[x])} moves to slot ${x} and ${nm(a[y])} to slot ${y}.`);
     } else {
@@ -146,6 +150,7 @@ function medianOfThree(s: QState, lo: number, hi: number, popped: boolean, rec: 
   const median = a[mid];
   const largest = a[hi];
   swap(s, mid, hi, rec);
+  showM();
   v.pivot = median.uid;
   rec.line('median', 'm_use');
   rec.step(
@@ -178,6 +183,9 @@ function partitionRange(s: QState, lo: number, hi: number, median3: boolean, pop
   let i = lo;
   v.i = i;
   v.j = lo;
+  // partition's variables. j is undefined outside the loop.
+  const show = (j?: number) => rec.vars({ lo, hi, pivot: pivot.v, i, j, 'a[j]': j === undefined ? undefined : a[j].v });
+  show();
   rec.line(...(popped && !usedMedian ? ['pop'] : []), 'pivot');
   const where = popped ? (usedMedian ? '' : `Take ${span(lo, hi)} off the stack. `) : `Partition the whole array, ${span(lo, hi)}. `;
   const range2 = usedMedian
@@ -197,6 +205,7 @@ function partitionRange(s: QState, lo: number, hi: number, median3: boolean, pop
     v.i = i;
     const it = a[j];
     v.cmp = [it.uid];
+    show(j);
     const probe: Probe = { text: P, at: nid(it) };
     if (it.v <= pivot.v) {
       if (i !== j) {
@@ -210,6 +219,7 @@ function partitionRange(s: QState, lo: number, hi: number, median3: boolean, pop
         v.cmp = [];
         i++;
         v.i = i;
+        show(j);
         rec.line('swap', 'grow');
         rec.step(
           explained
@@ -239,6 +249,7 @@ function partitionRange(s: QState, lo: number, hi: number, median3: boolean, pop
   v.i = i;
   const moved = a[i];
   if (i !== hi) swap(s, i, hi, rec);
+  show();
   s.done.add(pivot.uid);
   rec.line(i !== hi ? 'place' : 'stay');
   const L = i - lo;
@@ -259,6 +270,7 @@ export function partition(s: QState, rec: Rec): number | undefined {
   const n = s.items.length;
   s.done.clear();
   s.view = blankView();
+  rec.vars();
   if (n < 2) {
     rec.line('pivot');
     rec.step(n === 0 ? `The array is empty, so there is nothing to partition. Type some numbers or load an input.` : `One item is already in its place. There is nothing to partition.`);
@@ -286,6 +298,7 @@ export function sort(s: QState, median3: boolean, rec: Rec): void {
   s.view = blankView();
   s.peak = 0;
   const before = rec.recording ? a.slice() : [];
+  rec.vars();
   if (n < 2) {
     for (const it of a) s.done.add(it.uid);
     rec.line('start', 'push');
@@ -295,6 +308,7 @@ export function sort(s: QState, median3: boolean, rec: Rec): void {
   const stack = s.view.stack;
   stack.push([0, n - 1]);
   s.peak = 1;
+  rec.vars({ stack: tuples(stack) });
   rec.line('start', 'push');
   rec.step(
     `Push the whole array, 0 to ${n - 1}, onto a stack of ranges still to sort. The stack replaces recursion, so a long input cannot overflow the call stack. The pivot is ${median3 ? 'chosen by median of three' : 'always the last item of a range'}.`,
@@ -322,11 +336,13 @@ export function sort(s: QState, median3: boolean, rec: Rec): void {
     s.view.range = null;
     s.view.i = undefined;
     s.view.pivot = undefined;
+    if (rec.recording) rec.vars({ stack: tuples(stack), lo, hi, p });
     rec.line(leftBig ? 'left_big' : 'right_big', 'push');
     if (rec.recording) rec.step(sides(lo, hi, p, nm(a[p]), stack));
   }
   s.view = blankView();
   for (const it of a) s.done.add(it.uid);
+  rec.vars({ stack: [] });
   rec.line('empty');
   if (!rec.recording) return;
   const log = Math.round(n * Math.log2(n));
@@ -336,6 +352,9 @@ export function sort(s: QState, median3: boolean, rec: Rec): void {
     : `For ${n} items, n log2 n is about ${log}. The worst case, every split as uneven as possible, would take n(n - 1) / 2 = ${most}.`;
   rec.step(`The stack is empty, so the array is sorted. ${cost} ${stability(before, a, nm)}`.trim());
 }
+
+/** The stack as the listing holds it: a list of (lo, hi) pairs. */
+const tuples = (stack: [number, number][]) => stack.map(([lo, hi]) => `(${lo}, ${hi})`);
 
 /** The sentence after a partition: how the range split and what goes on the stack. */
 function sides(lo: number, hi: number, p: number, P: string, stack: [number, number][]): string {
@@ -390,6 +409,7 @@ export function setArray(s: QState, input: string | number[], rec: Rec): void {
   const all = typeof input === 'string' ? input.split(/[\s,]+/).filter(Boolean).map(Number) : input;
   const vals = all.filter((v) => Number.isInteger(v) && v >= 0 && v <= 999).slice(0, MAX_ITEMS);
   setItems(s, vals);
+  rec.vars({ values: vals });
   const cut = all.length > MAX_ITEMS ? ` This page stops at ${MAX_ITEMS} items, so the rest were left out.` : '';
   rec.line('set');
   const nm = namer(s, rec);
@@ -432,6 +452,7 @@ export function load(s: QState, kind: Kind, rec: Rec): void {
     note = `${n} random items from 1 to 99. Repeats are allowed; letters tell equal items apart.`;
   }
   setItems(s, vals);
+  rec.vars({ n });
   rec.line('load');
   rec.step(`Loaded ${note}`);
 }

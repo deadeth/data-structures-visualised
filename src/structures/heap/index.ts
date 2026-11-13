@@ -48,13 +48,16 @@ function tone(rec: Rec, it: Item, t: Tone): void {
 }
 
 export function peek(s: HeapState, rec: Rec): number | undefined {
+  rec.vars();
   if (s.items.length === 0) {
+    rec.vars({ items: [] });
     rec.line('empty');
     rec.step(`The heap is empty, so there is no minimum to read.`);
     return undefined;
   }
   const top = s.items[0];
   tone(rec, top, 'ok');
+  rec.vars({ 'items[0]': top.key });
   rec.line('peek');
   rec.step(`The minimum is always at index 0, the root: here ${top.key}. Reading it takes no comparisons and no search, so peek is O(1).`, {
     probe: { text: String(top.key), at: tid(top) },
@@ -63,6 +66,7 @@ export function peek(s: HeapState, rec: Rec): number | undefined {
 }
 
 export function insert(s: HeapState, key: number, rec: Rec): boolean {
+  rec.vars({ key });
   if (s.items.length >= s.capacity) {
     rec.line('full');
     rec.step(
@@ -92,6 +96,7 @@ export function insert(s: HeapState, key: number, rec: Rec): boolean {
     const parent = s.items[p];
     tone(rec, parent, 'compare');
     rec.markEdge(`e${i}`, 'compare');
+    rec.vars({ key, i, parent: p, 'items[i]': key, 'items[parent]': parent.key });
     const where =
       comparisons === 0
         ? `The parent of index i is at floor((i - 1) / 2), so the parent of ${i} is index ${p}, which holds ${parent.key}.`
@@ -119,6 +124,7 @@ export function insert(s: HeapState, key: number, rec: Rec): boolean {
     swaps++;
     tone(rec, parent, 'path');
     rec.markEdge(`e${i}`, 'path');
+    rec.vars({ key, i: p, parent: p, 'items[i]': key, 'items[parent]': key });
     rec.line('swap_up');
     rec.step(
       p === 0
@@ -134,6 +140,7 @@ export function insert(s: HeapState, key: number, rec: Rec): boolean {
   rec.clearMarks();
   tone(rec, it, 'key');
   const n = s.items.length;
+  rec.vars({ key });
   rec.line('done');
   if (swaps === 0) {
     rec.step(`${key} stays at index ${i}: 1 comparison and no swaps. A new key that is no smaller than its parent costs O(1), and with keys in random order the average insert is O(1) too.`);
@@ -151,6 +158,7 @@ export function insert(s: HeapState, key: number, rec: Rec): boolean {
 
 export function extractMin(s: HeapState, rec: Rec): number | undefined {
   const size = s.items.length;
+  rec.vars();
   if (size === 0) {
     rec.line('empty');
     rec.step(`The heap is empty, so there is no minimum to extract.`);
@@ -158,6 +166,7 @@ export function extractMin(s: HeapState, rec: Rec): number | undefined {
   }
   const top = s.items[0];
   tone(rec, top, 'bad');
+  rec.vars({ top: top.key, last: s.items[size - 1].key });
   rec.line('top', 'last');
   if (size === 1) {
     rec.step(`${top.key} is the only item, so it is the minimum. Take it out.`);
@@ -208,8 +217,10 @@ export function extractMin(s: HeapState, rec: Rec): number | undefined {
           ? `The children of index i are at 2i + 1 and 2i + 2, so the children of ${i} are at ${l} and ${r}.`
           : `The children of index ${i} are at ${l} and ${r}.`;
       comparisons++;
+      if (right.key < left.key) c = r;
+      // The pick's operands are in the comparison readout; the strip is narrow.
+      rec.vars({ i, left: l, right: r, child: c });
       if (right.key < left.key) {
-        c = r;
         rec.line('children', 'pick', 'pick_right');
         rec.compare(left.key, '>', right.key, `the right child, ${right.key}, is the smaller`, {
           probe,
@@ -242,6 +253,7 @@ export function extractMin(s: HeapState, rec: Rec): number | undefined {
           : `Index ${i} has only one child, at index ${l}, because ${r} is past the end of the array.`;
     }
     const child = s.items[c];
+    rec.vars(r < n ? { i, child: c, 'items[i]': key, 'items[child]': child.key } : { i, left: l, right: r, child: c, 'items[i]': key, 'items[child]': child.key });
     comparisons++;
     // With one child there was no frame for finding it, so this one shows those lines as well.
     const finding = r < n ? [] : ['children', 'pick'];
@@ -268,6 +280,9 @@ export function extractMin(s: HeapState, rec: Rec): number | undefined {
     swaps++;
     tone(rec, child, 'path');
     rec.markEdge(`e${c}`, 'path');
+    // After the swap i = child; on a leaf the next pass sets left and breaks.
+    const leaf = 2 * c + 1 >= n;
+    rec.vars({ i: c, left: leaf ? 2 * c + 1 : undefined, child: c, 'items[i]': key, 'items[child]': key });
     if (2 * c + 1 >= n) rec.line('swap_down', 'leaf');
     else rec.line('swap_down');
     rec.step(
@@ -284,6 +299,7 @@ export function extractMin(s: HeapState, rec: Rec): number | undefined {
   rec.clearMarks();
   tone(rec, it, 'key');
   const cost = `${plural(comparisons, 'comparison')} and ${plural(swaps, 'swap')}`;
+  rec.vars({ top: top.key, last: key });
   rec.line('done');
   if (n === 1) {
     rec.step(`Removed ${top.key}. ${key} is the only item left, so it is the new minimum and there was nothing to compare.`);

@@ -177,12 +177,14 @@ const atPacket = (p: Packet, text = p.text): Probe => ({ text, at: pid(p) });
 // ---- TCP: handshake -------------------------------------------------------------
 
 export function connect(s: TcpState, rec: Rec): boolean {
+  rec.vars();
   if (s.proto === 'udp') {
     rec.line('none');
     rec.step('UDP has no connection and no handshake. The first datagram can leave at once, with no round trip spent first. Press Send.');
     return false;
   }
   if (s.conn !== 'closed') {
+    rec.vars({ isn: ISN, peer_isn: PEER_ISN, 'self.state': s.conn });
     rec.line('already');
     rec.step(s.conn === 'open' ? 'The connection is already open. Press Send.' : 'This connection has been closed. Reset to open a new one.');
     return false;
@@ -191,6 +193,7 @@ export function connect(s: TcpState, rec: Rec): boolean {
   s.data = [syn];
   s.dataIn = false;
   rec.mark(pid(syn), 'key');
+  rec.vars({ isn: ISN, peer_isn: PEER_ISN, syn: ISN });
   rec.line('syn');
   rec.step(
     `Open a connection. The sender picks an initial sequence number, here ${ISN}, and sends it in a SYN. Real stacks pick it at random, so stray packets from an old connection do not fit the new one.`,
@@ -205,12 +208,14 @@ export function connect(s: TcpState, rec: Rec): boolean {
   s.acks = [synAck];
   s.ackIn = false;
   rec.mark(pid(synAck), 'key');
+  rec.vars({ isn: ISN, peer_isn: PEER_ISN, syn: ISN, syn_ack: [PEER_ISN, ISN + 1] });
   rec.line('syn_ack');
   rec.step(
     `The receiver picks its own number, ${PEER_ISN}, and answers with a SYN-ACK. "ack ${ISN + 1}" means: I have ${ISN}, send ${ISN + 1} next. The SYN itself uses up one sequence number.`,
     { probe: atPacket(synAck) },
   );
   s.ackIn = true;
+  rec.vars({ isn: ISN, peer_isn: PEER_ISN, syn_ack: [PEER_ISN, ISN + 1], seq: PEER_ISN, ack: ISN + 1 });
   rec.line('check');
   rec.compare(`ack ${ISN + 1}`, '=', `ISN ${ISN} + 1`, 'my SYN got through', {
     probe: atPacket(synAck),
@@ -223,6 +228,7 @@ export function connect(s: TcpState, rec: Rec): boolean {
   s.data = [ack];
   s.dataIn = false;
   rec.mark(pid(ack), 'key');
+  rec.vars({ isn: ISN, peer_isn: PEER_ISN, seq: PEER_ISN, ack: ISN + 1, 'self.ack_sent': PEER_ISN + 1 });
   rec.line('ack');
   rec.step(
     `The sender acknowledges the receiver's number with ACK ${PEER_ISN + 1}. Now each side knows the other's starting number and that the other can hear it.`,
@@ -233,6 +239,7 @@ export function connect(s: TcpState, rec: Rec): boolean {
   rec.unmark(pid(ack));
   s.data = [];
   s.conn = 'open';
+  rec.vars({ isn: ISN, peer_isn: PEER_ISN, seq: PEER_ISN, ack: ISN + 1, 'self.ack_sent': PEER_ISN + 1, 'self.state': 'open' });
   rec.line('open');
   rec.step(
     `The connection is open. It cost one round trip before any data moved. Real TCP numbers bytes, so the first data byte would be ${ISN + 1}. This page numbers whole segments 1 to ${SEGMENTS} instead, to keep the picture readable.`,
@@ -248,6 +255,7 @@ function arrive(s: TcpState, p: Packet, rec: Rec): void {
   const e = s.expected;
   const name = segName(s, seq);
   rec.mark(pid(p), 'key');
+  rec.vars({ seq, 'self.expected': s.expected, 'self.held': s.held, 'self.unread': s.unread });
   rec.line('to_receiver', 'in_order', ...(seq === e ? [] : ['early']));
   const verdict = seq === e ? 'in order: deliver it' : seq > e ? `early: hold it, ask for ${e} again` : 'a copy: ack again';
   rec.compare(name, seq === e ? '=' : seq > e ? '>' : '<', `expect ${e}`, verdict, {
@@ -267,6 +275,7 @@ function arrive(s: TcpState, p: Packet, rec: Rec): void {
     handUp(s, seq, rec);
     s.expected++;
     rec.mark(rid(seq), 'key');
+    rec.vars({ seq, 'self.expected': s.expected, 'self.held': s.held, 'self.unread': s.unread });
     rec.line('deliver', s.slow ? 'unread' : 'app');
     rec.step(
       s.slow
@@ -283,6 +292,7 @@ function arrive(s: TcpState, p: Packet, rec: Rec): void {
       s.expected++;
     }
     if (drained.length) {
+      rec.vars({ seq, 'self.expected': s.expected, 'self.held': s.held, 'self.unread': s.unread });
       rec.line('drain', s.slow ? 'unread' : 'app');
       rec.step(
         `${list(drained.map((d) => segName(s, d)))} ${drained.length === 1 ? 'was' : 'were'} already waiting in the buffer. With ${seq} here the gap is filled, so ${drained.length === 1 ? 'it goes' : 'they all go'} up at once. ` +
@@ -293,6 +303,7 @@ function arrive(s: TcpState, p: Packet, rec: Rec): void {
   } else if (seq > e && !s.held.includes(seq)) {
     s.held.push(seq);
     s.held.sort((a, b) => a - b);
+    rec.vars({ seq, 'self.expected': s.expected, 'self.held': s.held, 'self.unread': s.unread });
     rec.line('hold');
     rec.step(
       `Hold ${name} in the receive buffer. The application cannot have it yet: ${e} is missing and TCP promises order.`,
@@ -305,6 +316,7 @@ function arrive(s: TcpState, p: Packet, rec: Rec): void {
   s.acks.push(ack);
   s.ackIn = false;
   rec.mark(pid(ack), 'key');
+  rec.vars({ seq, 'self.expected': s.expected, 'self.held': s.held, 'self.unread': s.unread, 'self.window()': win });
   rec.line('ack', 'rwnd');
   rec.step(
     seq === e
@@ -320,6 +332,9 @@ function onAck(s: TcpState, a: Packet, rec: Rec): void {
   const before = s.peerWindow;
   s.peerWindow = a.win!;
   rec.mark(pid(a), 'key');
+  const ackVars = () =>
+    rec.vars({ ack: a.ack ?? null, window: a.win ?? null, update: !!a.update, 'self.base': s.base, 'self.dup_acks': s.dupAcks, 'self.peer_window': s.peerWindow });
+  ackVars();
   if (a.update) {
     rec.line('peer_window');
     rec.step(`The window update arrives: the receiver has room for ${plural(a.win!, 'segment')} again, so the sender may carry on.`, { probe: atPacket(a) });
@@ -341,6 +356,7 @@ function onAck(s: TcpState, a: Packet, rec: Rec): void {
     s.dupAcks = 0;
     s.acks.shift();
     rec.unmark(pid(a));
+    ackVars();
     rec.line('slide');
     rec.step(
       `${n - from === 1 ? `Segment ${from} is` : `Segments ${from} to ${n - 1} are`} acknowledged and the window slides on to start at ${n}. ` +
@@ -351,6 +367,7 @@ function onAck(s: TcpState, a: Packet, rec: Rec): void {
   }
   if (n === s.base && s.base < s.next) {
     s.dupAcks++;
+    ackVars();
     rec.line('dup');
     rec.compare(`ack ${n}`, '=', `base ${s.base}`, `duplicate ${s.dupAcks} of 3`, {
       probe: atPacket(a),
@@ -383,6 +400,7 @@ function network(s: TcpState, rec: Rec): void {
       s.dataIn = true;
       const order = s.data.map((p) => p.seq);
       const sorted = [...order].sort((a, b) => a! - b!);
+      rec.vars({ 'self.link.wire': order.map((q) => q ?? null) });
       rec.line('arrive');
       rec.step(
         `The ${s.data.length === 1 ? 'segment crosses' : 'segments cross'} the link` +
@@ -393,6 +411,7 @@ function network(s: TcpState, rec: Rec): void {
         const p = s.data[0];
         if (p.fault === 'drop') {
           rec.mark(pid(p), 'bad');
+          rec.vars({ seq: p.seq ?? null, fault: 'drop' });
           rec.line('lost');
           rec.step(`${p.text} never arrives: the link lost it. Neither side is told.`, { probe: atPacket(p) });
           rec.unmark(pid(p));
@@ -404,6 +423,7 @@ function network(s: TcpState, rec: Rec): void {
     }
     if (s.acks.length) {
       s.ackIn = true;
+      rec.vars({ 'self.acks': s.acks.map((k) => k.ack ?? null) });
       rec.line('ack_back');
       rec.step(`The ${s.acks.length === 1 ? 'ack travels' : 'acks travel'} back to the sender.`, { probe: atPacket(s.acks[0]) });
       while (s.acks.length) onAck(s, s.acks[0], rec);
@@ -433,8 +453,10 @@ function afterFlight(s: TcpState, sent: number, rec: Rec): void {
 
 /** One flight: send up to `count` segments, as far as the windows allow, and let the round trip finish. */
 export function send(s: TcpState, count: number, rec: Rec): number {
+  rec.vars();
   if (s.proto === 'udp') return udpSend(s, count, rec);
   if (s.conn !== 'open') {
+    rec.vars({ count, 'self.state': s.conn });
     rec.line('closed');
     rec.step(
       s.conn === 'closed'
@@ -446,6 +468,7 @@ export function send(s: TcpState, count: number, rec: Rec): number {
   let sent = 0;
   for (let i = 0; i < count; i++) {
     if (s.next > SEGMENTS) {
+      rec.vars({ count, 'self.base': s.base, 'self.next': s.next, sent });
       rec.line('all_sent');
       rec.step(`All ${SEGMENTS} segments have been sent.${sent ? '' : ' Press Close to end the connection, or Reset to start again.'}`);
       break;
@@ -457,6 +480,7 @@ export function send(s: TcpState, count: number, rec: Rec): number {
     const ok = flight < limit;
     const byReceiver = s.peerWindow < s.window;
     rec.mark(sid(seq), 'compare');
+    rec.vars({ count, 'self.base': s.base, 'self.next': s.next, limit, in_flight: flight, sent });
     rec.line('limit', 'full');
     rec.compare(`in flight ${flight}`, ok ? '<' : '≥', byReceiver ? `rwnd ${limit}` : `window ${limit}`, ok ? `room: send ${seq}` : byReceiver ? 'receiver is full: pause' : 'window full: wait for acks', {
       probe: { text: name, at: sid(seq) },
@@ -473,6 +497,7 @@ export function send(s: TcpState, count: number, rec: Rec): number {
     s.next++;
     const t = transmit(s, seq, false, rec);
     rec.mark(pid(t.p), 'key');
+    rec.vars({ count, 'self.base': s.base, 'self.next': s.next, limit, in_flight: flight, sent: sent + 1 });
     rec.line('send', t.overtook !== null ? 'overtake' : 'put');
     rec.step(`${name} goes on the wire.` + faultNote(s, t), { probe: atPacket(t.p) });
     rec.unmark(pid(t.p));
@@ -480,12 +505,14 @@ export function send(s: TcpState, count: number, rec: Rec): number {
   }
   if (!sent) return 0;
   network(s, rec);
+  rec.vars({ count, 'self.base': s.base, 'self.next': s.next, sent });
   afterFlight(s, sent, rec);
   return sent;
 }
 
 /** Arm the link to lose or delay the next copy of a segment. */
 export function arm(s: TcpState, seq: number, fault: Fault, rec: Rec): boolean {
+  rec.vars({ seq, fault });
   rec.line('arm');
   const what = fault === 'drop' ? 'lose' : 'hold back';
   if (!Number.isInteger(seq) || seq < 1 || seq > SEGMENTS) {
@@ -515,12 +542,14 @@ export function arm(s: TcpState, seq: number, fault: Fault, rec: Rec): boolean {
 
 /** The retransmission timer fires for the oldest unacknowledged segment. */
 export function timeout(s: TcpState, rec: Rec): boolean {
+  rec.vars();
   if (s.proto === 'udp') {
     rec.line('none');
     rec.step('UDP keeps no timer. Nothing is acknowledged, so the sender never learns that a datagram was lost, and nothing is sent again.');
     return false;
   }
   if (s.conn !== 'open' || s.base === s.next) {
+    rec.vars({ 'self.state': s.conn, 'self.base': s.base, 'self.next': s.next });
     rec.line('idle');
     rec.step(s.conn !== 'open' ? 'There is no open connection, so no timer is running.' : 'No timer is running: every segment sent so far has been acknowledged.');
     return false;
@@ -528,6 +557,7 @@ export function timeout(s: TcpState, rec: Rec): boolean {
   const seq = s.base;
   s.dupAcks = 0;
   rec.mark(sid(seq), 'compare');
+  rec.vars({ 'self.base': s.base, 'self.next': s.next, 'self.dup_acks': 0 });
   rec.line('expire');
   rec.step(
     `The retransmission timer for segment ${seq} fires: no ack for it arrived in time. Real TCP also doubles the timeout for next time and cuts its congestion window to 1, because a timeout suggests heavy loss.`,
@@ -536,28 +566,33 @@ export function timeout(s: TcpState, rec: Rec): boolean {
   rec.unmark(sid(seq));
   const t = transmit(s, seq, true, rec);
   rec.mark(pid(t.p), 'key');
+  rec.vars({ seq, 'self.retransmissions': s.totals.retransmissions });
   rec.line('expire', 'resend');
   rec.step(`Resend ${segName(s, seq)}.` + faultNote(s, t), { probe: atPacket(t.p) });
   rec.unmark(pid(t.p));
   network(s, rec);
+  rec.vars({ 'self.base': s.base, 'self.next': s.next, 'self.dup_acks': s.dupAcks });
   afterFlight(s, 0, rec);
   return true;
 }
 
 /** Lose the next new segment, then send a full window: the setting for fast retransmit. */
 export function dupAcks(s: TcpState, rec: Rec): number {
+  rec.vars();
   if (s.proto === 'udp') {
     rec.line('none');
     rec.step('UDP sends no acks, so there are no duplicate acks to count and nothing is retransmitted.');
     return 0;
   }
   if (s.conn !== 'open' || s.next > SEGMENTS) {
+    rec.vars({ 'self.state': s.conn, 'self.next': s.next });
     rec.line('lose_next');
     rec.step(s.conn !== 'open' ? 'Connect first: fast retransmit needs a connection with data flowing.' : `All ${SEGMENTS} segments have been sent. Reset to try again.`);
     return 0;
   }
   s.faults[s.next] = 'drop';
   rec.mark(sid(s.next), 'compare');
+  rec.vars({ 'self.next': s.next, 'self.window': s.window });
   rec.line('lose_next');
   rec.step(
     `The link will lose segment ${s.next}. The sender then sends a full window of ${s.window}, so ${s.window - 1} later ${s.window - 1 === 1 ? 'segment arrives' : 'segments arrive'} behind the gap. ` +
@@ -571,6 +606,7 @@ export function dupAcks(s: TcpState, rec: Rec): number {
 /** The receiving application stops reading, or starts again. */
 export function slowReceiver(s: TcpState, rec: Rec): void {
   s.slow = !s.slow;
+  rec.vars({ slow: s.slow, 'self.unread': s.unread });
   if (s.proto === 'udp') {
     if (s.slow) {
       rec.line('udp_toggle');
@@ -582,6 +618,7 @@ export function slowReceiver(s: TcpState, rec: Rec): void {
     const read = [...s.unread];
     for (const q of read) udpDeliver(s, q, rec);
     s.unread = [];
+    rec.vars({ slow: false, 'self.unread': s.unread, 'self.app': s.app });
     rec.line('udp_read');
     rec.step(read.length ? `The application reads again and takes ${list(read)} from the buffer, in the order they arrived.` : `The application reads again. Nothing was waiting.`);
     return;
@@ -599,6 +636,7 @@ export function slowReceiver(s: TcpState, rec: Rec): void {
     s.app.push(q);
     count(s, rec, 'delivered');
   }
+  rec.vars({ slow: false, 'self.unread': s.unread, 'self.app': s.app });
   rec.line('toggle', 'read');
   rec.step(read.length ? `The application reads again and takes ${list(read)} from the buffer. The buffer has room for ${RCV_BUF} again.` : `The application reads again. Nothing was waiting.`);
   if (!read.length || s.conn !== 'open') return;
@@ -606,16 +644,19 @@ export function slowReceiver(s: TcpState, rec: Rec): void {
   s.acks.push(upd);
   s.ackIn = false;
   rec.mark(pid(upd), 'key');
+  rec.vars({ slow: false, update: [s.expected, RCV_BUF, 'true'] });
   rec.line('update');
   rec.step(`The receiver sends a window update: the same ack number, with room for ${RCV_BUF}. It is not a duplicate ack, because the window changed.`, { probe: atPacket(upd) });
   rec.unmark(pid(upd));
   network(s, rec);
+  rec.vars({ slow: false, update: [s.expected, RCV_BUF, 'true'] });
   rec.line('update');
   rec.step(`Flow control: the sender went only as fast as the receiving application read. It can now send ${limitOf(s) - inFlight(s)} more.`);
 }
 
 /** The congestion window over eight round trips: slow start, additive increase, halving on loss. */
 export function congestion(s: TcpState, rec: Rec): void {
+  rec.vars();
   if (s.proto === 'udp') {
     rec.line('none');
     rec.step('UDP has no congestion control. An application that sends a lot over UDP must slow down by itself when the network is busy. QUIC, for example, does its own.');
@@ -625,6 +666,7 @@ export function congestion(s: TcpState, rec: Rec): void {
   s.lossRound = 0;
   let cwnd = 1;
   s.ssthresh = SSTHRESH;
+  rec.vars({ rounds: ROUNDS, loss_round: LOSS_ROUND, cwnd, ssthresh: SSTHRESH });
   rec.line('start');
   rec.step(
     `A second window, the congestion window, guesses what the network can carry. It starts small, here at 1 segment, with a slow-start threshold of ${SSTHRESH}. The sender keeps no more in flight than the smaller of this and the receiver's window.`,
@@ -634,6 +676,7 @@ export function congestion(s: TcpState, rec: Rec): void {
     if (r === LOSS_ROUND) {
       s.lossRound = r;
       const half = Math.floor(cwnd / 2);
+      rec.vars({ rounds: ROUNDS, loss_round: LOSS_ROUND, r, cwnd: half, ssthresh: half, trace: s.cwnd });
       rec.line('round', 'loss', 'halve');
       rec.step(
         `Round ${r}: ${cwnd} in flight, and three duplicate acks show a loss. The sender halves: threshold and window both become ${half}. A timeout would be treated as worse: back to 1 and slow start again.`,
@@ -641,15 +684,18 @@ export function congestion(s: TcpState, rec: Rec): void {
       s.ssthresh = half;
       cwnd = half;
     } else if (cwnd < s.ssthresh) {
+      rec.vars({ rounds: ROUNDS, loss_round: LOSS_ROUND, r, cwnd: cwnd * 2, ssthresh: s.ssthresh, trace: s.cwnd });
       rec.line('round', 'slow_start', 'double');
       rec.step(`Round ${r}: ${cwnd} in flight, below the threshold of ${s.ssthresh}. Slow start: each ack adds 1, so the window doubles to ${cwnd * 2}.`);
       cwnd *= 2;
     } else {
+      rec.vars({ rounds: ROUNDS, loss_round: LOSS_ROUND, r, cwnd: cwnd + 1, ssthresh: s.ssthresh, trace: s.cwnd });
       rec.line('round', 'slow_start', 'additive');
       rec.step(`Round ${r}: ${cwnd} in flight, at or over the threshold of ${s.ssthresh}. Additive increase: 1 more per round trip, to ${cwnd + 1}.`);
       cwnd += 1;
     }
   }
+  rec.vars({ rounds: ROUNDS, loss_round: LOSS_ROUND, r: ROUNDS, cwnd, ssthresh: s.ssthresh, trace: s.cwnd });
   rec.line('round');
   rec.step(
     `Fast growth to find the limit, careful growth near it, a sharp cut on loss. That is the sawtooth of Reno-style TCP. Linux uses CUBIC by default, which grows differently but also backs off on loss. Real stacks start at 10 segments, not 1.`,
@@ -658,12 +704,14 @@ export function congestion(s: TcpState, rec: Rec): void {
 
 /** FIN and ACK both ways. */
 export function close(s: TcpState, rec: Rec): boolean {
+  rec.vars();
   if (s.proto === 'udp') {
     rec.line('none');
     rec.step('There is nothing to close. UDP has no connection: the socket simply stops sending, and the receiver is not told.');
     return false;
   }
   if (s.conn !== 'open' || s.base < s.next) {
+    rec.vars({ 'self.state': s.conn, 'self.base': s.base, 'self.next': s.next });
     rec.line('pending');
     rec.step(
       s.conn !== 'open'
@@ -672,7 +720,8 @@ export function close(s: TcpState, rec: Rec): boolean {
     );
     return false;
   }
-  const leg = (lane: 'data' | 'ack', text: string, anchor: string, msg: string) => {
+  const leg = (lane: 'data' | 'ack', text: string, anchor: string, msg: string, state: string) => {
+    rec.vars({ 'self.base': s.base, 'self.next': s.next, 'self.state': state });
     const p: Packet = { id: ++s.pid, text };
     if (lane === 'data') {
       s.data = [p];
@@ -691,11 +740,12 @@ export function close(s: TcpState, rec: Rec): boolean {
     s.data = [];
     s.acks = [];
   };
-  leg('data', 'FIN', 'fin', 'The sender has nothing more to send, so it sends a FIN. It can still receive.');
-  leg('ack', 'ACK', 'fin_ack', 'The receiver acknowledges the FIN. Its own side stays open until its application has finished too.');
-  leg('ack', 'FIN', 'peer_fin', 'The receiving application closes as well, so the receiver sends its own FIN.');
-  leg('data', 'ACK', 'time_wait', 'The sender acknowledges it. Four packets in all, though the middle two often travel as one.');
+  leg('data', 'FIN', 'fin', 'The sender has nothing more to send, so it sends a FIN. It can still receive.', 'FIN_WAIT_1');
+  leg('ack', 'ACK', 'fin_ack', 'The receiver acknowledges the FIN. Its own side stays open until its application has finished too.', 'FIN_WAIT_2');
+  leg('ack', 'FIN', 'peer_fin', 'The receiving application closes as well, so the receiver sends its own FIN.', 'TIME_WAIT');
+  leg('data', 'ACK', 'time_wait', 'The sender acknowledges it. Four packets in all, though the middle two often travel as one.', 'TIME_WAIT');
   s.conn = 'done';
+  rec.vars({ 'self.base': s.base, 'self.next': s.next, 'self.state': 'done' });
   rec.line('time_wait');
   rec.step(
     'Closed. The side that closed first waits in TIME_WAIT for twice the maximum segment lifetime before it forgets the connection, so a late packet cannot be mistaken for part of a new one.',
@@ -716,6 +766,7 @@ function udpSend(s: TcpState, n: number, rec: Rec): number {
   let sent = 0;
   for (let i = 0; i < n; i++) {
     if (s.next > SEGMENTS) {
+      rec.vars({ count: n, 'self.next': s.next, 'self.sent': s.totals.sent });
       rec.line('udp_all_sent');
       rec.step(`All ${SEGMENTS} datagrams have been sent. Reset to start again.`);
       break;
@@ -725,6 +776,7 @@ function udpSend(s: TcpState, n: number, rec: Rec): number {
     s.next++;
     const t = transmit(s, seq, false, rec);
     rec.mark(pid(t.p), 'key');
+    rec.vars({ count: n, 'self.next': s.next, 'self.sent': s.totals.sent, packet: [seq, t.fault] });
     rec.line('fire', t.overtook !== null ? 'overtake' : 'put');
     rec.step(
       `${segName(s, seq)} goes out at once: no handshake, no window, no timer.` +
@@ -738,6 +790,7 @@ function udpSend(s: TcpState, n: number, rec: Rec): number {
   if (!sent) return 0;
   s.dataIn = true;
   const order = s.data.map((p) => p.seq!);
+  rec.vars({ count: n, 'self.link.wire': order });
   rec.line('udp_arrive');
   rec.step(
     `The ${sent === 1 ? 'datagram crosses' : 'datagrams cross'} the link` + (order.join() !== [...order].sort((a, b) => a - b).join() ? `, in the order ${list(order)}.` : '.'),
@@ -751,6 +804,7 @@ function udpSend(s: TcpState, n: number, rec: Rec): number {
       rec.mark(pid(p), 'bad');
       rec.line('udp_lost');
       count(s, rec, 'lost');
+      rec.vars({ seq, fault: 'drop', 'self.slow': s.slow, 'self.unread': s.unread, 'self.app': s.app, 'self.lost': s.totals.lost });
       s.segs[seq - 1] = 'lost';
       rec.step(`${name} is lost on the link. Nothing will ever notice: no ack is missing, no timer runs, nothing is resent. Only this page knows.`, { probe: atPacket(p) });
       rec.unmark(pid(p));
@@ -762,6 +816,7 @@ function udpSend(s: TcpState, n: number, rec: Rec): number {
     if (s.slow && s.unread.length >= RCV_BUF) {
       count(s, rec, 'lost');
       s.segs[seq - 1] = 'lost';
+      rec.vars({ seq, fault: null, 'self.slow': s.slow, 'self.unread': s.unread, 'self.app': s.app, 'self.lost': s.totals.lost });
       rec.line('overflow');
       rec.step(`${name} arrives, but the socket buffer is full because the application is not reading. It is dropped, and the sender is not told.`);
       continue;
@@ -769,6 +824,7 @@ function udpSend(s: TcpState, n: number, rec: Rec): number {
     if (s.slow) {
       s.unread.push(seq);
       rec.mark(rid(seq), 'key');
+      rec.vars({ seq, fault: null, 'self.slow': s.slow, 'self.unread': s.unread, 'self.app': s.app, 'self.lost': s.totals.lost });
       rec.line('udp_unread');
       rec.step(`${name} waits in the socket buffer: the application is not reading.`, { probe: { text: name, at: rid(seq) } });
       rec.unmark(rid(seq));
@@ -777,6 +833,7 @@ function udpSend(s: TcpState, n: number, rec: Rec): number {
     const before = [...s.app];
     const inOrder = udpDeliver(s, seq, rec);
     rec.mark(rid(seq), 'key');
+    rec.vars({ seq, fault: null, 'self.slow': s.slow, 'self.unread': s.unread, 'self.app': s.app, 'self.lost': s.totals.lost });
     rec.line('udp_deliver', 'udp_up');
     const earlier = before.filter((q) => q > seq);
     const missing = Array.from({ length: seq - 1 }, (_, k) => k + 1).filter((q) => !before.includes(q));
@@ -791,6 +848,7 @@ function udpSend(s: TcpState, n: number, rec: Rec): number {
     );
     rec.unmark(rid(seq));
   }
+  rec.vars({ count: n, 'self.link.wire': [], 'self.app': s.app, 'self.lost': s.totals.lost });
   rec.line('udp_arrive');
   const lostNow = s.segs.map((st, i) => (st === 'lost' ? i + 1 : 0)).filter(Boolean);
   rec.step(
@@ -805,6 +863,7 @@ function udpSend(s: TcpState, n: number, rec: Rec): number {
 
 export function reset(s: TcpState, proto: number | string, rec: Rec): boolean {
   const p = String(proto).trim().toLowerCase();
+  rec.vars({ protocol: p, window: s.window });
   rec.line('reset');
   if (p !== 'tcp' && p !== 'udp') {
     rec.step(`Enter tcp or udp.`);
@@ -822,10 +881,12 @@ export function reset(s: TcpState, proto: number | string, rec: Rec): boolean {
 /** The same loss over UDP: datagrams 1 to 4, where 4 is lost and 2 is overtaken by 3. */
 export function udpCompare(s: TcpState, rec: Rec): void {
   Object.assign(s, create('udp', s.window), { pid: s.pid });
+  rec.vars({ protocol: 'udp', window: s.window });
   rec.line('reset');
   rec.step(`Now the same link under UDP: a fresh sender and receiver, datagrams 1 to ${SEGMENTS}, and no connection.`);
   s.faults[2] = 'reorder';
   s.faults[4] = 'drop';
+  rec.vars({ seq: 4, fault: 'drop' });
   rec.line('arm');
   rec.step(`The link will lose datagram 4, the same loss as before, and hold back datagram 2 so that 3 overtakes it.`);
   udpSend(s, 4, rec);

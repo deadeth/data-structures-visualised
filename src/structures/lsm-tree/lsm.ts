@@ -1,4 +1,4 @@
-import type { Compare, Probe, Rec } from '../../core/types';
+import type { Compare, Probe, Rec, VarValue } from '../../core/types';
 
 /**
  * Log-structured merge tree of integer keys.
@@ -77,6 +77,14 @@ const list = (items: (string | number)[]) =>
   items.length <= 1 ? String(items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 
 export type GetResult = 'found' | 'deleted' | 'missing';
+
+/** Set the Variables strip. The values are only built while recording. */
+function watch(rec: Rec, values: () => Record<string, VarValue>): void {
+  if (rec.recording) rec.vars(values());
+}
+/** A table as the Variables strip shows it: its key range. */
+const span = (t: SSTable) => `${entryText(t.entries[0])}..${entryText(t.entries[t.entries.length - 1])}`;
+const texts = (entries: Entry[]) => entries.map(entryText);
 
 export function create(): LsmState {
   return { mem: [], levels: [[], [], []], nextId: 1, userWrites: 0, diskWrites: 0, view: [0, 0, 0], merge: null, born: new Map(), mergeSeq: 0 };
@@ -180,6 +188,7 @@ function scanMem(s: LsmState, key: number, rec: Rec, cost: Cost, mode: 'read' | 
     const e = s.mem[i];
     const probe: Probe = { text: String(key), at: MEM, cell: i };
     rec.markCell(MEM, i, 'compare');
+    watch(rec, () => ({ key, entries: texts(s.mem), pos: i, 'entries[pos]': entryText(e) }));
     rec.line('scan');
     if (key === e.k) {
       const verdict = mode === 'write' ? `${key} is already in the memtable` : e.del ? `match, but this entry is a tombstone` : `match`;
@@ -205,6 +214,7 @@ function flushMem(s: LsmState, rec: Rec, cost: Cost, why: 'full' | 'manual', key
   rec.clearMarks();
   rec.mark(MEM, 'path');
   markKey(s, key, rec);
+  watch(rec, () => ({ memtable: texts(s.mem) }));
   rec.line('flush_write');
   rec.step(
     why === 'full'
@@ -221,6 +231,7 @@ function flushMem(s: LsmState, rec: Rec, cost: Cost, why: 'full' | 'manual', key
   rec.clearMarks();
   rec.mark(tid(table), 'ok');
   markKey(s, key, rec);
+  watch(rec, () => ({ memtable: [], table: span(table), 'len(levels[0])': s.levels[0].length }));
   rec.line('flush_l0');
   rec.step(
     `Flushed: ${plural(n, 'entry', 'entries')} written in one sequential pass to a new SSTable at the front of L0. The file is never changed again, and its key range may overlap the other L0 tables.`,
@@ -273,6 +284,7 @@ function compactLevel(s: LsmState, lv: number, rec: Rec, cost: Cost, why: Compac
       rec.clearMarks();
       for (const t of upper) rec.mark(tid(t), 'path');
       markKey(s, key, rec);
+      watch(rec, () => ({ level: lv, last, upper: upper.map(span), lower: [], 'len(runs)': 1 }));
       rec.line(trigger, 'lone_run');
       rec.step(`${reason()} ${into} is empty, so there is nothing to merge ${n === 1 ? 'this table' : `these ${n} tables`} with.`);
     }
@@ -285,6 +297,7 @@ function compactLevel(s: LsmState, lv: number, rec: Rec, cost: Cost, why: Compac
       rec.clearMarks();
       for (const t of upper) rec.mark(tid(t), 'ok');
       markKey(s, key, rec);
+      watch(rec, () => ({ level: lv, last, 'levels[level]': [], 'levels[below]': upper.map(span) }));
       rec.line('move');
       rec.step(
         `${n === 1 ? 'The table moves' : `The ${n} tables move`} down to ${into} as ${n === 1 ? 'it is' : 'they are'}. Nothing is read or rewritten, only the list of which file belongs to which level changes. LevelDB and RocksDB call this a trivial move.`,
@@ -313,6 +326,7 @@ function compactLevel(s: LsmState, lv: number, rec: Rec, cost: Cost, why: Compac
     for (const t of upper) rec.mark(tid(t), 'path');
     for (const t of lower) rec.mark(tid(t), 'path');
     markKey(s, key, rec);
+    watch(rec, () => ({ level: lv, last, upper: upper.map(span), lower: lower.map(span), 'len(runs)': groups.length }));
     // A lone run is only here because the move was ruled out. Otherwise show the runs being gathered.
     if (groups.length === 1) rec.line(trigger, 'lone_run');
     else rec.line(trigger, lv === 0 ? 'runs_l0' : 'runs_level', ...(lower.length ? ['runs_below'] : []));
@@ -395,6 +409,7 @@ function compactLevel(s: LsmState, lv: number, rec: Rec, cost: Cost, why: Compac
         );
       }
       // The loop finds the smallest head and its older copies, then skips them: in listing order, top to bottom.
+      watch(rec, () => ({ 'len(runs)': runs.length, drop_tombstones: last, 'len(out)': out.length }));
       rec.line('smallest', ...(stale.length ? ['stale'] : []), ...(droppedTombs.length || keptTombs.length ? ['tombstone'] : []), ...(droppedTombs.length ? ['dropped'] : []));
       rec.step(parts.join(' '));
     }
@@ -405,6 +420,7 @@ function compactLevel(s: LsmState, lv: number, rec: Rec, cost: Cost, why: Compac
     for (const t of upper) rec.mark(tid(t), 'dim');
     // With several inputs the work is in the merge loop. With one, or nothing left, there is no loop to show.
     // The loop then writes each smallest entry to the run, further down the listing than the tests before it.
+    watch(rec, () => (out.length && groups.length > 1 ? { 'len(runs)': runs.length, drop_tombstones: last, 'len(out)': out.length } : { level: lv, last, 'len(merged)': out.length }));
     rec.line(out.length && groups.length > 1 ? 'emit' : 'merge');
     rec.step(
       !out.length
@@ -434,6 +450,7 @@ function compactLevel(s: LsmState, lv: number, rec: Rec, cost: Cost, why: Compac
     rec.clearMarks();
     for (const t of fresh) rec.mark(tid(t), 'ok');
     markKey(s, key, rec);
+    watch(rec, () => ({ level: lv, 'len(merged)': out.length, fresh: fresh.map(span) }));
     rec.line('cut');
     if (out.length) {
       rec.step(
@@ -470,6 +487,7 @@ function cascade(s: LsmState, rec: Rec, cost: Cost, key?: number): boolean {
 /** Close a put or delete: flush and compact if the memtable is now full, then state the cost. */
 function finishWrite(s: LsmState, key: number, rec: Rec, cost: Cost, what: string, quietTail: string): void {
   if (s.mem.length < MEM_CAP) {
+    watch(rec, () => ({ key, 'len(memtable)': s.mem.length }));
     rec.line('no_flush');
     rec.step(
       `${what} done: ${cost.cmp ? `${plural(cost.cmp, 'comparison')} in memory` : 'the memtable was empty, so there was nothing to compare,'} and no disk I/O. ${quietTail}`,
@@ -481,6 +499,7 @@ function finishWrite(s: LsmState, key: number, rec: Rec, cost: Cost, what: strin
   if (!rec.recording) return;
   rec.clearMarks();
   markKey(s, key, rec);
+  watch(rec, () => ({ key, 'len(memtable)': s.mem.length }));
   rec.line('wrote');
   rec.step(
     `${what} done. It happened to fill the memtable, so it paid for a flush${compacted ? ' and a compaction' : ''}: ${plural(cost.writes, 'entry', 'entries')} written to disk. ${ampSentence(s)}`,
@@ -491,15 +510,18 @@ function finishWrite(s: LsmState, key: number, rec: Rec, cost: Cost, what: strin
 
 export function put(s: LsmState, key: number, rec: Rec): void {
   begin(s);
+  rec.vars();
   s.userWrites++;
   const cost = newCost();
   rec.mark(MEM, 'path');
+  rec.vars({ key });
   rec.line('start');
   rec.step(`A put goes straight to the memtable, a small sorted buffer in memory. Nothing on disk is read first, or changed in place.`, {
     probe: { text: String(key), at: MEM },
   });
   const { found, pos } = scanMem(s, key, rec, cost, 'write');
   if (found) {
+    rec.vars({ key, pos, found });
     rec.line('overwrite');
     if (s.mem[pos].del) {
       s.mem[pos] = { k: key, del: false };
@@ -518,6 +540,7 @@ export function put(s: LsmState, key: number, rec: Rec): void {
   s.mem.splice(pos, 0, { k: key, del: false });
   rec.mark(MEM, 'ok');
   rec.markCell(MEM, pos, 'key');
+  watch(rec, () => ({ key, pos, found, memtable: texts(s.mem) }));
   rec.line('insert');
   if (rec.recording) {
     const older = olderCopies(s, key, -1, -1);
@@ -532,9 +555,11 @@ export function put(s: LsmState, key: number, rec: Rec): void {
 
 export function remove(s: LsmState, key: number, rec: Rec): void {
   begin(s);
+  rec.vars();
   s.userWrites++;
   const cost = newCost();
   rec.mark(MEM, 'path');
+  rec.vars({ key });
   rec.line('start');
   rec.step(
     `A delete cannot take ${key} out of the SSTables, because they are never changed. It writes a tombstone to the memtable instead: a marker that says ${key} is deleted.`,
@@ -543,6 +568,7 @@ export function remove(s: LsmState, key: number, rec: Rec): void {
   const { found, pos } = scanMem(s, key, rec, cost, 'write');
   if (found && s.mem[pos].del) {
     rec.markCell(MEM, pos, 'key');
+    rec.vars({ key, pos, found });
     rec.line('already');
     rec.step(`The memtable already holds a tombstone for ${key}. Nothing to do.`);
     return;
@@ -551,12 +577,14 @@ export function remove(s: LsmState, key: number, rec: Rec): void {
     s.mem[pos] = { k: key, del: true };
     rec.mark(MEM, 'ok');
     rec.markCell(MEM, pos, 'key');
+    watch(rec, () => ({ key, pos, found, memtable: texts(s.mem) }));
     rec.line('replace');
     rec.step(`${key} was still in the memtable, so the tombstone ${key}✗ replaces it there. The tombstone has to stay: older copies of ${key} may sit in the SSTables.`);
   } else {
     s.mem.splice(pos, 0, { k: key, del: true });
     rec.mark(MEM, 'ok');
     rec.markCell(MEM, pos, 'key');
+    watch(rec, () => ({ key, pos, found, memtable: texts(s.mem) }));
     rec.line('tombstone');
     if (rec.recording) {
       const older = olderCopies(s, key, -1, -1);
@@ -616,6 +644,7 @@ function readTable(t: SSTable, key: number, rec: Rec, cost: Cost): number {
     const e = t.entries[i];
     const probe: Probe = { text: String(key), at: id, cell: i };
     rec.markCell(id, i, 'compare');
+    watch(rec, () => ({ key, entries: texts(t.entries), pos: i, 'entries[pos]': entryText(e) }));
     if (key === e.k) {
       cmp(rec, cost, key, '=', entryText(e), e.del ? `match, but this entry is a tombstone` : `match`, { probe });
       return i;
@@ -648,6 +677,7 @@ function findInLevel(s: LsmState, lv: number, key: number, rec: Rec, cost: Cost)
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
     reveal(s, lv, mid, rec);
+    watch(rec, () => ({ key, lo, hi, mid, 'tables[mid]': span(tables[mid]) }));
     const side = rangeCheck(tables[mid], key, rec, cost, {
       below: mid > lo ? `below this table's range, skip it and look left` : `below this table's range, and nothing is left to check: not in ${name}`,
       above: mid < hi ? `above this table's range, skip it and look right` : `above this table's range, and nothing is left to check: not in ${name}`,
@@ -669,6 +699,7 @@ export function get(s: LsmState, key: number, rec: Rec): GetResult {
   const cost = newCost();
   const text = String(key);
   rec.mark(MEM, 'path');
+  rec.vars({ key });
   rec.line('start');
   rec.step(
     s.mem.length
@@ -679,6 +710,7 @@ export function get(s: LsmState, key: number, rec: Rec): GetResult {
   const m = scanMem(s, key, rec, cost, 'read');
   if (m.found) {
     const probe: Probe = { text, at: MEM, cell: m.pos };
+    rec.vars({ key, pos: m.pos, found: true });
     rec.line('mem_hit');
     if (s.mem[m.pos].del) {
       rec.mark(MEM, 'bad');
@@ -701,6 +733,7 @@ export function get(s: LsmState, key: number, rec: Rec): GetResult {
     const id = tid(t);
     const probe: Probe = { text, at: id, cell };
     const reads = plural(cost.reads, 'SSTable');
+    watch(rec, () => ({ key, table: span(t), pos: cell, found: true }));
     rec.line(lv === 0 ? 'l0_hit' : 'deep_hit');
     if (t.entries[cell].del) {
       rec.mark(id, 'bad');
@@ -723,6 +756,7 @@ export function get(s: LsmState, key: number, rec: Rec): GetResult {
   // Level 0: tables overlap, so every one whose range covers the key must be read, newest first.
   const l0 = s.levels[0];
   if (l0.length) {
+    watch(rec, () => ({ key, 'levels[0]': l0.map(span) }));
     rec.line('l0');
     rec.step(
       `${lead}L0 tables can overlap in key range, so ${l0.length === 1 ? 'the one table here has' : l0.length === 2 ? 'both have' : `all ${l0.length} have`} to be checked, newest first. Each table's smallest and largest key are kept in memory, so a table whose range rules ${key} out is skipped without a read.`,
@@ -731,6 +765,7 @@ export function get(s: LsmState, key: number, rec: Rec): GetResult {
     lead = `Not in L0. `;
     for (let i = 0; i < l0.length; i++) {
       const t = l0[i];
+      watch(rec, () => ({ key, table: span(t), 'table.smallest': t.entries[0].k, 'table.largest': t.entries[t.entries.length - 1].k }));
       const side = rangeCheck(t, key, rec, cost, { below: `below this table's range, skip it`, above: `above this table's range, skip it` });
       if (side !== 0) {
         rec.mark(tid(t), 'dim');
@@ -754,6 +789,7 @@ export function get(s: LsmState, key: number, rec: Rec): GetResult {
     if (rec.recording) {
       const mid = (tables.length - 1) >> 1;
       reveal(s, lv, mid, rec);
+      rec.vars({ key, tables: tables.map(span) });
       rec.line('level');
       rec.step(
         tables.length === 1
@@ -769,6 +805,7 @@ export function get(s: LsmState, key: number, rec: Rec): GetResult {
     if (cell >= 0) return hit(lv, idx, cell);
   }
 
+  rec.vars({ key });
   rec.line('miss');
   rec.step(
     cost.reads
@@ -789,8 +826,10 @@ function hideOlder(s: LsmState, key: number, rec: Rec, lv: number, idx: number):
 
 export function flush(s: LsmState, rec: Rec): void {
   begin(s);
+  rec.vars();
   const cost = newCost();
   if (!s.mem.length) {
+    rec.vars({ memtable: [] });
     rec.line('flush_empty');
     rec.step(`The memtable is empty, so there is nothing to flush.`);
     return;
@@ -799,6 +838,7 @@ export function flush(s: LsmState, rec: Rec): void {
   const compacted = settle(s, rec, cost);
   if (!rec.recording) return;
   rec.clearMarks();
+  watch(rec, () => ({ memtable: [], 'len(levels[0])': s.levels[0].length }));
   rec.line('flush_done');
   rec.step(
     compacted
@@ -814,7 +854,9 @@ export function compact(s: LsmState, rec: Rec): void {
   const bottom = s.levels.length - 1;
   let lv = 0;
   while (lv < bottom && !s.levels[lv].length) lv++;
+  rec.vars();
   if (lv === bottom) {
+    rec.vars({ bottom, level: lv });
     rec.line('nothing');
     rec.step(
       s.levels[bottom].length
@@ -827,6 +869,7 @@ export function compact(s: LsmState, rec: Rec): void {
   cascade(s, rec, cost);
   if (!rec.recording) return;
   rec.clearMarks();
+  rec.vars({ bottom, level: lv });
   rec.line('compact_done');
   rec.step(
     cost.reads

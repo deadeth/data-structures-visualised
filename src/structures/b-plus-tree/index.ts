@@ -30,6 +30,8 @@ export interface BPlusState {
 }
 
 const nid = (n: BNode) => `n${n.id}`;
+/** A node as the Variables strip shows it: its keys. */
+const ks = (n: BNode | null | undefined) => (n ? n.keys : null);
 const eid = (a: BNode, b: BNode) => `e${a.id}-${b.id}`;
 const maxKeys = (s: BPlusState) => s.order - 1;
 const minLeafKeys = (s: BPlusState) => Math.ceil((s.order - 1) / 2);
@@ -75,6 +77,7 @@ function descend(s: BPlusState, key: number, rec: Rec, label = String(key)): { l
   let node = s.root;
   rec.count('reads');
   rec.mark(nid(node), 'path');
+  rec.vars({ key, node: ks(node) });
   rec.line('start');
   rec.step(
     node.leaf
@@ -88,6 +91,7 @@ function descend(s: BPlusState, key: number, rec: Rec, label = String(key)): { l
       const k = node.keys[i];
       const probe = { text: label, at: nid(node), cell: i };
       rec.markCell(nid(node), i, 'compare');
+      rec.vars({ key, node: ks(node), i, 'node.keys[i]': k });
       rec.line('separator');
       if (key < k) {
         rec.compare(key, '<', k, `take the pointer to the left of ${k}`, { probe });
@@ -104,6 +108,7 @@ function descend(s: BPlusState, key: number, rec: Rec, label = String(key)): { l
     node = child;
     rec.count('reads');
     rec.mark(nid(node), 'path');
+    rec.vars({ key, node: ks(node), i });
     rec.line('down');
     rec.step(
       node.leaf ? `Reached a leaf. Leaves hold the real keys, in sorted order.` : `Follow the pointer down one level and read that node.`,
@@ -119,6 +124,7 @@ function scanLeaf(leaf: BNode, key: number, rec: Rec): { found: boolean; pos: nu
     const k = leaf.keys[i];
     const probe = { text: String(key), at: nid(leaf), cell: i };
     rec.markCell(nid(leaf), i, 'compare');
+    rec.vars({ key, leaf: ks(leaf), pos: i, 'leaf.keys[pos]': k });
     rec.line('scan');
     if (key === k) {
       rec.compare(key, '=', k, `match`, { probe });
@@ -148,8 +154,10 @@ function markKey(s: BPlusState, key: number, rec: Rec): void {
 }
 
 export function search(s: BPlusState, key: number, rec: Rec): boolean {
+  rec.vars();
   const { leaf } = descend(s, key, rec);
   const { found, pos } = scanLeaf(leaf, key, rec);
+  rec.vars({ key, leaf: ks(leaf), pos, 'leaf.keys[pos]': leaf.keys[pos] ?? null });
   rec.line('result');
   if (found) {
     rec.markCell(nid(leaf), pos, 'ok');
@@ -165,10 +173,12 @@ export function search(s: BPlusState, key: number, rec: Rec): boolean {
 }
 
 export function insert(s: BPlusState, key: number, rec: Rec): boolean {
+  rec.vars();
   const { leaf, path } = descend(s, key, rec);
   const { found, pos } = scanLeaf(leaf, key, rec);
   if (found) {
     rec.markCell(nid(leaf), pos, 'ok');
+    rec.vars({ key, leaf: ks(leaf), pos });
     rec.line('duplicate');
     rec.step(`${key} is already stored. Nothing to do.`);
     return false;
@@ -179,6 +189,7 @@ export function insert(s: BPlusState, key: number, rec: Rec): boolean {
   rec.clearMarks();
   rec.mark(nid(leaf), 'ok');
   rec.markCell(nid(leaf), pos, 'key');
+  rec.vars({ key, leaf: ks(leaf), pos });
   rec.line('place');
   rec.step(`Slot ${key} into the leaf, keeping the keys sorted.`);
 
@@ -219,6 +230,7 @@ export function insert(s: BPlusState, key: number, rec: Rec): boolean {
       rec.count('writes');
       rec.mark(nid(root), 'ok');
       markKey(s, key, rec);
+      rec.vars({ key, node: ks(node), separator: sep, right: ks(right), root: ks(root) });
       rec.line(how, 'new_root');
       rec.step(`${why} There was no parent, so a new root is created. This is the only way the tree grows taller, which keeps every leaf at the same depth.`);
       break;
@@ -228,27 +240,32 @@ export function insert(s: BPlusState, key: number, rec: Rec): boolean {
     rec.count('writes');
     rec.markCell(nid(up.node), up.idx, 'ok');
     markKey(s, key, rec);
+    rec.vars({ key, node: ks(node), separator: sep, right: ks(right), parent: ks(up.node), i: up.idx });
     rec.line(how, 'push_up');
     rec.step(why);
     node = up.node;
   }
   rec.clearMarks();
   markKey(s, key, rec);
+  rec.vars({ key });
   rec.line('done');
   rec.step(`${key} is stored. The tree is ${height(s)} ${height(s) === 1 ? 'level' : 'levels'} deep and holds ${s.size} keys.`);
   return true;
 }
 
 export function remove(s: BPlusState, key: number, rec: Rec): boolean {
+  rec.vars();
   const { leaf, path } = descend(s, key, rec);
   const { found, pos } = scanLeaf(leaf, key, rec);
   if (!found) {
     rec.mark(nid(leaf), 'bad');
+    rec.vars({ key, leaf: ks(leaf), pos });
     rec.line('missing');
     rec.step(`${key} is not in the tree, so there is nothing to delete.`);
     return false;
   }
   rec.markCell(nid(leaf), pos, 'bad');
+  rec.vars({ key, leaf: ks(leaf), pos });
   rec.line('remove');
   rec.step(`Found ${key}. Remove it from the leaf.`, { probe: { text: String(key), at: nid(leaf), cell: pos } });
   leaf.keys.splice(pos, 1);
@@ -256,6 +273,7 @@ export function remove(s: BPlusState, key: number, rec: Rec): boolean {
   rec.count('writes');
   rec.clearMarks();
   rec.mark(nid(leaf), 'path');
+  rec.vars({ key, leaf: ks(leaf), pos });
   rec.step(`${key} is gone. Now check the leaf still holds enough keys.`);
 
   let node = leaf;
@@ -266,6 +284,7 @@ export function remove(s: BPlusState, key: number, rec: Rec): boolean {
         s.root = node.kids[0];
         rec.clearMarks();
         rec.mark(nid(s.root), 'ok');
+        rec.vars({ key, node: ks(node), root: ks(s.root) });
         rec.line('shrink');
         rec.step(`The root has no separators left and a single child, so that child becomes the root. The tree is one level shorter.`);
       }
@@ -279,6 +298,7 @@ export function remove(s: BPlusState, key: number, rec: Rec): boolean {
     const right = idx < p.kids.length - 1 ? p.kids[idx + 1] : null;
     rec.clearMarks();
     rec.mark(nid(node), 'bad');
+    rec.vars({ key, node: ks(node), parent: ks(p), i: idx, left: ks(left), right: ks(right) });
     rec.line('underfull');
     rec.step(
       `This node has ${node.keys.length} ${node.keys.length === 1 ? 'key' : 'keys'}, below the minimum of ${min}. It must borrow from a sibling, or merge with one.`,
@@ -301,6 +321,7 @@ export function remove(s: BPlusState, key: number, rec: Rec): boolean {
       rec.mark(nid(node), 'ok');
       rec.mark(nid(left), 'path');
       rec.markCell(nid(p), idx - 1, 'ok');
+      rec.vars({ key, node: ks(node), parent: ks(p), i: idx, left: ks(left), right: ks(right) });
       rec.line('borrow_left');
       rec.step(
         node.leaf
@@ -327,6 +348,7 @@ export function remove(s: BPlusState, key: number, rec: Rec): boolean {
       rec.mark(nid(node), 'ok');
       rec.mark(nid(right), 'path');
       rec.markCell(nid(p), idx, 'ok');
+      rec.vars({ key, node: ks(node), parent: ks(p), i: idx, left: ks(left), right: ks(right) });
       rec.line('borrow_right');
       rec.step(
         node.leaf
@@ -354,6 +376,7 @@ export function remove(s: BPlusState, key: number, rec: Rec): boolean {
     rec.count('merges');
     rec.clearMarks();
     rec.mark(nid(into), 'ok');
+    rec.vars({ key, into: ks(into), gone: ks(gone), parent: ks(p), sep: sepIdx });
     rec.line('merge');
     rec.step(
       into.leaf
@@ -363,6 +386,7 @@ export function remove(s: BPlusState, key: number, rec: Rec): boolean {
     node = p;
   }
   rec.clearMarks();
+  rec.vars({ key });
   rec.line('done');
   rec.step(`${key} is deleted. The tree is ${height(s)} ${height(s) === 1 ? 'level' : 'levels'} deep and holds ${s.size} keys.`);
   return true;
@@ -372,6 +396,7 @@ export function range(s: BPlusState, a: number, b: number, rec: Rec): number[] {
   const lo = Math.min(a, b);
   const hi = Math.max(a, b);
   const label = `${lo}..${hi}`;
+  rec.vars();
   const { leaf } = descend(s, lo, rec, label);
   const out: number[] = [];
   let node: BNode | null = leaf;
@@ -380,6 +405,7 @@ export function range(s: BPlusState, a: number, b: number, rec: Rec): number[] {
     for (let i = 0; i < node.keys.length; i++) {
       const k = node.keys[i];
       const probe = { text: label, at: nid(node), cell: i };
+      if (rec.recording) rec.vars({ lo, hi, leaf: ks(node), k, out: [...out] });
       if (k < lo) {
         rec.markCell(nid(node), i, 'compare');
         rec.line('before');
@@ -405,6 +431,7 @@ export function range(s: BPlusState, a: number, b: number, rec: Rec): number[] {
     rec.markEdge(`l${node.id}-${next.id}`, 'path');
     rec.count('reads');
     rec.mark(nid(next), 'path');
+    rec.vars({ lo, hi, leaf: ks(next), out: [...out] });
     leaves++;
     rec.line('next_leaf');
     rec.step(`End of this leaf. Follow its next pointer to the neighbouring leaf. No need to go back up the tree.`, {
@@ -412,6 +439,7 @@ export function range(s: BPlusState, a: number, b: number, rec: Rec): number[] {
     });
     node = next;
   }
+  rec.vars({ lo, hi, out: [...out] });
   rec.line('done');
   rec.step(
     out.length

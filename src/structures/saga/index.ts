@@ -1,7 +1,7 @@
 import { LABEL_MAX, PROBE_H } from '../../core/fit';
 import { CELL_H, TRAY_PAD } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
-import type { Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef, Tone } from '../../core/types';
+import type { Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef, Tone, VarValue } from '../../core/types';
 import java from './code/Saga.java?raw';
 import python from './code/saga.py?raw';
 import { info } from './info';
@@ -191,6 +191,41 @@ function atRow(s: SagaState, id: number): Probe {
   return { text: label(id), at: rowId(id), place: i === 0 ? 'above' : 'left' };
 }
 
+// ---- the Variables strip -------------------------------------------------------
+
+/** A string as the listing holds it. */
+const q = (x: string) => `"${x}"`;
+
+/** Orchestrator.step's locals. */
+function stepVars(rec: Rec, row: Row, i: number, key: string, action: string): void {
+  if (!rec.recording) return;
+  rec.vars({ saga: q(label(row.id)), i, key: q(key), action: q(action), 'row["done"]': row.done, 'row["state"]': q(row.state) });
+}
+
+/** Orchestrator.compensate's locals. */
+function compVars(rec: Rec, row: Row, i: number, key?: string, undo?: string): void {
+  if (!rec.recording) return;
+  rec.vars({ saga: q(label(row.id)), i, key: key && q(key), undo: undo && q(undo), 'row["done"]': row.done, 'row["state"]': q(row.state) });
+}
+
+/** Orchestrator.call's locals. */
+function callVars(rec: Rec, svc: number, key: string, action: string, row: Row, reply?: string): void {
+  if (!rec.recording) return;
+  rec.vars({ name: q(NAMES[svc].toLowerCase()), key: q(key), action: q(action), saga: q(label(row.id)), amount: row.amount, reply: reply && q(reply) });
+}
+
+/** Service.handle's arguments, and the action's own locals. */
+function handleVars(rec: Rec, key: string, action: string, id: number, amount: number, extra: Record<string, VarValue> = {}): void {
+  if (!rec.recording) return;
+  rec.vars({ key: q(key), action: q(action), saga: q(label(id)), amount, ...extra });
+}
+
+/** Orchestrator.run's view of one saga. */
+function runVars(rec: Rec, row: Row): void {
+  if (!rec.recording) return;
+  rec.vars({ saga: q(label(row.id)), 'log[saga]["state"]': q(row.state) });
+}
+
 // ---- the services' local transactions ---------------------------------------
 
 type Outcome = 'ok' | 'refused' | 'pending';
@@ -221,8 +256,9 @@ function gateway(s: SagaState, id: number, result: string): void {
 function local(s: SagaState, rec: Rec, i: number, key: string, action: string, id: number, amount: number, show: boolean, lead: string[], chor: boolean): Outcome {
   const svc = s.svcs[i];
   const t = label(id);
-  const say = (lines: string[], msg: string) => {
+  const say = (lines: string[], msg: string, extra: Record<string, VarValue> = {}) => {
     if (!show) return;
+    handleVars(rec, key, action, id, amount, extra);
     rec.line(...lead, ...lines);
     rec.step(msg, { probe: atSvc(id, i) });
   };
@@ -242,14 +278,18 @@ function local(s: SagaState, rec: Rec, i: number, key: string, action: string, i
     say(
       [chor ? 'ev_local' : 'refuse', ...refusedLines, 'refuse'],
       `${svc.name} refuses ${action} for ${t}: ${why}. Its local transaction rolls back, so its database holds nothing new, not even the key.`,
+      { 'self.refuse': true },
     );
     return 'refused';
   }
 
+  let extra: Record<string, VarValue> = {};
   if (action === 'reserve') {
     const f = free(s);
     const h = held(s);
+    extra = { held: h, free: f };
     if (show) {
+      handleVars(rec, key, action, id, amount, extra);
       rec.markCell(dbId(LEDGER), 0, 'compare');
       rec.line(...lead, 'free', 'check');
       rec.compare(`free ${money(f)}`, f >= amount ? '≥' : '<', money(amount), f >= amount ? 'hold it' : f + h >= amount ? 'only holds in the way' : 'not enough money', {
@@ -275,23 +315,28 @@ function local(s: SagaState, rec: Rec, i: number, key: string, action: string, i
         return 'pending';
       }
       svc.view[id] = 'refused';
-      say(['insufficient', ...refusedLines], `Ledger refuses: ${t} needs ${money(amount)} and the payer has ${money(f)}. Nothing was written.`);
+      say(['insufficient', ...refusedLines], `Ledger refuses: ${t} needs ${money(amount)} and the payer has ${money(f)}. Nothing was written.`, extra);
       return 'refused';
     }
     s.holds[id] = amount;
   } else if (action === 'hold') {
     if (s.used + amount > s.limit) {
       svc.view[id] = 'refused';
-      say(['limit_check', 'over_limit', ...refusedLines], `Limits refuses: ${money(s.used)} used plus ${money(amount)} is over today's limit of ${money(s.limit)}. Nothing was written.`);
+      say(['limit_check', 'over_limit', ...refusedLines], `Limits refuses: ${money(s.used)} used plus ${money(amount)} is over today's limit of ${money(s.limit)}. Nothing was written.`, {
+        'self.used': s.used,
+        'self.limit': s.limit,
+      });
       return 'refused';
     }
     s.used += amount;
     s.counted[id] = amount;
+    extra = { 'self.used': s.used, 'self.limit': s.limit };
   } else if (action === 'submit') {
     gateway(s, id, 'accepted');
   } else if (action === 'post') {
     s.balance -= s.holds[id];
     delete s.holds[id];
+    extra = { 'self.balance': s.balance };
   } else if (action === 'release') {
     delete s.holds[id];
   } else if (action === 'unhold') {
@@ -317,6 +362,7 @@ function local(s: SagaState, rec: Rec, i: number, key: string, action: string, i
     release: `Ledger drops ${t}'s hold of ${money(amount)} in a new local transaction and stores ${key}. This is a compensation: a new action that undoes the effect, not a rollback. The hold stays in Ledger's history.`,
     unhold: `Limits gives back ${money(amount)} of today's limit in a new local transaction and stores ${key}. Another forward action that cancels the first.`,
   };
+  handleVars(rec, key, action, id, amount, { ...extra, reply: q(reply) });
   rec.line(...lead, ...(action === 'reserve' ? ['check', anchor] : action === 'hold' ? ['limit_check', anchor] : [anchor]), ...ok);
   rec.step(body[action] + tail, { probe: atSvc(id, i) });
   rec.unmark(dbId(i));
@@ -355,6 +401,7 @@ function call(s: SagaState, rec: Rec, row: Row, i: number, key: string, action: 
   for (;;) {
     if (show && !first) {
       s.msgs = [cmd];
+      callVars(rec, i, key, action, row);
       rec.line(...lead, 'send_cmd');
       rec.step(`The orchestrator sends ${action} to ${svc.name} again, with the same key ${key}.`, { probe: atOrch(row.id) });
     }
@@ -365,10 +412,12 @@ function call(s: SagaState, rec: Rec, row: Row, i: number, key: string, action: 
       if (show) {
         s.msgs = [{ ...cmd, tone: 'bad', dashed: true }];
         s.outage = i;
+        handleVars(rec, key, action, row.id, row.amount, { 'self.down': svc.down + 1 });
         rec.line(...lead, 'send_cmd', 'down');
         rec.step(`${svc.name} is down. The command goes nowhere and nothing runs.`, { probe: atSvc(row.id, i) });
         s.msgs = [];
         s.outage = null;
+        callVars(rec, i, key, action, row);
         rec.line(...lead, 'timeout');
         rec.step(
           `No reply comes, so the orchestrator times out. It cannot tell "down" from "did it but the reply was lost", so it does the only safe thing: send the same command with the same key. Real code waits longer each time.`,
@@ -382,6 +431,7 @@ function call(s: SagaState, rec: Rec, row: Row, i: number, key: string, action: 
     if (stored !== undefined) {
       if (show) {
         rec.markCell(keysId(i), 1 + Math.max(0, svc.recent.indexOf(key)), 'compare');
+        handleVars(rec, key, action, row.id, row.amount, { 'key in self.replies': true });
         rec.line(...lead, 'dedupe');
         rec.compare(`key ${key}`, '=', `stored: ${stored}`, 'answer from the record', {
           probe: atSvc(row.id, i),
@@ -407,6 +457,7 @@ function call(s: SagaState, rec: Rec, row: Row, i: number, key: string, action: 
       rec.count('retries');
       if (show) {
         s.msgs = [{ from: svcId(i), to: ORCH, text: `${reply}: lost`, tone: 'bad', dashed: true }];
+        callVars(rec, i, key, action, row, String(reply));
         rec.line(...lead, 'lost');
         rec.step(
           `The reply "${reply}" is lost on the way back. ${svc.name} has done its part, but the orchestrator cannot know that. It times out and must try again.`,
@@ -443,6 +494,7 @@ function forward(s: SagaState, rec: Rec, row: Row, o: Opts, resent = false): Cal
   if (show) {
     s.msgs = [{ from: ORCH, to: svcId(st.svc), text: `${st.action} ${key}`, tone: 'path' }];
     rec.mark(rowId(row.id), 'path');
+    stepVars(rec, row, i, key, st.action);
     rec.line('read', 'key', 'send', 'send_cmd');
     rec.step(
       resent
@@ -458,6 +510,7 @@ function forward(s: SagaState, rec: Rec, row: Row, o: Opts, resent = false): Cal
     row.state = 'compensating';
     if (show) {
       rec.mark(rowId(row.id), 'bad');
+      stepVars(rec, row, i, key, st.action);
       rec.line('failed');
       rec.step(
         row.done === 0
@@ -474,6 +527,7 @@ function forward(s: SagaState, rec: Rec, row: Row, o: Opts, resent = false): Cal
     row.state = 'waiting';
     if (show) {
       rec.mark(rowId(row.id), 'compare');
+      stepVars(rec, row, i, key, st.action);
       rec.line('park');
       rec.step(`The orchestrator writes waiting to ${t}'s row and parks it. It will try step ${i + 1} again once the other saga has finished.`, { probe: atRow(s, row.id) });
       rec.unmark(rowId(row.id));
@@ -485,6 +539,7 @@ function forward(s: SagaState, rec: Rec, row: Row, o: Opts, resent = false): Cal
   if (row.done === N) row.state = 'completed';
   if (show) {
     rec.mark(rowId(row.id), 'ok');
+    stepVars(rec, row, i, key, st.action);
     rec.line(...(row.done === N ? ['record', 'completed'] : ['record']));
     rec.step(
       row.done === N
@@ -498,6 +553,7 @@ function forward(s: SagaState, rec: Rec, row: Row, o: Opts, resent = false): Cal
     rec.mark(rowId(row.id), 'ok');
     const cell = dbCell(s, st.svc, st.action, row.id);
     if (cell !== null) rec.markCell(dbId(st.svc), cell, 'ok');
+    stepVars(rec, row, i, key, st.action);
     rec.line('send', ACTION_LINE[st.action], 'local', 'record');
     rec.step(`Step ${i + 1}: ${svc.name} ${BRIEF[st.action](row.amount)} under key ${key} and replies. The row moves to ${row.done} of ${N} done.`, { probe: atSvc(row.id, st.svc) });
     rec.unmark(rowId(row.id));
@@ -518,6 +574,7 @@ function compensate(s: SagaState, rec: Rec, row: Row, o: Opts): void {
     rec.count('compensated');
     if (rec.recording) {
       rec.mark(rowId(row.id), 'bad');
+      compVars(rec, row, i);
       rec.line('undo_next', 'compensated');
       rec.step(`Nothing of ${t} is in effect any more. The orchestrator writes compensated to its row.`, { probe: atRow(s, row.id) });
       rec.unmark(rowId(row.id));
@@ -531,6 +588,7 @@ function compensate(s: SagaState, rec: Rec, row: Row, o: Opts): void {
   const show = rec.recording && o.show;
   if (show) {
     s.msgs = [{ from: ORCH, to: svcId(st.svc), text: `${undo} ${key}`, tone: 'path' }];
+    compVars(rec, row, i, key, undo);
     rec.line('read', 'to_comp', 'undo_next', 'undo_key', 'undo_send', 'send_cmd');
     rec.step(
       `${t} is compensating with ${steps(row.done)} in effect. Undo the newest first: the orchestrator sends ${undo} to ${svc.name} with the key ${key}.`,
@@ -541,10 +599,12 @@ function compensate(s: SagaState, rec: Rec, row: Row, o: Opts): void {
   row.done = i;
   if (show) {
     rec.mark(rowId(row.id), 'path');
+    compVars(rec, row, i, key, undo);
     rec.line('undo_record');
     rec.step(`The orchestrator writes ${t}'s row: ${row.done} of ${N} still in effect.`, { probe: atRow(s, row.id) });
     rec.unmark(rowId(row.id));
   } else if (rec.recording) {
+    compVars(rec, row, i, key, undo);
     rec.line('to_comp', 'undo_send', ACTION_LINE[undo], 'undo_record');
     rec.step(`Undo step ${i + 1}: ${svc.name} ${VIEW[undo] === 'released' ? 'releases the hold' : 'gives the limit back'} under key ${key}, and the row moves to ${row.done} of ${N} in effect.`, { probe: atSvc(row.id, st.svc) });
     rec.unmark(dbId(st.svc));
@@ -582,6 +642,7 @@ function begin(s: SagaState, rec: Rec, amount: number, lead: string[], show: boo
   rec.mark(SAGA, 'key');
   if (rec.recording) {
     rec.mark(rowId(row.id), 'ok');
+    rec.vars({ saga: q(label(row.id)), amount, 'log[saga]["state"]': q(row.state) });
     rec.line(...lead, 'begin');
     rec.step(
       show
@@ -597,6 +658,7 @@ function begin(s: SagaState, rec: Rec, amount: number, lead: string[], show: boo
 function finish(_s: SagaState, rec: Rec, row: Row, tail = ''): void {
   if (!rec.recording) return;
   const t = label(row.id);
+  runVars(rec, row);
   rec.line('loop');
   rec.step(
     row.state === 'completed'
@@ -610,6 +672,7 @@ function finish(_s: SagaState, rec: Rec, row: Row, tail = ''): void {
 function busy(s: SagaState, rec: Rec, anchor: string): boolean {
   if (s.mode === 'choreography') {
     if (!s.queue.length) return false;
+    rec.vars({ 'len(queue)': s.queue.length });
     rec.line(anchor);
     rec.step(`${label(s.focus)} still has events on the broker. Use Step to deliver them first.`, { probe: atSaga(s.focus) });
     return true;
@@ -617,6 +680,7 @@ function busy(s: SagaState, rec: Rec, anchor: string): boolean {
   const row = inFlight(s);
   if (!row) return false;
   s.focus = row.id;
+  runVars(rec, row);
   rec.line(anchor);
   rec.step(`${label(row.id)} is still in flight, ${row.done} of ${N} done. Use Step to take it to the end first: this page follows one saga at a time.`, { probe: atSaga(row.id) });
   return true;
@@ -643,6 +707,7 @@ function deliver(s: SagaState, rec: Rec): void {
     }
     if (rec.recording) {
       s.msgs = [];
+      rec.vars({ event: q(ev.name), saga: q(t), amount: s.amounts[id] });
       rec.line('listener', 'end');
       rec.step(
         ok
@@ -672,6 +737,7 @@ function deliver(s: SagaState, rec: Rec): void {
   const comp = r.action === 'release' || r.action === 'unhold';
   const cell = out === 'ok' ? dbCell(s, r.svc, r.action, id) : null;
   if (cell !== null) rec.markCell(dbId(r.svc), cell, 'ok');
+  rec.vars({ event: q(ev.name), saga: q(t), amount: s.amounts[id], action: q(r.action), key: q(key), nxt: q(next) });
   rec.line('listener', 'ev_key', ...(out === 'ok' ? ['ev_local', ACTION_LINE[r.action], 'ev_done'] : ['ev_local', 'ev_refused']), 'emit');
   rec.step(
     out === 'ok'
@@ -693,6 +759,7 @@ function publish(s: SagaState, rec: Rec, amount: number): number {
   rec.mark(SAGA, 'key');
   if (rec.recording) {
     s.msgs = [{ from: SAGA, to: ORCH, text: 'requested', tone: 'path' }];
+    rec.vars({ saga: q(label(id)), amount });
     rec.line('request');
     rec.step(
       `${label(id)} begins: the payments API publishes requested for ${money(amount)}. There is no orchestrator and no saga row. Each service has its own code saying which event it listens for and what it publishes next.`,
@@ -709,6 +776,7 @@ function drainAll(s: SagaState, rec: Rec): void {
 
 function chorOnly(s: SagaState, rec: Rec, anchor: string, what: string): boolean {
   if (s.mode !== 'choreography') return false;
+  rec.vars();
   rec.line(anchor);
   rec.step(`This page shows ${what} with an orchestrator: set Coordination to orchestration to run it. With choreography the idea is the same, but the broker redelivers events and each service dedupes them by key.`);
   return true;
@@ -717,11 +785,13 @@ function chorOnly(s: SagaState, rec: Rec, anchor: string, what: string): boolean
 // ---- operations ---------------------------------------------------------------
 
 export function start(s: SagaState, rec: Rec): void {
+  rec.vars();
   if (s.mode === 'choreography') {
     if (busy(s, rec, 'request')) return;
     const id = publish(s, rec, AMOUNT);
     drainAll(s, rec);
     if (rec.recording) {
+      rec.vars({ 'len(queue)': s.queue.length });
       rec.line('deliver');
       rec.step(
         `The same ${N} local transactions as with an orchestrator, chained by events: requested, reserved, held, accepted, posted. Easy to follow when it works. Now picture the failure paths: they are spread across three codebases.`,
@@ -738,6 +808,7 @@ export function start(s: SagaState, rec: Rec): void {
 
 /** One step of the saga in flight, or begin a new one. */
 export function step(s: SagaState, rec: Rec): void {
+  rec.vars();
   if (s.mode === 'choreography') {
     if (!s.queue.length) {
       publish(s, rec, AMOUNT);
@@ -750,6 +821,7 @@ export function step(s: SagaState, rec: Rec): void {
   if (!row) {
     const r = begin(s, rec, AMOUNT, ['run'], true);
     if (rec.recording) {
+      runVars(rec, r);
       rec.line('run', 'loop');
       rec.step(`Press Step again to send step 1.`, { probe: atRow(s, r.id) });
     }
@@ -759,6 +831,7 @@ export function step(s: SagaState, rec: Rec): void {
     row.state = 'running';
     s.focus = row.id;
     if (rec.recording) {
+      rec.vars({ saga: q(label(row.id)), 'row["state"]': q(row.state) });
       rec.line('parked', 'unpark');
       rec.step(`${label(row.id)} was parked. The orchestrator marks it running and tries again.`, { probe: atRow(s, row.id) });
     }
@@ -781,6 +854,7 @@ const REASON = ['a fraud rule has frozen the account', "the payment would go ove
 
 /** Make step k (1 to 3) refuse, and watch the compensations run in reverse. */
 export function fail(s: SagaState, k: number, rec: Rec): void {
+  rec.vars();
   if (!Number.isInteger(k) || k < 1 || k > N) {
     rec.line('refuse');
     rec.step(`Enter a step from 1 to 3. Step 4 comes after the pivot and is built never to refuse; use Pivot to see it fail anyway.`);
@@ -797,6 +871,7 @@ export function fail(s: SagaState, k: number, rec: Rec): void {
     if (busy(s, rec, 'request')) return;
     svc.refuse = true;
     rec.mark(svcId(st.svc), 'compare');
+    rec.vars({ 'self.refuse': true });
     rec.line('refuse');
     rec.step(`${svc.name} will refuse the next ${st.action}, at step ${k}: say ${REASON[k - 1]}.`);
     rec.unmark(svcId(st.svc));
@@ -804,6 +879,7 @@ export function fail(s: SagaState, k: number, rec: Rec): void {
     drainAll(s, rec);
     disarm(s);
     if (rec.recording) {
+      rec.vars({ 'len(queue)': s.queue.length });
       rec.line('deliver');
       rec.step(
         `${label(id)} is undone, by ${k === 1 ? 'nobody: nothing had happened' : `a chain of events nobody drew in one place: ${k === 3 ? 'rejected made Limits give the limit back, returned made Ledger release the hold' : 'over_limit made Ledger release the hold'}`}. To find out where a choreographed saga is stuck, you read every service's logs. That is the price of having no coordinator.`,
@@ -815,6 +891,7 @@ export function fail(s: SagaState, k: number, rec: Rec): void {
   if (busy(s, rec, 'refuse')) return;
   svc.refuse = true;
   rec.mark(svcId(st.svc), 'compare');
+  rec.vars({ 'self.refuse': true });
   rec.line('refuse');
   rec.step(`${svc.name} will refuse the next ${st.action}, at step ${k}: say ${REASON[k - 1]}.`);
   rec.unmark(svcId(st.svc));
@@ -831,6 +908,7 @@ export function fail(s: SagaState, k: number, rec: Rec): void {
 
 /** Lose the reply to step k, so the orchestrator resends the same command. */
 export function timeout(s: SagaState, k: number, rec: Rec): void {
+  rec.vars();
   if (chorOnly(s, rec, 'lost', 'a lost reply')) return;
   if (!Number.isInteger(k) || k < 1 || k > N) {
     rec.line('lost');
@@ -841,6 +919,7 @@ export function timeout(s: SagaState, k: number, rec: Rec): void {
   const st = STEPS[k - 1];
   const key = stepKey(s.next + 1, k - 1);
   s.lost.push(key);
+  rec.vars({ 'self.lost': s.lost.map(q) });
   rec.line('lost');
   rec.step(`The reply to step ${k}, ${st.action} at ${NAMES[st.svc]}, will be lost on the network. The command itself will arrive.`);
   const row = begin(s, rec, AMOUNT, [], false);
@@ -851,6 +930,7 @@ export function timeout(s: SagaState, k: number, rec: Rec): void {
 
 /** Kill the orchestrator after the service did step k but before the row records it. */
 export function crashOrchestrator(s: SagaState, k: number, rec: Rec): void {
+  rec.vars();
   if (s.mode === 'choreography') {
     rec.line('crash');
     rec.step(
@@ -876,6 +956,7 @@ export function crashOrchestrator(s: SagaState, k: number, rec: Rec): void {
   s.orchUp = false;
   s.msgs = [];
   if (rec.recording) {
+    callVars(rec, st.svc, stepKey(row.id, k - 1), st.action, row, VIEW[st.action]);
     rec.line('crash');
     rec.step(
       `The orchestrator dies with the reply in its hands, before it writes the row. ${NAMES[st.svc]} did step ${k}; the saga log still says ${row.done} of ${N} done. Its memory is gone. The log and the services' databases are not.`,
@@ -885,6 +966,7 @@ export function crashOrchestrator(s: SagaState, k: number, rec: Rec): void {
   s.orchUp = true;
   if (rec.recording) {
     rec.mark(rowId(row.id), 'compare');
+    rec.vars({ saga: q(label(row.id)), 'row["done"]': row.done, 'row["state"]': q(row.state) });
     rec.line('scan', 'unfinished');
     rec.compare(`${label(row.id)}: ${row.done} of ${N} done`, '=', 'running', 'resume it', {
       probe: atRow(s, row.id),
@@ -903,10 +985,12 @@ export function crashOrchestrator(s: SagaState, k: number, rec: Rec): void {
 
 /** A second saga meets the first one's hold: no isolation, and the semantic lock that copes. */
 export function concurrent(s: SagaState, rec: Rec): void {
+  rec.vars();
   if (chorOnly(s, rec, 'pending', 'two sagas meeting')) return;
   if (busy(s, rec, 'pending')) return;
   const f = free(s);
   if (f < AMOUNT + 30) {
+    rec.vars({ amount: AMOUNT, held: held(s), free: f });
     rec.line('insufficient');
     rec.step(`The payer has only ${money(f)} free, not enough to show two payments competing. Change Coordination to start again with ${money(BALANCE)}.`);
     return;
@@ -941,12 +1025,14 @@ export function concurrent(s: SagaState, rec: Rec): void {
   s.svcs[GATEWAY].refuse = true;
   s.focus = a.id;
   if (rec.recording) {
+    runVars(rec, a);
     rec.line('loop');
     rec.step(`Back to ${label(a.id)}. Say the scheme rejects it: the payee's account is closed.`, { probe: atSaga(a.id) });
   }
   runSaga(s, rec, a, () => false);
   disarm(s);
   if (rec.recording) {
+    runVars(rec, a);
     rec.line('loop');
     rec.step(`${label(a.id)} is compensated: its hold is gone, so the ${money(a.amount)} never left.`, { probe: atSaga(a.id) });
   }
@@ -955,6 +1041,7 @@ export function concurrent(s: SagaState, rec: Rec): void {
   s.focus = b.id;
   if (rec.recording) {
     rec.mark(rowId(b.id), 'path');
+    rec.vars({ saga: q(label(b.id)), 'row["state"]': q(b.state) });
     rec.line('parked', 'unpark');
     rec.step(`The orchestrator retries parked sagas. ${label(b.id)} is waiting, so it marks it running and sends step 1 again.`, { probe: atRow(s, b.id) });
     rec.unmark(rowId(b.id));
@@ -965,6 +1052,7 @@ export function concurrent(s: SagaState, rec: Rec): void {
 
 /** After the pivot succeeds, a failure can only be retried. */
 export function pivot(s: SagaState, rec: Rec): void {
+  rec.vars();
   if (chorOnly(s, rec, 'post', 'a failure after the pivot')) return;
   if (busy(s, rec, 'post')) return;
   const row = begin(s, rec, AMOUNT, [], false);
@@ -977,6 +1065,7 @@ export function pivot(s: SagaState, rec: Rec): void {
   s.svcs[LEDGER].down = 2;
   if (rec.recording) {
     rec.mark(svcId(LEDGER), 'bad');
+    rec.vars({ saga: q(label(row.id)), amount: row.amount });
     rec.line('submitted');
     rec.step(
       `That was the point of no return. Now say Ledger goes down for a while. Before the pivot, the orchestrator could give up and compensate. Not now: the scheme has the money and cannot hand it back. ${label(row.id)} can only go forward.`,

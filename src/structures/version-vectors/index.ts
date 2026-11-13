@@ -163,6 +163,7 @@ export function write(s: VVState, at: number | string, item: number | string, re
   const L = (...a: string[]) => rec.line(...lead, ...a);
   const r = asReplica(at);
   const it = asItem(item);
+  rec.vars();
   L('check');
   if (r === null) {
     rec.step(ASK_REPLICA);
@@ -174,6 +175,7 @@ export function write(s: VVState, at: number | string, item: number | string, re
   }
   const R = LETTERS[r];
   const rep = s.replicas[r];
+  rec.vars({ r: R, item: it, 'len(rep.versions)': rep.versions.length });
   if (rep.versions.length > 1) {
     for (const v of rep.versions) rec.mark(nid(r, v), 'compare');
     L('check', 'refuse');
@@ -188,6 +190,7 @@ export function write(s: VVState, at: number | string, item: number | string, re
   const baseId = nid(r, base);
   const adds = !base.cart.includes(it);
   rec.mark(baseId, 'path');
+  rec.vars({ r: R, item: it, base: base.name });
   L('read');
   rec.step(
     `A client reads the cart at replica ${R}: ${base.name}, ${braces(base.cart)}, vector ${vec(base.vv)}. It ${adds ? `adds ${it}` : `takes ${it} out`} and writes the cart back to ${R}.`,
@@ -201,6 +204,7 @@ export function write(s: VVState, at: number | string, item: number | string, re
   s.origin[id] = baseId;
   markVersion(rec, id, 'key');
   const probe: Probe = { text: v.name, at: id, cell: r + 1 };
+  rec.vars({ r: R, item: it, base: base.name, cart: v.cart, vv: v.vv, v: v.name });
   L('cart', 'bump', 'stamp');
   rec.step(
     `New version ${v.name}: ${braces(v.cart)}. Its vector is ${base.name}'s ${vec(base.vv)} with ${R}'s own entry raised by one: ${vec(v.vv)}. ${stampNote(v)}`,
@@ -236,6 +240,7 @@ export function replicate(s: VVState, from: number | string, to: number | string
   const L = (...a: string[]) => rec.line(...lead, ...a);
   const x = asReplica(from);
   const y = asReplica(to);
+  rec.vars();
   L('each');
   if (x === null || y === null) {
     rec.step(ASK_REPLICA);
@@ -250,6 +255,7 @@ export function replicate(s: VVState, from: number | string, to: number | string
   const src = s.replicas[x];
   const dst = s.replicas[y];
   const sending = [...src.versions];
+  rec.vars({ src: X, dst: Y });
   rec.step(
     `Replicate ${X} to ${Y}. ${X} sends ${sending.length === 1 ? `the one version it holds, ${sending[0].name}` : `all ${sending.length} siblings it holds, ${names(sending)}`}. ${Y} compares each with every version it has, entry by entry.`,
   );
@@ -265,6 +271,7 @@ export function replicate(s: VVState, from: number | string, to: number | string
     rec.clearMarks();
     rec.mark(srcId, 'path');
     markVersion(rec, inId, 'key');
+    rec.vars({ src: X, dst: Y, v: v.name, keep: true });
     L('each');
     rec.step(
       `${v.name} arrives at ${Y}: ${braces(v.cart)}, vector ${vec(v.vv)}, stamped t${v.ts}.`,
@@ -285,6 +292,7 @@ export function replicate(s: VVState, from: number | string, to: number | string
         rec.markCell(wid, i + 1, 'compare');
         rec.markCell(inId, i + 1, 'compare');
         const probe: Probe = { text: v.name, at: wid, cell: i + 1 };
+        rec.vars({ v: v.name, w: w.name, mine: a, theirs: b, ahead: aheadOn.length > 0 || a > b, behind: behindOn.length > 0 || a < b });
         const left = `${v.name} ${E}: ${a}`;
         const right = `${w.name} ${E}: ${b}`;
         if (a > b) {
@@ -313,6 +321,8 @@ export function replicate(s: VVState, from: number | string, to: number | string
       }
       const atW: Probe = { text: v.name, at: wid };
       const atIn: Probe = { text: v.name, at: inId };
+      const ord = !aheadOn.length ? (behindOn.length ? 'behind' : 'equal') : behindOn.length ? 'concurrent' : 'ahead';
+      rec.vars({ v: v.name, w: w.name, ahead: aheadOn.length > 0, behind: behindOn.length > 0, order: ord, keep: !!aheadOn.length });
 
       if (!aheadOn.length) {
         // Equal or behind: Y already has v, or something that has seen it.
@@ -353,6 +363,7 @@ export function replicate(s: VVState, from: number | string, to: number | string
       const vWins = newer(v, w);
       const [win, lose] = vWins ? [v, w] : [w, v];
       const skewed = realTime(lose) > realTime(win);
+      rec.vars({ v: v.name, w: w.name, order: ord, 'v.ts': v.ts, 'w.ts': w.ts, 'newer(v, w)': vWins });
       L('lww');
       rec.compare(`${v.name} t${v.ts}`, v.ts > w.ts ? '>' : v.ts < w.ts ? '<' : '=', `${w.name} t${w.ts}`, `keep ${win.name}, drop ${lose.name}`, {
         probe: atW,
@@ -378,6 +389,7 @@ export function replicate(s: VVState, from: number | string, to: number | string
         continue;
       }
       dropVersion(rec, inId);
+      rec.vars({ v: v.name, w: w.name, order: ord, 'v.ts': v.ts, 'w.ts': w.ts, keep: false });
       L('lww', 'lost_new');
       rec.step(
         `${v.name}, ${braces(v.cart)}, is thrown away at ${Y}. No error and no sibling: its client was told the write succeeded. ${X} keeps it until ${w.name} replicates back and wins there too.`,
@@ -395,6 +407,7 @@ export function replicate(s: VVState, from: number | string, to: number | string
       const sibs = dst.versions.length > 1;
       if (sibs) rec.count('siblings');
       markVersion(rec, inId, 'ok');
+      rec.vars({ src: X, dst: Y, v: v.name, keep: true });
       L('keep');
       rec.step(
         sibs
@@ -411,6 +424,7 @@ export function replicate(s: VVState, from: number | string, to: number | string
   rec.clearMarks();
   L('done');
   const held = dst.versions;
+  rec.vars({ src: X, dst: Y, 'target.versions': held.map((u) => u.name) });
   rec.step(
     `${Y} now holds ${held.length === 1 ? held[0].name : `${held.length} siblings, ${names(held)}`}. ` +
       `${pairs === 1 ? '1 pair of vectors' : `${pairs} pairs of vectors`} compared, 3 entries each: the cost grows with the number of replicas, not with the data.` +
@@ -424,6 +438,7 @@ export function replicate(s: VVState, from: number | string, to: number | string
 export function resolve(s: VVState, at: number | string, rec: Rec): Version | null {
   s.origin = {};
   const r = asReplica(at);
+  rec.vars();
   rec.line('check');
   if (r === null) {
     rec.step(ASK_REPLICA);
@@ -432,6 +447,7 @@ export function resolve(s: VVState, at: number | string, rec: Rec): Version | nu
   const R = LETTERS[r];
   const rep = s.replicas[r];
   const sibs = [...rep.versions];
+  rec.vars({ r: R, sibs: sibs.map((u) => u.name) });
   if (sibs.length < 2) {
     rec.line('check', 'nothing');
     rec.step(
@@ -450,12 +466,14 @@ export function resolve(s: VVState, at: number | string, rec: Rec): Version | nu
   for (let i = 0; i < LETTERS.length; i++) {
     for (const v of sibs) rec.markCell(nid(r, v), i + 1, 'compare');
     vv[i] = Math.max(...sibs.map((v) => v.vv[i]));
+    rec.vars({ r: R, sibs: sibs.map((u) => u.name), i, vv: vv.slice(0, i + 1) });
     rec.line('max');
     rec.step(`Entry ${LETTERS[i]}: max(${sibs.map((v) => v.vv[i]).join(', ')}) = ${vv[i]}. The merged version has seen every write from ${LETTERS[i]} that any sibling had.`);
     for (const v of sibs) rec.markCell(nid(r, v), i + 1, 'idle');
   }
   const cart = union(sibs.map((v) => v.cart));
   for (const v of sibs) rec.markCell(nid(r, v), 0, 'compare');
+  rec.vars({ r: R, sibs: sibs.map((u) => u.name), vv, cart });
   rec.line('union');
   rec.step(`Cart: the union of ${sibs.map((v) => braces(v.cart)).join(' and ')} is ${braces(cart)}.`);
   for (const v of sibs) rec.markCell(nid(r, v), 0, 'idle');
@@ -468,6 +486,7 @@ export function resolve(s: VVState, at: number | string, rec: Rec): Version | nu
   s.origin[id] = nid(r, sibs[0]);
   markVersion(rec, id, 'key');
   const probe: Probe = { text: v.name, at: id, cell: r + 1 };
+  rec.vars({ r: R, sibs: sibs.map((u) => u.name), vv: v.vv, cart, v: v.name });
   rec.line('bump', 'stamp');
   rec.step(`Raise ${R}'s own entry, since this is a new write at ${R}: ${vec(before)} becomes ${vec(v.vv)}. ${stampNote(v)}`, { probe });
 
@@ -495,6 +514,7 @@ export function concurrent(s: VVState, x: number | string, itemX: number | strin
   const b = asReplica(y);
   const ia = asItem(itemX);
   const ib = asItem(itemY);
+  rec.vars();
   rec.line('first');
   if (a === null || b === null) {
     rec.step(ASK_REPLICA);
@@ -515,6 +535,7 @@ export function concurrent(s: VVState, x: number | string, itemX: number | strin
   }
   const A = LETTERS[a];
   const B = LETTERS[b];
+  rec.vars({ x: A, item_x: ia, y: B, item_y: ib });
   rec.step(
     `Two clients write within a tick of each other: one at ${A} (${ia}), one at ${B} (${ib}). Replication is asynchronous, so neither replica has heard of the other's write when it takes its own.`,
   );
@@ -527,6 +548,7 @@ export function concurrent(s: VVState, x: number | string, itemX: number | strin
 export function setPolicy(s: VVState, raw: number | string, rec: Rec): boolean {
   s.origin = {};
   const p = asPolicy(raw);
+  rec.vars({ policy: p ?? String(raw) });
   rec.line('policy');
   if (!p) {
     rec.step(`The policies are siblings and lww (last write wins). Enter one of those.`);
@@ -543,6 +565,7 @@ export function setPolicy(s: VVState, raw: number | string, rec: Rec): boolean {
       : `Switch to keep siblings. When two versions are concurrent, both are kept, and the next client to read them must merge.`,
   );
   for (const rep of s.replicas) rep.versions = [START];
+  rec.vars({ policy: p, 'rep.versions': ['v0'] });
   rec.line('reset');
   rec.step(
     `So the same writes can be replayed under the new policy, every replica goes back to v0, the empty cart. The clocks keep running. A real cluster is not reset like this; it is a convenience of the page.`,

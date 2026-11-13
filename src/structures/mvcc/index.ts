@@ -198,6 +198,12 @@ function focus(rec: Rec, xid: number): void {
   rec.clearMarks();
   rec.mark(tid(xid), 'key');
 }
+/** The level as the listing spells it. */
+const lvName = (l: Level) => (l === 'rc' ? 'read committed' : 'snapshot');
+/** `read` and `visible` in scope while walking one version. */
+function walkVars(t: Txn, row: string, v: Version, rec: Rec): void {
+  rec.vars({ xid: t.xid, row, 'v.value': v.value, 'v.xmin': v.xmin, 'v.xmax': v.xmax, 't.horizon': t.horizon });
+}
 const atTxn = (xid: number): Probe => ({ text: T(xid), at: tid(xid) });
 const atNode = (xid: number, node: string): Probe => ({ text: T(xid), at: node });
 
@@ -233,6 +239,7 @@ function usableRow(s: MvccState, raw: number | string, rec: Rec): string | null 
 
 /** Start a transaction. Returns its id, or null when the page's limits are reached. */
 export function begin(s: MvccState, rec: Rec): number | null {
+  rec.vars();
   rec.line('begin');
   if (active(s).length >= MAX_ACTIVE) {
     rec.step(`${ids(active(s).map((t) => t.xid))} are already running, and this page draws at most ${MAX_ACTIVE} at once. Commit or abort one first.`);
@@ -246,8 +253,10 @@ export function begin(s: MvccState, rec: Rec): number | null {
   s.nextXid++;
   s.txns.push(t);
   focus(rec, t.xid);
+  rec.vars({ 't.xid': t.xid, 't.level': lvName(t.level), next_xid: s.nextXid });
   rec.step(`${T(t.xid)} begins, at ${levelName(t.level)}. It gets the next id, ${t.xid}. Ids only go up, so a larger id always began later.`, { probe: atTxn(t.xid) });
   takeSnapshot(s, t);
+  rec.vars({ 't.xid': t.xid, 't.level': lvName(t.level), next_xid: s.nextXid, 't.in_progress': t.inProgress, 't.horizon': t.horizon });
   rec.line('snapshot');
   const running = t.inProgress.length ? `${ids(t.inProgress)} ${t.inProgress.length === 1 ? 'is' : 'are'} in progress` : `nothing else is in progress`;
   rec.step(
@@ -262,6 +271,7 @@ export function begin(s: MvccState, rec: Rec): number | null {
 /** The commit test, narrated: did `x` commit before t's snapshot? */
 function committedBeforeShown(s: MvccState, t: Txn, x: number, which: 'xmin' | 'xmax', caller: string, rec: Rec, probe: Probe): boolean {
   const st = s.txns[x].status;
+  rec.vars({ 't.xid': t.xid, xid: x, 'txns[xid].status': st, 't.horizon': t.horizon, 't.in_progress': t.inProgress });
   rec.line(caller, 'committed');
   if (st !== 'committed') {
     rec.compare(
@@ -302,8 +312,9 @@ function committedBeforeShown(s: MvccState, t: Txn, x: number, which: 'xmin' | '
 }
 
 /** The visibility rule, narrated, for one version. */
-function visibleShown(s: MvccState, t: Txn, v: Version, rec: Rec): boolean {
+function visibleShown(s: MvccState, t: Txn, row: string, v: Version, rec: Rec): boolean {
   const probe = atNode(t.xid, v.id);
+  walkVars(t, row, v, rec);
   rec.line('mine');
   if (v.xmin === t.xid) {
     const replaced = v.xmax === t.xid;
@@ -312,6 +323,7 @@ function visibleShown(s: MvccState, t: Txn, v: Version, rec: Rec): boolean {
   }
   rec.compare(`xmin ${T(v.xmin)}`, '≠', `me ${T(t.xid)}`, 'not mine: was it committed?', { probe });
   if (!committedBeforeShown(s, t, v.xmin, 'xmin', 'created', rec, probe)) return false;
+  walkVars(t, row, v, rec);
   rec.line('not_deleted');
   if (v.xmax === null) {
     rec.compare('xmax', '=', 'none', 'never replaced: visible', { probe });
@@ -327,6 +339,7 @@ function visibleShown(s: MvccState, t: Txn, v: Version, rec: Rec): boolean {
 
 /** Read a row through the transaction's snapshot. Returns the value seen, or null when it cannot read. */
 export function read(s: MvccState, rawX: number | string, rawRow: number | string, rec: Rec): number | null {
+  rec.vars();
   rec.line('walk');
   const t = usable(s, rawX, rec, 'read');
   if (!t) return null;
@@ -336,12 +349,14 @@ export function read(s: MvccState, rawX: number | string, rawRow: number | strin
   focus(rec, t.xid);
   if (t.level === 'rc') {
     takeSnapshot(s, t);
+    rec.vars({ xid: t.xid, row, 't.level': lvName(t.level), 't.in_progress': t.inProgress, 't.horizon': t.horizon });
     rec.line('statement');
     rec.step(
       `${T(t.xid)} reads ${name}. Read committed takes a fresh snapshot for this statement: ${t.inProgress.length ? `${ids(t.inProgress)} ${t.inProgress.length === 1 ? 'is' : 'are'} in progress now` : `nothing else is in progress now`}.`,
       { probe: atTxn(t.xid) },
     );
   } else {
+    rec.vars({ xid: t.xid, row, 't.level': lvName(t.level), 't.in_progress': t.inProgress, 't.horizon': t.horizon });
     rec.step(
       `${T(t.xid)} reads ${name} through the snapshot it took when it began (${inProgressText(t)}; horizon ${t.horizon}). It walks ${name}'s versions newest first and takes the first one it may see.`,
       { probe: atTxn(t.xid) },
@@ -352,12 +367,13 @@ export function read(s: MvccState, rawX: number | string, rawRow: number | strin
     looked++;
     rec.count('reads');
     rec.mark(v.id, 'compare');
-    const ok = visibleShown(s, t, v, rec);
+    const ok = visibleShown(s, t, row, v, rec);
     if (ok) {
       rec.mark(v.id, 'ok');
       const at = t.seen.findIndex(([r]) => r === row);
       if (at >= 0) t.seen[at] = [row, v.value];
       else t.seen.push([row, v.value]);
+      walkVars(t, row, v, rec);
       rec.line('found');
       rec.step(
         `${T(t.xid)} reads ${name} = ${v.value}, the version ${v.xmin === t.xid ? 'it wrote itself' : `${T(v.xmin)} made`}. ${plural(looked, 'version')} looked at${looked > 1 ? `; the newer ${looked === 2 ? 'one was' : 'ones were'} not in its view` : ''}. No lock was taken: a reader never blocks a writer.`,
@@ -367,6 +383,7 @@ export function read(s: MvccState, rawX: number | string, rawRow: number | strin
     }
     rec.mark(v.id, 'dim');
   }
+  rec.vars({ xid: t.xid, row });
   rec.line('walk');
   rec.step(`No version of ${name} is visible to ${T(t.xid)}.`, { probe: atTxn(t.xid) });
   return null;
@@ -374,6 +391,7 @@ export function read(s: MvccState, rawX: number | string, rawRow: number | strin
 
 /** Write a row. Returns what happened, or null when the write could not be tried. */
 export function write(s: MvccState, rawX: number | string, rawRow: number | string, rawValue: number | string, rec: Rec): Outcome | null {
+  rec.vars();
   rec.line('lock');
   const t = usable(s, rawX, rec, 'write');
   if (!t) return null;
@@ -397,6 +415,7 @@ function writeCore(s: MvccState, t: Txn, row: string, value: number, rec: Rec, r
   const name = rowLabel(s, row);
   focus(rec, t.xid);
   const holder = s.locks[row];
+  rec.vars({ xid: t.xid, row, value, holder: holder ?? null });
   rec.line('lock');
   rec.step(
     retry
@@ -421,6 +440,7 @@ function writeCore(s: MvccState, t: Txn, row: string, value: number, rec: Rec, r
       return 'aborted';
     }
     t.wants = { row, value };
+    rec.vars({ xid: t.xid, row, value, holder, 't.wants': [row, value] });
     rec.line('wait');
     rec.mark(hid(row), 'path');
     rec.step(
@@ -434,6 +454,7 @@ function writeCore(s: MvccState, t: Txn, row: string, value: number, rec: Rec, r
   });
   rec.mark(hid(row), 'path');
   const head = newest(s, row);
+  rec.vars({ xid: t.xid, row, value, holder: holder ?? null, 'head.value': head.value, 'head.xmin': head.xmin });
   rec.mark(head.id, 'compare');
   const probe = atNode(t.xid, head.id);
   if (t.level === 'rc') {
@@ -449,6 +470,7 @@ function writeCore(s: MvccState, t: Txn, row: string, value: number, rec: Rec, r
     rec.line('head', 'conflict', 'committed');
     rec.step(`The newest version of ${name} is ${head.value}, made by ${T(head.xmin)}. Under snapshot isolation it must be one that ${T(t.xid)}'s snapshot can see; otherwise someone changed ${name} behind its back.`, { probe });
     const x = head.xmin;
+    rec.vars({ xid: t.xid, row, value, 'head.xmin': x, 't.horizon': t.horizon, 't.in_progress': t.inProgress });
     if (x >= t.horizon || t.inProgress.includes(x)) {
       rec.line('conflict', x >= t.horizon ? 'after' : 'running');
       rec.compare(`newest xmin ${T(x)}`, x >= t.horizon ? '≥' : '=', x >= t.horizon ? `horizon ${t.horizon}` : inProgressText(t), 'changed after my snapshot: abort', { probe });
@@ -468,6 +490,7 @@ function writeCore(s: MvccState, t: Txn, row: string, value: number, rec: Rec, r
   head.xmax = t.xid;
   const v: Version = { id: `v${++s.vseq}`, value, xmin: t.xid, xmax: null };
   s.rows[row].unshift(v);
+  rec.vars({ xid: t.xid, row, value, 'locks[row]': s.locks[row], 'head.xmax': head.xmax });
   rec.count('writes');
   rec.mark(head.id, 'path');
   rec.mark(v.id, 'ok');
@@ -481,11 +504,13 @@ function writeCore(s: MvccState, t: Txn, row: string, value: number, rec: Rec, r
 
 /** Commit. Returns false when the transaction cannot commit. */
 export function commit(s: MvccState, rawX: number | string, rec: Rec): boolean {
+  rec.vars();
   rec.line('commit');
   const t = usable(s, rawX, rec, 'commit');
   if (!t) return false;
   focus(rec, t.xid);
   t.status = 'committed';
+  rec.vars({ xid: t.xid, 'txns[xid].status': t.status });
   s.ended.push(t.xid);
   const wrote = s.order.filter((r) => s.rows[r].some((v) => v.xmin === t.xid));
   for (const r of wrote) for (const v of s.rows[r]) if (v.xmin === t.xid) rec.mark(v.id, 'ok');
@@ -504,6 +529,7 @@ export function commit(s: MvccState, rawX: number | string, rec: Rec): boolean {
 
 /** Abort. Returns false when there is nothing to abort. */
 export function abort(s: MvccState, rawX: number | string, rec: Rec): boolean {
+  rec.vars();
   rec.line('abort');
   const t = usable(s, rawX, rec, 'abort', true);
   if (!t) return false;
@@ -520,6 +546,7 @@ function abortCore(s: MvccState, t: Txn, rec: Rec): void {
   rec.count('aborts');
   const left = s.order.filter((r) => s.rows[r].some((v) => v.xmin === t.xid));
   rec.mark(tid(t.xid), 'key');
+  rec.vars({ xid: t.xid, 't.status': t.status, 't.wants': null });
   rec.line('abort');
   rec.step(
     left.length
@@ -535,6 +562,7 @@ function release(s: MvccState, t: Txn, rec: Rec): void {
   const freed = s.order.filter((r) => s.locks[r] === t.xid);
   for (const r of freed) delete s.locks[r];
   if (!freed.length) return;
+  rec.vars({ xid: t.xid, freed });
   rec.line('unlock');
   rec.step(`${T(t.xid)} releases its write ${freed.length === 1 ? 'lock' : 'locks'} on ${list(freed.map((r) => rowLabel(s, r)))}.`, { probe: atTxn(t.xid) });
   for (const w of [...s.txns]) {
@@ -542,6 +570,7 @@ function release(s: MvccState, t: Txn, rec: Rec): void {
     const { row, value } = w.wants;
     w.wants = null;
     focus(rec, w.xid);
+    rec.vars({ xid: t.xid, freed, 'w.xid': w.xid, row, value });
     rec.line('waiter');
     rec.step(`${T(w.xid)} was waiting for ${rowLabel(s, row)}'s lock. It is free now, so ${T(w.xid)} carries on.`, { probe: atTxn(w.xid) });
     rec.line('retry');
@@ -551,6 +580,7 @@ function release(s: MvccState, t: Txn, rec: Rec): void {
 
 /** Drop every version no transaction can ever see again. Returns how many went. */
 export function vacuum(s: MvccState, rec: Rec): number {
+  rec.vars();
   rec.clearMarks();
   rec.line('vac_scan');
   const total = s.order.reduce((n, r) => n + s.rows[r].length, 0);
@@ -564,6 +594,7 @@ export function vacuum(s: MvccState, rec: Rec): number {
       const d = dead(s, v);
       const who = holdersOf(s, v);
       const name = rowLabel(s, row);
+      rec.vars({ row, 'v.value': v.value, 'v.xmin': v.xmin, 'v.xmax': v.xmax, removed });
       rec.line('vac_test', d ? 'vac_drop' : 'vac_keep');
       rec.mark(v.id, d ? 'bad' : 'ok');
       let why: string;
@@ -587,6 +618,7 @@ export function vacuum(s: MvccState, rec: Rec): number {
   }
   for (const row of s.order) s.rows[row] = s.rows[row].filter((v) => !dead(s, v));
   rec.count('vacuumed', removed);
+  rec.vars({ removed });
   rec.line('vac_done');
   rec.step(
     removed
@@ -600,6 +632,7 @@ export function vacuum(s: MvccState, rec: Rec): number {
 
 /** The isolation level for transactions that begin from now on. */
 export function setLevel(s: MvccState, raw: number | string, rec: Rec): boolean {
+  rec.vars();
   rec.line('level');
   const level = parseLevel(raw);
   if (!level) {
@@ -608,6 +641,7 @@ export function setLevel(s: MvccState, raw: number | string, rec: Rec): boolean 
   }
   const was = s.level;
   s.level = level;
+  rec.vars({ level: lvName(level) });
   const running = active(s);
   rec.step(
     (was === level ? `New transactions already use ${levelName(level)}. ` : `From now on, new transactions use ${levelName(level)}. `) +
@@ -621,6 +655,7 @@ export function setLevel(s: MvccState, raw: number | string, rec: Rec): boolean 
 
 /** Load a fresh table. */
 export function reset(s: MvccState, raw: number | string, rec: Rec): boolean {
+  rec.vars();
   rec.line('load');
   const table = parseTable(raw);
   if (!table) {
@@ -628,6 +663,7 @@ export function reset(s: MvccState, raw: number | string, rec: Rec): boolean {
     return false;
   }
   load(s, table);
+  loadVars(s, rec);
   rec.step(
     table === 'bank'
       ? `A fresh table: accounts A and B hold 50 each, both written by T0, the loader, which committed. No transaction is running.`
@@ -636,10 +672,17 @@ export function reset(s: MvccState, raw: number | string, rec: Rec): boolean {
   return true;
 }
 
+/** What `load` leaves: the rows it wrote and the next id. */
+function loadVars(s: MvccState, rec: Rec): void {
+  if (!rec.recording) return;
+  rec.vars({ rows: `{${s.order.map((r) => `'${r}': ${s.rows[r][0].value}`).join(', ')}}`, next_xid: s.nextXid });
+}
+
 // ---- the three stories --------------------------------------------------------
 
 /** Play out one anomaly from a fresh table at the current level. */
 export function play(s: MvccState, raw: number | string, rec: Rec): boolean {
+  rec.vars();
   rec.line('load');
   const sc = parseScenario(raw);
   if (!sc) {
@@ -649,6 +692,7 @@ export function play(s: MvccState, raw: number | string, rec: Rec): boolean {
   const lv = levelName(s.level);
   if (sc === 'readskew') {
     load(s, 'bank');
+    loadVars(s, rec);
     rec.step(`Read skew, at ${lv}. A and B hold 50 each: 100 in all. T1 will move 30 from B to A. T2, an audit, will add up both balances while it does.`);
     const t1 = begin(s, rec)!;
     write(s, t1, 'b', 20, rec);
@@ -659,6 +703,7 @@ export function play(s: MvccState, raw: number | string, rec: Rec): boolean {
     const b = read(s, t2, 'b', rec)!;
     commit(s, t2, rec);
     rec.clearMarks();
+    rec.vars();
     rec.line('commit');
     rec.step(
       a + b === 100
@@ -669,6 +714,7 @@ export function play(s: MvccState, raw: number | string, rec: Rec): boolean {
   }
   if (sc === 'lostupdate') {
     load(s, 'bank');
+    loadVars(s, rec);
     rec.step(`Lost update, at ${lv}. A holds 50. T1 deposits 10 and T2 deposits 20, each by reading the balance, adding in the application and writing the sum back. Afterwards A should be 80.`);
     const t1 = begin(s, rec)!;
     const t2 = begin(s, rec)!;
@@ -680,6 +726,7 @@ export function play(s: MvccState, raw: number | string, rec: Rec): boolean {
     if (s.txns[t2].status === 'active') {
       commit(s, t2, rec);
       rec.clearMarks();
+      rec.vars();
       rec.line('commit');
       rec.step(
         `A = ${latest(s, 'a')}, but two deposits on 50 should make 80. T1's 10 is lost: T2 wrote a sum based on a balance that was stale by then. Fixes: SET balance = balance + 20, which works on the newest version after the wait; SELECT … FOR UPDATE; or snapshot isolation.`,
@@ -687,6 +734,7 @@ export function play(s: MvccState, raw: number | string, rec: Rec): boolean {
       return true;
     }
     rec.clearMarks();
+    rec.vars();
     rec.line('first_wins');
     rec.step(`The application catches the error and runs T2's deposit again, as a new transaction.`);
     const t3 = begin(s, rec)!;
@@ -694,11 +742,13 @@ export function play(s: MvccState, raw: number | string, rec: Rec): boolean {
     write(s, t3, 'a', r3 + 20, rec);
     commit(s, t3, rec);
     rec.clearMarks();
+    rec.vars();
     rec.line('commit');
     rec.step(`A = ${latest(s, 'a')}: both deposits count. Snapshot isolation refused the stale write rather than lose T1's, and the retry read the new balance. The price is that the application must be ready to retry.`);
     return true;
   }
   load(s, 'doctors');
+  loadVars(s, rec);
   rec.step(
     `Write skew, at ${lv}. Alice and Bob are both on call. The rule: at least one must stay on. Each feels unwell and asks to go off at the same moment. Each transaction checks the rule, then changes only its own row.`,
   );
@@ -707,6 +757,7 @@ export function play(s: MvccState, raw: number | string, rec: Rec): boolean {
   const on1 = read(s, t1, 'alice', rec)! + read(s, t1, 'bob', rec)!;
   const on2 = read(s, t2, 'alice', rec)! + read(s, t2, 'bob', rec)!;
   rec.clearMarks();
+  rec.vars();
   rec.step(`T1 counts ${on1} doctors on call and T2 counts ${on2}, so each concludes that going off still leaves someone on. Each writes only its own row.`);
   write(s, t1, 'alice', 0, rec);
   write(s, t2, 'bob', 0, rec);
@@ -714,6 +765,7 @@ export function play(s: MvccState, raw: number | string, rec: Rec): boolean {
   commit(s, t2, rec);
   const now = latest(s, 'alice') + latest(s, 'bob');
   rec.clearMarks();
+  rec.vars();
   rec.line('commit');
   rec.step(
     `Both committed, and ${now === 0 ? 'nobody is on call' : `${now} on call`}. Each wrote a different row, so no lock and no first committer wins. That is write skew. Serializable isolation stops it (see the two-phase locking and serializable snapshot isolation pages), as does SELECT … FOR UPDATE on both rows.`,

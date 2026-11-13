@@ -111,6 +111,7 @@ const BAD_REPLICA = 'There are three replicas on this page, A, B and C. Enter a,
 /** Count one increment (+1) or decrement (−1) at a replica. Returns false when the page's limit stops it. */
 export function bump(s: CrdtState, raw: number | string, which: 'p' | 'n', rec: Rec): boolean {
   const i = asReplica(raw);
+  rec.vars();
   rec.line(which === 'p' ? 'inc' : 'dec');
   if (i === null) {
     rec.step(BAD_REPLICA);
@@ -128,6 +129,7 @@ export function bump(s: CrdtState, raw: number | string, which: 'p' | 'n', rec: 
   }
   const before = vec[i];
   vec[i]++;
+  rec.vars({ self: R, [`${which}[${R}]`]: vec[i] });
   rec.count('writes');
   rec.markCell(node, i, 'key');
   rec.step(
@@ -136,6 +138,7 @@ export function bump(s: CrdtState, raw: number | string, which: 'p' | 'n', rec: 
   );
   rec.markCell(node, i, 'ok');
   rec.line('value');
+  rec.vars({ self: R, p: r.p, n: r.n, 'value()': value(r) });
   const others = s.replicas.flatMap((o, j) => (j === i ? [] : [`${NAMES[j]} still reads ${minus(value(o))}`]));
   rec.step(`${R} reads sum(P) − sum(N) = ${sumText(r)}. ${others.join(' and ')}: they find out at their next merge. 1 slot written, nothing sent.`, { probe });
   rec.clearMarks();
@@ -147,6 +150,7 @@ export function bump(s: CrdtState, raw: number | string, which: 'p' | 'n', rec: 
 /** Add an element at a replica under a new dot. Returns the dot, or null when the page's limit stops it. */
 export function add(s: CrdtState, raw: number | string, elem: number, rec: Rec): string | null {
   const i = asReplica(raw);
+  rec.vars();
   rec.line('dot');
   if (i === null) {
     rec.step(BAD_REPLICA);
@@ -170,6 +174,7 @@ export function add(s: CrdtState, raw: number | string, elem: number, rec: Rec):
   const already = r.entries.filter((e) => e.elem === elem && !e.removed).map((e) => e.dot);
   r.seq++;
   const dot = `${R}${r.seq}`;
+  rec.vars({ self: R, element: elem, seq: r.seq, dot });
   rec.step(
     `${R} adds ${elem}. It tags this add with a new dot, ${dot}: its own name and its next sequence number. No other replica can make a dot called ${dot}, so this add can always be told apart from every other add of ${elem}.`,
     { probe },
@@ -188,6 +193,7 @@ export function add(s: CrdtState, raw: number | string, elem: number, rec: Rec):
   );
   rec.mark(eid(i, dot), 'ok');
   rec.line('read');
+  rec.vars({ self: R, element: elem, dot, 'elements()': elements(r) });
   rec.step(`${R} reads ${setText(elements(r))}. 1 entry written, nothing sent, nobody asked.`, { probe: at });
   rec.clearMarks();
   return dot;
@@ -196,6 +202,7 @@ export function add(s: CrdtState, raw: number | string, elem: number, rec: Rec):
 /** Remove an element at a replica: tombstone every live dot of it that this replica has seen. Returns how many. */
 export function remove(s: CrdtState, raw: number | string, elem: number, rec: Rec): number {
   const i = asReplica(raw);
+  rec.vars();
   rec.line('scan');
   if (i === null) {
     rec.step(BAD_REPLICA);
@@ -203,6 +210,7 @@ export function remove(s: CrdtState, raw: number | string, elem: number, rec: Re
   }
   const r = s.replicas[i];
   const R = NAMES[i];
+  rec.vars({ self: R, element: elem });
   rec.step(
     `${R} removes ${elem}. An observed remove: ${R} looks through its own entries and tombstones each live dot of ${elem} it finds. Dots it has not seen are not touched.`,
     { probe: { text: String(elem), at: rid(i) } },
@@ -213,6 +221,7 @@ export function remove(s: CrdtState, raw: number | string, elem: number, rec: Re
     const probe = { text: String(elem), at: node };
     rec.mark(node, 'compare');
     rec.line('scan', 'test');
+    rec.vars({ self: R, element: elem, dot: e.dot, e: e.elem, 'dot in removed': e.removed });
     if (e.elem !== elem) {
       rec.compare(String(elem), '≠', `${e.elem} ${e.dot}`, 'not this element, keep', { probe });
       rec.unmark(node);
@@ -225,6 +234,7 @@ export function remove(s: CrdtState, raw: number | string, elem: number, rec: Re
     }
     rec.compare(String(elem), '=', `${e.elem} ${e.dot}`, `tombstone ${e.dot}`, { probe });
     e.removed = true;
+    rec.vars({ self: R, element: elem, dot: e.dot, e: e.elem, 'dot in removed': true });
     gone.push(e.dot);
     rec.count('writes');
     rec.mark(node, 'bad');
@@ -233,6 +243,7 @@ export function remove(s: CrdtState, raw: number | string, elem: number, rec: Re
     rec.unmark(node);
   }
   rec.line('read');
+  rec.vars({ self: R, element: elem, 'elements()': elements(r) });
   rec.step(
     gone.length
       ? `${R} removed ${elem}: ${plural(gone.length, 'dot')} tombstoned (${gone.join(', ')}), and ${R} reads ${setText(elements(r))}. The remove covers only these dots. An add of ${elem} at another replica that ${R} has not seen has a different dot and will survive the merge: add wins.`
@@ -276,6 +287,7 @@ function join(s: CrdtState, t: number, f: number, rec: Rec, loud: boolean): Merg
         rec.markCell(node(f), j, 'key');
         rec.markCell(node(t), j, 'compare');
         rec.line(which === 'p' ? 'max_p' : 'max_n');
+        rec.vars({ self: T, other: F, r: NAMES[j], [`other.${which}[r]`]: b, [`self.${which}[r]`]: a });
         rec.compare(`${F}: ${b}`, b > a ? '>' : b === a ? '=' : '<', `${T}: ${a}`, b > a ? `${T} takes ${b}` : b === a ? 'equal, keep' : `${T} keeps ${a}`, {
           probe,
           message:
@@ -293,6 +305,7 @@ function join(s: CrdtState, t: number, f: number, rec: Rec, loud: boolean): Merg
         if (loud) {
           rec.markCell(node(t), j, 'ok');
           rec.line(which === 'p' ? 'take_p' : 'take_n');
+          rec.vars({ self: T, other: F, r: NAMES[j], [`other.${which}[r]`]: b, [`self.${which}[r]`]: b });
           rec.step(`${T}'s ${name} becomes ${b}. ${T} now reads ${sumText(into)}.`, { probe: { text: name, at: node(t), cell: j } });
         }
       } else if (loud) rec.markCell(node(t), j, 'idle');
@@ -311,6 +324,7 @@ function join(s: CrdtState, t: number, f: number, rec: Rec, loud: boolean): Merg
       rec.mark(eid(f, e.dot), 'key');
       if (mine) rec.mark(eid(t, e.dot), 'compare');
       rec.line('has', 'gone');
+      rec.vars({ self: T, dot: e.dot, e: e.elem, 'dot in self.entries': !!mine, 'dot in other.removed': e.removed });
       const verdict = !mine ? (e.removed ? `copy it in, removed` : `copy it in`) : e.removed && !mine.removed ? `remove it at ${T} too` : mine.removed && !e.removed ? `stays removed` : 'same, keep';
       rec.compare(`${F}: ${theirs}`, ours === theirs ? '=' : '≠', `${T}: ${ours}`, verdict, {
         probe,
@@ -333,6 +347,7 @@ function join(s: CrdtState, t: number, f: number, rec: Rec, loud: boolean): Merg
         rec.unmark(eid(f, e.dot));
         if (!e.removed) rec.mark(node, 'ok');
         rec.line('copy');
+        rec.vars({ self: T, dot: e.dot, e: e.elem, 'dot in self.entries': true, 'dot in other.removed': e.removed });
         const lostHere = !e.removed && !before.includes(e.elem) && into.entries.some((x) => x.elem === e.elem && x.removed && x.dot !== e.dot);
         rec.step(
           e.removed
@@ -350,6 +365,7 @@ function join(s: CrdtState, t: number, f: number, rec: Rec, loud: boolean): Merg
       if (loud) {
         rec.mark(eid(t, e.dot), 'bad');
         rec.line('tomb_in');
+        rec.vars({ self: T, dot: e.dot, e: e.elem, 'dot in self.entries': true, 'dot in other.removed': true });
         const still = elements(into).includes(e.elem);
         rec.step(
           `${T} marks ${e.dot} removed. ` +
@@ -372,6 +388,7 @@ function join(s: CrdtState, t: number, f: number, rec: Rec, loud: boolean): Merg
 export function merge(s: CrdtState, intoRaw: number | string, fromRaw: number | string, rec: Rec): MergeResult | null {
   const t = asReplica(intoRaw);
   const f = asReplica(fromRaw);
+  rec.vars();
   rec.line('start');
   if (t === null || f === null) {
     rec.step(BAD_REPLICA);
@@ -387,6 +404,7 @@ export function merge(s: CrdtState, intoRaw: number | string, fromRaw: number | 
   const from = s.replicas[f];
   const tv = value(into);
   const fv = value(from);
+  rec.vars({ self: T, other: F });
   const ahead = (x: Replica, y: Replica) => (['p', 'n'] as const).some((w) => x[w].some((v, j) => v > y[w][j]));
   const concurrent = ahead(into, from) && ahead(from, into);
   rec.step(
@@ -396,6 +414,7 @@ export function merge(s: CrdtState, intoRaw: number | string, fromRaw: number | 
   const res = join(s, t, f, rec, true);
   rec.clearMarks();
   rec.line('value', 'read');
+  rec.vars({ self: T, other: F, 'value()': value(into), 'elements()': elements(into) });
   const changes = res.slots.length + res.copied.length + res.tombed.length;
   const same = canonical(into) === canonical(from);
   const parts: string[] = [];
@@ -414,6 +433,7 @@ export function merge(s: CrdtState, intoRaw: number | string, fromRaw: number | 
 
 /** Merge every replica into every other, in a fixed order. Returns the number of merges that changed something. */
 export function sync(s: CrdtState, rec: Rec): number {
+  rec.vars({ replicas: [...NAMES] });
   rec.line('pair');
   rec.step(`Sync: every replica merges every other one, A from B, A from C, then B, then C. 6 merges. Each is shown as one frame here; the comparisons are counted.`);
   let changed = 0;
@@ -426,6 +446,7 @@ export function sync(s: CrdtState, rec: Rec): number {
       const n = res.slots.length + res.copied.length + res.tombed.length;
       if (n) changed++;
       if (!rec.recording) continue;
+      rec.vars({ replicas: [...NAMES], a: T, b: F });
       for (const sl of res.slots) {
         const which = sl.startsWith('P') ? pid : nid;
         rec.markCell(which(t), NAMES.indexOf(sl[2] as (typeof NAMES)[number]), 'ok');
@@ -452,6 +473,7 @@ export function sync(s: CrdtState, rec: Rec): number {
     }
   }
   const r = s.replicas[0];
+  rec.vars({ replicas: [...NAMES] });
   rec.line('pair');
   rec.step(
     `All three replicas hold identical state, and all read ${minus(value(r))} and ${setText(elements(r))}. ${plural(changed, 'merge')} of 6 changed something; the rest found nothing new. The order of merges did not matter, and repeating them would change nothing.`,
@@ -463,6 +485,7 @@ export function sync(s: CrdtState, rec: Rec): number {
 export function collect(s: CrdtState, rec: Rec): number {
   const first = s.replicas[0];
   const tombs = first.entries.filter((e) => e.removed);
+  rec.vars({ first: 'A' });
   rec.line('each_tomb');
   rec.step(
     tombs.length
@@ -475,6 +498,7 @@ export function collect(s: CrdtState, rec: Rec): number {
     const probe = { text: entryName(e), at: eid(0, e.dot) };
     for (let i = 0; i < REPLICAS; i++) if (s.replicas[i].entries.some((x) => x.dot === e.dot)) rec.mark(eid(i, e.dot), 'compare');
     rec.line('stable');
+    rec.vars({ first: 'A', dot: e.dot, stable: seen === REPLICAS });
     const missing = NAMES.filter((_n, i) => !s.replicas[i].entries.some((x) => x.dot === e.dot && x.removed));
     rec.compare(`removed at ${seen}`, seen === REPLICAS ? '=' : '<', `all ${REPLICAS}`, seen === REPLICAS ? 'drop it everywhere' : `keep: ${missing.join(' and ')} not told yet`, { probe });
     if (seen === REPLICAS) {
@@ -488,6 +512,7 @@ export function collect(s: CrdtState, rec: Rec): number {
     rec.clearMarks();
   }
   if (tombs.length) {
+    rec.vars({ first: 'A' });
     rec.line('drop');
     rec.step(
       dropped

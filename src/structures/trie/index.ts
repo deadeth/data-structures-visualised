@@ -35,6 +35,8 @@ export const PREFIX_LIMIT = 8;
 const nid = (n: TNode) => `n${n.id}`;
 const eid = (a: TNode, b: TNode) => `e${a.id}-${b.id}`;
 const q = (text: string) => `"${text}"`;
+/** A node as the Variables strip shows it: the letters that lead to it, or 'root'. */
+const spelt = (text: string) => text || 'root';
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 export function create(): TrieState {
@@ -106,6 +108,7 @@ function walk(s: TrieState, word: string, rec: Rec, hitVerdict: string, missVerd
   const path = [node];
   rec.count('reads');
   rec.mark(nid(node), 'path');
+  rec.vars({ word, node: 'root' });
   rec.line('start');
   rec.step(`Start at the root, which stands for the empty string. Each step down adds one letter.`, { probe: at(0, node) });
   for (let i = 0; i < word.length; i++) {
@@ -113,6 +116,7 @@ function walk(s: TrieState, word: string, rec: Rec, hitVerdict: string, missVerd
     const child = node.kids.get(ch);
     if (!child) {
       rec.mark(nid(node), 'compare');
+      if (rec.recording) rec.vars({ word, node: spelt(word.slice(0, i)), ch, child: null });
       rec.line('lookup', 'miss');
       rec.compare(ch, '≠', rec.recording ? kidsLabel(node) : '', missVerdict(ch), { probe: at(i, node) });
       rec.mark(nid(node), 'path');
@@ -122,6 +126,7 @@ function walk(s: TrieState, word: string, rec: Rec, hitVerdict: string, missVerd
     rec.markEdge(eid(node, child), 'path');
     rec.mark(nid(child), 'compare');
     const verdict = `found child ${q(ch)}, ${hitVerdict}`;
+    if (rec.recording) rec.vars({ word, node: spelt(word.slice(0, i)), ch, child: word.slice(0, i + 1) });
     rec.line('lookup', 'down');
     rec.compare(ch, '=', child.ch, verdict, {
       probe: at(i, child),
@@ -140,12 +145,14 @@ function walk(s: TrieState, word: string, rec: Rec, hitVerdict: string, missVerd
 }
 
 export function search(s: TrieState, word: string, rec: Rec): boolean {
+  rec.vars({ word });
   if (!valid(word, rec)) return false;
   const { path, complete } = walk(s, word, rec, 'move down', (ch) => `no child for ${q(ch)}, so ${q(word)} is not stored`);
   const node = path[path.length - 1];
   const checked = path.length - 1;
   if (!complete) {
     rec.mark(nid(node), 'bad');
+    rec.vars({ word, complete });
     rec.line('missing');
     const early = checked + 1 < word.length;
     rec.step(
@@ -155,6 +162,7 @@ export function search(s: TrieState, word: string, rec: Rec): boolean {
     );
     return false;
   }
+  rec.vars({ word, complete, 'path[-1].end': node.end });
   rec.line('result');
   if (!node.end) {
     rec.mark(nid(node), 'bad');
@@ -173,6 +181,7 @@ export function search(s: TrieState, word: string, rec: Rec): boolean {
 }
 
 export function insert(s: TrieState, word: string, rec: Rec): boolean {
+  rec.vars({ word });
   if (!valid(word, rec)) return false;
   let node = s.root;
   let reused = 0;
@@ -180,6 +189,7 @@ export function insert(s: TrieState, word: string, rec: Rec): boolean {
   const at = (i: number, n: TNode): Probe | undefined => (rec.recording ? { text: bracket(word, i), at: nid(n) } : undefined);
   rec.count('reads');
   rec.mark(nid(node), 'path');
+  rec.vars({ word, node: 'root' });
   rec.line('start');
   rec.step(`Start at the root. Reuse the path for as long as it already spells the word, then add what is missing.`, { probe: at(0, node) });
   for (let i = 0; i < word.length; i++) {
@@ -191,6 +201,7 @@ export function insert(s: TrieState, word: string, rec: Rec): boolean {
       rec.count('reads');
       rec.markEdge(eid(node, child), 'path');
       rec.mark(nid(child), 'compare');
+      if (rec.recording) rec.vars({ word, node: spelt(word.slice(0, i)), ch, child: word.slice(0, i + 1) });
       rec.line('lookup', 'down');
       rec.compare(ch, '=', child.ch, `found child ${q(ch)}, reuse it`, {
         probe: at(i, child),
@@ -202,6 +213,7 @@ export function insert(s: TrieState, word: string, rec: Rec): boolean {
       rec.mark(nid(child), 'path');
     } else {
       rec.mark(nid(node), 'compare');
+      if (rec.recording) rec.vars({ word, node: spelt(word.slice(0, i)), ch, child: null });
       rec.line('lookup', 'absent');
       rec.compare(ch, '≠', rec.recording ? kidsLabel(node) : '', `no child for ${q(ch)}, so create one`, {
         probe: at(i, node),
@@ -217,6 +229,7 @@ export function insert(s: TrieState, word: string, rec: Rec): boolean {
       rec.count('writes');
       rec.markEdge(eid(node, child), 'ok');
       rec.mark(nid(child), 'ok');
+      if (rec.recording) rec.vars({ word, node: spelt(word.slice(0, i)), ch, child: word.slice(0, i + 1) });
       // The listing sets the end mark after its loop; the picture shows it as the last node appears.
       if (last) rec.line('create', 'mark_end');
       else rec.line('create');
@@ -233,6 +246,7 @@ export function insert(s: TrieState, word: string, rec: Rec): boolean {
   if (created === 0) {
     if (node.end) {
       rec.mark(nid(node), 'ok');
+      rec.vars({ word, node: word, 'node.end': true });
       rec.line('duplicate');
       rec.step(`${q(word)} is already stored. Nothing to do.`, { probe });
       return false;
@@ -241,9 +255,11 @@ export function insert(s: TrieState, word: string, rec: Rec): boolean {
     s.words++;
     rec.count('writes');
     rec.mark(nid(node), 'ok');
+    rec.vars({ word, node: word, 'node.end': true });
     rec.line('mark_end');
     rec.step(`Every letter of ${q(word)} was already on a path, so no new node is needed. Mark this node as the end of a word.`, { probe });
   }
+  rec.vars({ word, node: word, 'node.end': true });
   rec.line('done');
   rec.step(
     `${q(word)} is stored: ${plural(word.length, 'letter')} checked, ${plural(reused, 'node')} reused, ${created} created. The trie holds ${plural(s.words, 'word')} in ${plural(s.nodes, 'node')}.`,
@@ -253,22 +269,26 @@ export function insert(s: TrieState, word: string, rec: Rec): boolean {
 }
 
 export function remove(s: TrieState, word: string, rec: Rec): boolean {
+  rec.vars({ word });
   if (!valid(word, rec)) return false;
   const { path, complete } = walk(s, word, rec, 'move down', (ch) => `no child for ${q(ch)}, so ${q(word)} is not stored`);
   const node = path[path.length - 1];
   if (!complete) {
     rec.mark(nid(node), 'bad');
+    rec.vars({ word, complete });
     rec.line('missing');
     rec.step(`${q(word)} is not stored, so there is nothing to delete.`);
     return false;
   }
   if (!node.end) {
     rec.mark(nid(node), 'bad');
+    rec.vars({ word, complete, 'path[-1].end': false });
     rec.line('prefix_only');
     rec.step(`${q(word)} is a prefix of longer words but is not stored itself, so there is nothing to delete.`, { probe: { text: word, at: nid(node) } });
     return false;
   }
   rec.mark(nid(node), 'ok');
+  rec.vars({ word, complete, 'path[-1].end': true });
   rec.line('unmark');
   rec.step(`Found ${q(word)}: this node is marked as the end of a word. Clear the mark, then see which nodes are still needed.`, {
     probe: { text: word, at: nid(node) },
@@ -284,6 +304,7 @@ export function remove(s: TrieState, word: string, rec: Rec): boolean {
     const parent = path[i - 1];
     rec.mark(nid(dead), 'bad');
     rec.markEdge(eid(parent, dead), 'bad');
+    if (rec.recording) rec.vars({ word, i, node: word.slice(0, i), 'node.children': [], 'node.end': false, 'word[i - 1]': dead.ch });
     rec.line('prune');
     rec.step(
       removed === 0
@@ -299,6 +320,11 @@ export function remove(s: TrieState, word: string, rec: Rec): boolean {
   }
   const kept = path[i];
   rec.clearMarks();
+  if (rec.recording) {
+    // The loop variable keeps the node that stopped the pruning. Pruning that reaches the root leaves i at 1.
+    if (i > 0) rec.vars({ word, i, node: word.slice(0, i), 'node.children': sortedKids(kept).map((k) => k.ch), 'node.end': kept.end });
+    else rec.vars({ word });
+  }
   // Above the root, the loop stopped at a node that is still needed.
   if (i > 0) rec.line('kept', 'done');
   else rec.line('done');
@@ -324,11 +350,13 @@ export function remove(s: TrieState, word: string, rec: Rec): boolean {
 
 /** Up to PREFIX_LIMIT stored words that start with `pre`, in alphabetical order. */
 export function prefix(s: TrieState, pre: string, rec: Rec): string[] {
+  rec.vars({ prefix: pre });
   if (!valid(pre, rec)) return [];
   const { path, complete } = walk(s, pre, rec, 'move down', (ch) => `no child for ${q(ch)}, so no word starts with ${q(pre)}`);
   const top = path[path.length - 1];
   if (!complete) {
     rec.mark(nid(top), 'bad');
+    rec.vars({ prefix: pre, complete });
     rec.line('none');
     rec.step(`No stored word starts with ${q(pre)}. The walk stopped at letter ${path.length} of ${pre.length}, so no subtree was read.`);
     return [];
@@ -350,6 +378,7 @@ export function prefix(s: TrieState, pre: string, rec: Rec): string[] {
       const probe = { text, at: nid(node) };
       rec.mark(nid(node), node.end ? 'ok' : 'path');
       const collect = `Collect it, ${out.length} of up to ${PREFIX_LIMIT}.`;
+      rec.vars({ prefix: pre, text, 'node.end': node.end, out: [...out], stack: stack.map((e) => e.text) });
       rec.line(node.end ? 'collect' : 'visit');
       if (!parent) {
         rec.step(
@@ -370,6 +399,7 @@ export function prefix(s: TrieState, pre: string, rec: Rec): string[] {
     const kids = sortedKids(node);
     for (let i = kids.length - 1; i >= 0; i--) stack.push({ node: kids[i], text: text + kids[i].ch, parent: node });
   }
+  if (rec.recording) rec.vars({ prefix: pre, out: [...out] });
   if (out.length === PREFIX_LIMIT) rec.line('limit', 'done');
   else rec.line('done');
   rec.step(

@@ -1,7 +1,7 @@
 import { LABEL_MAX, PROBE_H, SUB_ROOM } from '../../core/fit';
 import { CELL_H, cellWidth, cellsWidth } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
-import type { Cell, Decor, Probe, Rec, Scene, SceneNode, StructureDef } from '../../core/types';
+import type { Cell, Decor, Probe, Rec, Scene, SceneNode, StructureDef, VarValue } from '../../core/types';
 import java from './code/Partitioning.java?raw';
 import python from './code/partitioning.py?raw';
 import { info } from './info';
@@ -183,19 +183,28 @@ const at = (text: string, id: string, cell = 0): Probe => ({ text, at: id, cell 
  * Follow a key to its partition, recording each comparison. With `brief`, only
  * the comparison that decides is drawn; the others still count.
  */
-function route(s: PState, key: number, rec: Rec, opts: { text?: string; brief?: boolean; lead?: string[]; what?: string } = {}): PartView {
+function route(
+  s: PState,
+  key: number,
+  rec: Rec,
+  opts: { text?: string; brief?: boolean; lead?: string[]; what?: string; outer?: Record<string, VarValue> } = {},
+): PartView {
   const text = opts.text ?? String(key);
   const lead = opts.lead ?? ['route'];
   const what = opts.what ?? String(key);
+  // The caller's variables stay on show, then route's own.
+  const outer = opts.outer ?? {};
   const vs = views(s);
   if (s.scheme === 'hash') {
     const h = hashKey(key);
     const v = vs[h % vs.length];
+    rec.vars({ ...outer, key, h });
     if (!opts.brief) {
       rec.line(...lead, 'hash');
       rec.step(`Hash the key: h(${key}) = (37 × ${key} + 11) mod 100 = ${h}. The hash says nothing about order: ${key} and ${key + 1 > MAX_KEY ? key - 1 : key + 1} land far apart.`);
     }
     rec.mark(dId(v), 'compare');
+    rec.vars({ ...outer, key, h, 'len(parts)': vs.length, 'h % len(parts)': h % vs.length });
     rec.line(...lead, 'mod');
     rec.compare(`h(${what}) = ${h}, mod ${vs.length}`, '=', h % vs.length, `${v.label}, on node ${nodeName(v.node)}`, {
       probe: at(text, dId(v)),
@@ -208,6 +217,7 @@ function route(s: PState, key: number, rec: Rec, opts: { text?: string; brief?: 
     const v = vs[i];
     const next = vs[i + 1].lo!;
     const probe = at(text, dId(v));
+    rec.vars({ ...outer, key, i, 'parts[i + 1].lo': next });
     rec.line(...lead, 'boundary');
     if (key < next) {
       rec.mark(dId(v), 'compare');
@@ -231,6 +241,7 @@ function route(s: PState, key: number, rec: Rec, opts: { text?: string; brief?: 
   }
   const v = vs[vs.length - 1];
   rec.mark(dId(v), 'compare');
+  rec.vars({ ...outer, key, 'len(parts)': vs.length });
   rec.line(...lead, 'last');
   rec.step(`No boundary is left, so ${what} belongs to the last partition, ${v.label} (${rangeText(v)}), on node ${nodeName(v.node)}.`, { probe: at(text, dId(v)) });
   rec.unmark(dId(v));
@@ -238,7 +249,7 @@ function route(s: PState, key: number, rec: Rec, opts: { text?: string; brief?: 
 }
 
 /** Follow a city to the global index partition that owns it. */
-function routeTerm(city: string, rec: Rec, text: string, left: string, lead: string[], brief = false): number {
+function routeTerm(city: string, rec: Rec, text: string, left: string, lead: string[], brief = false, outer: Record<string, VarValue> = {}): number {
   for (let i = 0; i < TERM_STARTS.length - 1; i++) {
     const next = TERM_STARTS[i + 1];
     const less = city < next;
@@ -246,6 +257,7 @@ function routeTerm(city: string, rec: Rec, text: string, left: string, lead: str
       rec.count('comparisons');
       continue;
     }
+    rec.vars({ ...outer, city, i, 'terms[i + 1]': next });
     rec.mark(gId(i), 'compare');
     rec.line(...lead, 'term_cmp');
     rec.compare(left, less ? '<' : '≥', `"${next}"`, less ? `index partition ${TERM_LABELS[i]}, on node ${nodeName(i)}` : `not ${TERM_LABELS[i]}, keep going`, {
@@ -262,6 +274,7 @@ function routeTerm(city: string, rec: Rec, text: string, left: string, lead: str
   }
   const g = TERM_STARTS.length - 1;
   rec.mark(gId(g), 'compare');
+  rec.vars({ ...outer, city, 'len(terms) - 1': g });
   rec.line(...lead, 'term_last');
   rec.step(`No boundary is left, so ${city} belongs to the last index partition, ${TERM_LABELS[g]}, on node ${nodeName(g)}.`, { probe: at(text, gId(g)) });
   rec.unmark(gId(g));
@@ -281,9 +294,18 @@ function checkKey(key: number, rec: Rec): boolean {
  * the write and its index entry, for runs of writes. Returns the partition
  * written to, or null when nothing was written.
  */
-function putRow(s: PState, key: number, city: string, rec: Rec, brief: boolean, lead: string[] = []): PartView | null {
+function putRow(
+  s: PState,
+  key: number,
+  city: string,
+  rec: Rec,
+  brief: boolean,
+  lead: string[] = [],
+  outer: Record<string, VarValue> = {},
+): PartView | null {
   const text = String(key);
-  const v = route(s, key, rec, { brief, lead: [...lead, 'route'] });
+  const v = route(s, key, rec, { brief, lead: [...lead, 'route'], outer: { ...outer, key, city } });
+  rec.vars({ ...outer, key, city, part: v.label });
   if (s.rows.has(key)) {
     rec.markCell(dId(v), keyCell(v, key), 'key');
     rec.line(...lead, 'exists');
@@ -313,6 +335,7 @@ function putRow(s: PState, key: number, city: string, rec: Rec, brief: boolean, 
   const w = partOf(s, key);
   const cell = keyCell(w, key);
   rec.markCell(dId(w), cell, 'key');
+  rec.vars({ ...outer, key, city, part: w.label });
 
   if (s.index === 'local') {
     const lc = localCell(s, w, city);
@@ -336,7 +359,8 @@ function putRow(s: PState, key: number, city: string, rec: Rec, brief: boolean, 
     rec.line(...lead, 'write');
     rec.step(`Node ${nodeName(w.node)} writes row ${key} (${city}) into ${w.label}. The global index entry for ${city} may live on a different node, so it is a second write.`, { probe: at(text, dId(w), cell) });
   }
-  const g = routeTerm(city, rec, text, `${key}: ${city}`, [...lead, 'term'], brief);
+  const g = routeTerm(city, rec, text, `${key}: ${city}`, [...lead, 'term'], brief, { ...outer, key });
+  rec.vars({ ...outer, key, city, part: w.label, g });
   const gc = globalCell(s, g, city);
   rec.markCell(gId(g), gc, 'ok');
   rec.count('writes');
@@ -354,6 +378,7 @@ function putRow(s: PState, key: number, city: string, rec: Rec, brief: boolean, 
 
 export function put(s: PState, key: number, rawCity: number | string, rec: Rec): boolean {
   const city = asCity(rawCity);
+  rec.vars({ key, city: city ?? String(rawCity) });
   rec.line('route');
   if (!checkKey(key, rec)) return false;
   if (!city) {
@@ -375,12 +400,14 @@ export function put(s: PState, key: number, rawCity: number | string, rec: Rec):
 // ---- get --------------------------------------------------------------------
 
 export function get(s: PState, key: number, rec: Rec): string | null {
+  rec.vars({ key });
   rec.line('route');
   if (!checkKey(key, rec)) return null;
   const v = route(s, key, rec);
   rec.count('asked');
   rec.line('lookup');
   const city = s.rows.get(key);
+  rec.vars({ key, part: v.label, 'part.rows.get(key)': city ?? null });
   if (city === undefined) {
     rec.mark(dId(v), 'bad');
     rec.step(`${v.label} has no row with key ${key}. The answer is still certain: no other partition could hold it, so 1 partition was asked and the rest never heard of this read.`, { probe: at(String(key), dId(v)) });
@@ -407,6 +434,7 @@ function switchScheme(s: PState, scheme: Scheme): string {
 /** Every row with lo ≤ key ≤ hi, in key order. */
 export function scan(s: PState, a: number, b: number, rawScheme: number | string | undefined, rec: Rec): number[] {
   const scheme = asScheme(rawScheme, s);
+  rec.vars({ lo: Math.min(a, b), hi: Math.max(a, b) });
   rec.line('first');
   if (!checkKey(a, rec) || !checkKey(b, rec)) return [];
   if (!scheme) {
@@ -420,6 +448,7 @@ export function scan(s: PState, a: number, b: number, rawScheme: number | string
   const found: number[] = [];
 
   if (scheme === 'hash') {
+    rec.vars({ lo, hi, found: [] });
     rec.line('scatter');
     const vs = views(s);
     rec.step(`${lead}Scan keys ${lo} to ${hi}. Hashing scatters neighbouring keys, so any of the ${vs.length} partitions could hold one. The only way to be sure is to ask every partition: scatter, then gather.`);
@@ -429,6 +458,7 @@ export function scan(s: PState, a: number, b: number, rawScheme: number | string
       rec.mark(dId(v), 'path');
       for (const k of hits) rec.markCell(dId(v), keyCell(v, k), 'ok');
       found.push(...hits);
+      rec.vars({ lo, hi, part: v.label, found: [...found] });
       rec.step(
         hits.length
           ? `Ask ${v.label} on node ${nodeName(v.node)}: it has ${list(hits)}.`
@@ -437,6 +467,7 @@ export function scan(s: PState, a: number, b: number, rawScheme: number | string
       );
     }
     found.sort((x, y) => x - y);
+    rec.vars({ lo, hi, found: [...found] });
     rec.line('gather');
     rec.step(
       `Gather and sort: ${found.length ? list(found) : 'no rows'}. ${vs.length} partitions asked for ${plural(found.length, 'row')}. The slowest of the ${vs.length} sets the response time, and every scan loads every node.`,
@@ -447,7 +478,7 @@ export function scan(s: PState, a: number, b: number, rawScheme: number | string
   if (lead) {
     rec.step(`${lead}Scan keys ${lo} to ${hi}. Rows are kept in key order across the partitions, so first find the one that holds ${lo}.`);
   }
-  const first = route(s, lo, rec, { text, lead: ['first'], what: `lo ${lo}` });
+  const first = route(s, lo, rec, { text, lead: ['first'], what: `lo ${lo}`, outer: { lo, hi } });
   const vs = views(s);
   let i = first.order;
   for (;;) {
@@ -457,6 +488,7 @@ export function scan(s: PState, a: number, b: number, rawScheme: number | string
     rec.mark(dId(v), 'path');
     for (const k of hits) rec.markCell(dId(v), keyCell(v, k), 'ok');
     found.push(...hits);
+    rec.vars({ lo, hi, i, part: v.label, found: [...found] });
     rec.line('collect');
     rec.step(
       hits.length
@@ -467,6 +499,7 @@ export function scan(s: PState, a: number, b: number, rawScheme: number | string
     i++;
     if (i >= vs.length) break;
     const next = vs[i];
+    rec.vars({ lo, hi, i, 'parts[i].lo': next.lo, found: [...found] });
     rec.line('next_part');
     if (next.lo! > hi) {
       rec.compare(`hi ${hi}`, '<', `${next.label} lo ${next.lo}`, `stop: ${next.label} starts past the scan`, { probe: at(text, dId(next)) });
@@ -476,6 +509,7 @@ export function scan(s: PState, a: number, b: number, rawScheme: number | string
   }
   for (const v of vs) if (v.order < first.order || v.order >= i) rec.mark(dId(v), 'dim');
   const asked = i - first.order;
+  rec.vars({ lo, hi, found: [...found] });
   rec.line('done_scan');
   rec.step(
     `Found ${found.length ? list(found) : 'no rows'} by asking ${plural(asked, 'adjacent partition')} of ${vs.length}. The others never heard of this scan. This is what range partitioning buys.`,
@@ -487,6 +521,7 @@ export function scan(s: PState, a: number, b: number, rawScheme: number | string
 
 function findLocal(s: PState, city: string, rec: Rec, lead: string): number[] {
   const vs = views(s);
+  rec.vars({ city, found: [] });
   rec.line('ask_local');
   rec.step(`${lead}Find rows in ${city} with local indexes. Each partition indexes only its own rows, so a row in ${city} could be in any of them: ask all ${vs.length}.`);
   const found: number[] = [];
@@ -494,6 +529,7 @@ function findLocal(s: PState, city: string, rec: Rec, lead: string): number[] {
     rec.count('asked');
     const hits = keysWith(s, city, v.keys);
     const lc = localCell(s, v, city);
+    rec.vars({ city, part: v.label, 'part.index[city]': hits, found: [...found, ...hits] });
     if (hits.length) {
       rec.markCell(lId(v), lc, 'ok');
       for (const k of hits) rec.markCell(dId(v), keyCell(v, k), 'ok');
@@ -505,17 +541,20 @@ function findLocal(s: PState, city: string, rec: Rec, lead: string): number[] {
     }
   }
   found.sort((x, y) => x - y);
+  rec.vars({ city, found: [...found] });
   rec.line('merge');
   rec.step(`Merge the answers: ${found.length ? list(found) : 'no rows'}. ${vs.length} partitions asked for ${plural(found.length, 'row')}. Elasticsearch searches its shards this way.`);
   return found;
 }
 
 function findGlobal(s: PState, city: string, rec: Rec, lead: string): number[] {
+  rec.vars({ city });
   rec.line('term');
   rec.step(`${lead}Find rows in ${city} with the global index. It is partitioned by city, so every ${city} entry is in one index partition. Work out which.`);
   const g = routeTerm(city, rec, city, city, ['term']);
   rec.count('asked');
   const hits = keysWith(s, city);
+  rec.vars({ city, g, 'glob[g][city]': hits });
   rec.line('postings');
   if (!hits.length) {
     rec.mark(gId(g), 'path');
@@ -541,6 +580,7 @@ function findGlobal(s: PState, city: string, rec: Rec, lead: string): number[] {
 export function find(s: PState, rawCity: number | string, rawVia: number | string | undefined, rec: Rec): number[] {
   const city = asCity(rawCity);
   const via = asVia(rawVia, s);
+  rec.vars({ city: city ?? String(rawCity) });
   rec.line('ask_local');
   if (!city) {
     rec.step(`The cities on this page are ${list([...CITIES])}. Enter one of them.`);
@@ -579,6 +619,7 @@ function markWritten(s: PState, keys: number[], rec: Rec): void {
 
 /** Sequential keys from `start`, then (range only) the same writes with a sensor number in front. */
 export function hot(s: PState, start: number, rec: Rec): number {
+  rec.vars({ start });
   rec.line('sequential');
   if (!Number.isInteger(start) || start < 0 || start + HOT_RUN - 1 > MAX_KEY) {
     rec.step(`Start the run between 0 and ${MAX_KEY - HOT_RUN + 1}, so ${HOT_RUN} keys fit below ${MAX_KEY + 1}.`);
@@ -592,7 +633,7 @@ export function hot(s: PState, start: number, rec: Rec): number {
   const done: number[] = [];
   let written = 0;
   for (const t of run) {
-    const v = putRow(s, t, CITIES[t % 3], rec, true, ['sequential']);
+    const v = putRow(s, t, CITIES[t % 3], rec, true, ['sequential'], { start, t });
     if (v) {
       written++;
       done.push(t);
@@ -602,6 +643,7 @@ export function hot(s: PState, start: number, rec: Rec): number {
   }
   const vs = views(s);
   const nodesHit = new Set(vs.filter((v) => hit.has(v.label)).map((v) => v.node));
+  rec.vars({ start });
   if (s.scheme === 'hash') {
     rec.line('sequential');
     rec.step(
@@ -622,6 +664,7 @@ export function hot(s: PState, start: number, rec: Rec): number {
 
   const time = (start + HOT_RUN) % 100;
   const keys = SENSORS.map((sensor) => sensor * 100 + time);
+  rec.vars({ time, sensors: [...SENSORS] });
   rec.line('prefix');
   rec.step(
     `The fix: lead the key with something that varies, such as the sensor that sent the event. Here the hundreds digit is the sensor and the last two digits the time, so sensors ${list([...SENSORS])} writing at time ${String(time).padStart(2, '0')} give keys ${list(keys)}.`,
@@ -630,7 +673,7 @@ export function hot(s: PState, start: number, rec: Rec): number {
   const spreadNodes = new Set<number>();
   const fixed: number[] = [];
   for (let i = 0; i < keys.length; i++) {
-    const v = putRow(s, keys[i], CITIES[i], rec, true, ['prefix', 'spread']);
+    const v = putRow(s, keys[i], CITIES[i], rec, true, ['prefix', 'spread'], { time, sensor: SENSORS[i] });
     if (v) {
       written++;
       fixed.push(keys[i]);
@@ -639,6 +682,7 @@ export function hot(s: PState, start: number, rec: Rec): number {
     }
     markWritten(s, fixed, rec);
   }
+  rec.vars({ time, sensors: [...SENSORS] });
   rec.line('spread');
   rec.step(
     `${plural(keys.length, 'write')} at the same moment went to ${plural(spread.size, 'partition')} on ${plural(spreadNodes.size, 'node')}. The price: reading one time window now takes one scan per sensor, ${SENSORS.length} here, each still cheap and in key order.`,
@@ -661,6 +705,7 @@ function splitRange(s: PState, rec: Rec, joined: string): boolean {
   for (const v of vs) if (v.keys.length > full.keys.length) full = v;
   const total = s.rows.size;
   rec.mark(dId(full), 'compare');
+  rec.vars({ part: full.label, 'len(part.rows)': full.keys.length });
   rec.line('split_call', 'fullest');
   if (full.keys.length < SPLIT_MIN) {
     rec.step(`${joined}The fullest partition, ${full.label}, holds ${plural(full.keys.length, 'row')}. That is under ${SPLIT_MIN}, too few to be worth splitting, so nothing changes.`, { probe: at(full.label, dId(full)) });
@@ -677,6 +722,7 @@ function splitRange(s: PState, rec: Rec, joined: string): boolean {
   const load = rangeLoad(s);
   const target = load.indexOf(Math.min(...load));
   rec.mark(nId(target), 'path');
+  rec.vars({ part: full.label, 'len(part.rows)': full.keys.length, load, node: target });
   rec.line('pick_node');
   rec.step(
     `Pick a node for the new half: the one holding the fewest rows. Rows per node: ${load.map((n, i) => `${nodeName(i)} ${n}`).join(', ')}. That is node ${nodeName(target)}.`,
@@ -686,6 +732,7 @@ function splitRange(s: PState, rec: Rec, joined: string): boolean {
   const mid = full.keys[Math.floor(full.keys.length / 2)];
   const upper = full.keys.filter((k) => k >= mid);
   rec.markCell(dId(full), keyCell(full, mid), 'compare');
+  rec.vars({ part: full.label, node: target, keys: full.keys, mid });
   rec.line('median');
   rec.step(`Its median key is ${mid}. Rows from ${mid} up, ${list(upper)}, form a new partition, so the two halves end up about the same size.`, { probe: at(full.label, dId(full), keyCell(full, mid)) });
 
@@ -698,6 +745,7 @@ function splitRange(s: PState, rec: Rec, joined: string): boolean {
   const nv = views(s, 'range').find((v) => v.pid === `r${id}`)!;
   const old = views(s, 'range').find((v) => v.pid === full.pid)!;
   rec.mark(dId(nv), 'ok');
+  rec.vars({ part: old.label, node: target, mid, new: nv.label, 'new.rows': nv.keys });
   rec.line('new_part', 'move');
   rec.step(
     moved
@@ -706,6 +754,7 @@ function splitRange(s: PState, rec: Rec, joined: string): boolean {
     { probe: at(`P${id}`, dId(nv)) },
   );
 
+  rec.vars({ part: old.label, node: target, mid, new: nv.label });
   rec.line('done_split');
   rec.step(
     `Split done: ${old.label} holds ${plural(old.keys.length, 'row')} and P${id} holds ${nv.keys.length}. ${moved ? `${plural(moved, 'row')} moved` : 'No rows moved'}; every other partition was untouched, and the global index needs no change because row keys did not change. HBase and MongoDB split ranges like this as they grow.`,
@@ -724,6 +773,7 @@ function moveHash(s: PState, rec: Rec, joined: string): number {
     for (const n of s.hash.owner) count[n]++;
     const busy = count.indexOf(Math.max(...count));
     const idle = count.indexOf(Math.min(...count));
+    rec.vars({ moved: movedParts, count, busy, idle });
     rec.line(...(first ? ['move_call'] : []), 'balanced');
     const tally = count.map((n, i) => `${nodeName(i)} ${n}`).join(', ');
     if (count[busy] - count[idle] <= 1) {
@@ -743,6 +793,7 @@ function moveHash(s: PState, rec: Rec, joined: string): number {
     rec.count('moved', v.keys.length);
     rec.unmark(dId(v));
     rec.mark(dId(v), 'ok');
+    rec.vars({ moved: movedParts, count, busy, idle, 'mine[-1]': v.label });
     rec.line('steal');
     rec.step(
       `${v.label} moves to node ${nodeName(idle)} whole: ${plural(v.keys.length, 'row')} and their local index entries, copied as one block. No key is rehashed: h(key) mod ${P} is the same as before, only the owner of ${v.label} changed.`,
@@ -753,6 +804,7 @@ function moveHash(s: PState, rec: Rec, joined: string): number {
   if (movedParts) {
     const was = s.hash.nodes - 1;
     const modN = [...s.rows.keys()].filter((k) => hashKey(k) % was !== hashKey(k) % s.hash.nodes).length;
+    rec.vars({ moved: movedParts });
     rec.line('balanced');
     rec.step(
       `Moved ${plural(movedParts, 'partition')} of ${P}, ${plural(movedRows, 'row')} of ${total}. Had rows been placed by h(key) mod number of nodes, going from ${was} to ${s.hash.nodes} would have moved ${modN} of ${total}. Riak, Couchbase and Elasticsearch fix the partition count up front for this reason.`,
@@ -764,6 +816,7 @@ function moveHash(s: PState, rec: Rec, joined: string): number {
 export function rebalance(s: PState, rec: Rec): boolean {
   const nodes = nodeCount(s);
   const join = nodes < MAX_NODES;
+  rec.vars({ join, nodes: join ? nodes + 1 : nodes });
   rec.line('join');
   let joined: string;
   if (join) {

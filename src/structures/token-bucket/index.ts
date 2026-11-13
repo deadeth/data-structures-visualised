@@ -1,7 +1,7 @@
 import { LABEL_CHAR_W, LABEL_LINE, LABEL_MAX, PROBE_H, SUB_ROOM } from '../../core/fit';
 import { CELL_GAP, CELL_H, TAG_H, TRAY_PAD } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
-import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef, Tone } from '../../core/types';
+import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef, Tone, VarValue } from '../../core/types';
 import java from './code/TokenBucket.java?raw';
 import python from './code/token_bucket.py?raw';
 import { info } from './info';
@@ -92,8 +92,15 @@ function markCells(rec: Rec, from: number, to: number, tone: Tone): void {
  * tokens with the cost. `inBurst` keeps the frames short for requests that
  * share a tick, and leaves out the Retry-After line the burst listing lacks.
  */
-function decide(s: BucketState, r: Req, rec: Rec, inBurst: boolean): boolean {
+function decide(s: BucketState, r: Req, rec: Rec, inBurst: boolean, outer?: { count: number; allowed: number }): boolean {
   const name = label(r);
+  // The listing's variables. Inside a burst, the loop's own come first and now and last are left out for room.
+  const show = (more: Record<string, VarValue> = {}) =>
+    rec.vars(
+      outer
+        ? { count: outer.count, allowed: outer.allowed, cost: r.cost, tokens: s.tokens, ...more }
+        : { cost: r.cost, tokens: s.tokens, now: s.now, last: s.last, ...more },
+    );
   const atReq: Probe = { text: name, at: rid(r) };
   const atSlot = (cell: number): Probe => ({ text: name, at: BUCKET, cell: Math.max(0, Math.min(s.capacity - 1, cell)) });
   const lead = inBurst ? ['send'] : [];
@@ -101,11 +108,13 @@ function decide(s: BucketState, r: Req, rec: Rec, inBurst: boolean): boolean {
   rec.mark(rid(r), 'key');
 
   // ---- lazy refill ----------------------------------------------------------
+  show();
   if (elapsed === 0) {
     if (!inBurst) {
       rec.line('arrive');
       rec.step(`${name} arrives at tick ${s.now} and asks for ${tok(r.cost)}. Before deciding, the bucket is brought up to date.`, { probe: atReq });
     }
+    show({ elapsed });
     rec.line(...lead, 'refill', 'elapsed', 'no_time');
     rec.step(
       (inBurst ? `${name} arrives in the same tick and asks for ${tok(r.cost)}. ` : ``) +
@@ -122,6 +131,7 @@ function decide(s: BucketState, r: Req, rec: Rec, inBurst: boolean): boolean {
     const sum = s.tokens + earned;
     const before = s.tokens;
     for (let t = s.last + 1; t <= s.now; t++) rec.mark(tid(t), 'path');
+    show({ elapsed, earned });
     rec.line('refill', 'elapsed', 'earned');
     rec.step(
       `elapsed = now − last = ${s.now} − ${s.last} = ${ticks(elapsed)}. earned = ${elapsed} × ${s.rate} = ${tok(earned)}. No timer added them as the ticks went by. One subtraction and one multiplication work it out now.`,
@@ -144,6 +154,7 @@ function decide(s: BucketState, r: Req, rec: Rec, inBurst: boolean): boolean {
     rec.unmark(BUCKET);
     markCells(rec, before, s.tokens, 'ok');
     for (let t = 0; t <= elapsed; t++) rec.unmark(tid(s.now - t));
+    show({ elapsed, earned });
     rec.line('cap', 'stamp');
     rec.step(
       `Write tokens = ${s.tokens} and move last to tick ${s.now}. The bucket is up to date, and the next refill will count from here.`,
@@ -156,6 +167,7 @@ function decide(s: BucketState, r: Req, rec: Rec, inBurst: boolean): boolean {
   const enough = s.tokens >= r.cost;
   if (enough) markCells(rec, s.tokens - r.cost, s.tokens, 'compare');
   else markCells(rec, 0, s.tokens, 'compare');
+  show();
   rec.line('test');
   rec.compare(`tokens ${s.tokens}`, enough ? '≥' : '<', `cost ${r.cost}`, enough ? `allow, take ${r.cost}` : `reject, ${r.cost - s.tokens} short`, {
     probe: atSlot(s.tokens - 1),
@@ -172,6 +184,7 @@ function decide(s: BucketState, r: Req, rec: Rec, inBurst: boolean): boolean {
     s.allowed++;
     rec.count('allowed');
     // The spent slots are simply empty again: an allowed request is not a failure, so no red here.
+    show();
     rec.line('take');
     rec.step(
       `Take ${tok(r.cost)}, leaving ${s.tokens}. ${name} is allowed at once: it never waited in a queue.` + (inBurst ? `` : ` Cost: two comparisons at most.`),
@@ -190,6 +203,7 @@ function decide(s: BucketState, r: Req, rec: Rec, inBurst: boolean): boolean {
     return false;
   }
   const wait = retryAfter(s, r.cost);
+  rec.vars(wait === null ? { cost: r.cost, capacity: s.capacity } : { cost: r.cost, tokens: s.tokens, short: r.cost - s.tokens, wait });
   rec.line('reject', 'retry');
   rec.step(
     wait === null
@@ -210,13 +224,15 @@ export function burst(s: BucketState, count: number, rec: Rec): number {
   const batch: Req[] = [];
   for (let i = 0; i < count; i++) batch.push(arrive(s, 1));
   const could = available(s);
+  rec.vars({ count, allowed: 0 });
   rec.line('next');
   rec.step(
     `${count} requests arrive in the same tick, ${label(batch[0])} to ${label(batch[count - 1])}, each asking for 1 token. They are decided one at a time, in order. No time passes between them, so only tokens that are already earned can pay for them.`,
   );
   let allowed = 0;
-  for (const r of batch) if (decide(s, r, rec, true)) allowed++;
+  for (const r of batch) if (decide(s, r, rec, true, { count, allowed })) allowed++;
   const turned = count - allowed;
+  rec.vars({ count, allowed });
   rec.line('done');
   rec.step(
     `Burst of ${count}: ${allowed} allowed, ${turned} rejected. ` +
@@ -229,6 +245,7 @@ export function burst(s: BucketState, count: number, rec: Rec): number {
 
 /** Advance the clock. The bucket is not touched. Returns false only at the page's clock limit. */
 export function tick(s: BucketState, k: number, rec: Rec): boolean {
+  rec.vars({ ticks: k, now: s.now });
   rec.line('tick');
   if (s.now + k > MAX_TICK) {
     rec.step(`Sorry, this page's clock stops at tick ${MAX_TICK} so the numbers stay readable, and it reads ${s.now}. Use Reset bucket to start again from tick 0. A real limiter reads the system clock, which has no such limit.`);
@@ -237,6 +254,7 @@ export function tick(s: BucketState, k: number, rec: Rec): boolean {
   const from = s.now;
   s.now += k;
   for (let t = from + 1; t <= s.now; t++) rec.mark(tid(t), 'path');
+  rec.vars({ ticks: k, now: s.now, tokens: s.tokens, last: s.last });
   const owed = available(s) - s.tokens;
   const spare = s.capacity - s.tokens;
   rec.step(
@@ -257,6 +275,7 @@ export function reset(s: BucketState, rec: Rec): void {
   s.requests = [];
   s.allowed = 0;
   s.rejected = 0;
+  rec.vars({ tokens: s.tokens, now: s.now, last: s.last });
   rec.line('reset');
   rec.step(`Reset: the bucket is full again with ${tok(s.capacity)}, and the clock and last are back at tick 0. A new bucket starts full, so a new client gets its burst straight away.`);
 }

@@ -90,6 +90,8 @@ const tid = (n: SNode, i: number) => `t:${col(n)}:${i + 1}`;
 const nilId = (i: number) => `nil:${i + 1}`;
 
 const name = (n: SNode | null) => (n === null ? 'nil' : n.key < 0 ? 'the head' : String(n.key));
+/** A node as the Variables strip shows it: its key, 'head' for the sentinel, null for nil. */
+const val = (n: SNode | null | undefined) => (n == null ? null : n.key < 0 ? 'head' : n.key);
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** Where a missing key would sit on the bottom level. */
@@ -128,10 +130,17 @@ function descend(s: SkipState, key: number, rec: Rec, mode: Mode): Walk {
   let comparisons = 0;
   /** The node that sent the walk down a level. The level below often leads to it again. */
   let over: SNode | null = null;
+  /** The listing's update list: insert starts it full of the head, delete full of None. Search has none. */
+  const updates = () =>
+    mode === 'search'
+      ? undefined
+      : Array.from({ length: mode === 'insert' ? s.maxLevel : s.level }, (_, j) => (update[j] ? val(update[j]) : mode === 'insert' ? 'head' : null));
+  const watch = (i: number, nxt: SNode | null) => rec.vars({ key, i, node: val(x), 'node.next[i]': val(nxt), update: updates() });
 
   rec.count('reads');
   if (rec.recording) {
     const top = s.level - 1;
+    rec.vars({ key, node: val(x), update: updates() });
     rec.mark(bid(x, top), 'path');
     rec.line('start');
     rec.step(
@@ -148,6 +157,7 @@ function descend(s: SkipState, key: number, rec: Rec, mode: Mode): Walk {
       const nxt = x.next[i];
       if (nxt === null) {
         if (rec.recording) {
+          watch(i, nxt);
           rec.line(i > 0 ? 'down' : 'bottom');
           rec.step(
             i > 0
@@ -179,6 +189,7 @@ function descend(s: SkipState, key: number, rec: Rec, mode: Mode): Walk {
 
       const on = bid(nxt, i);
       const probe = { text, at: on };
+      watch(i, nxt);
       rec.mark(on, 'compare');
       if (nxt.key < key) {
         rec.line('right');
@@ -270,6 +281,7 @@ function descend(s: SkipState, key: number, rec: Rec, mode: Mode): Walk {
 // ---- operations ------------------------------------------------------------
 
 export function search(s: SkipState, key: number, rec: Rec): boolean {
+  rec.vars();
   const w = descend(s, key, rec, 'search');
   if (!rec.recording) return w.hit !== null;
   if (w.hit) {
@@ -281,6 +293,7 @@ export function search(s: SkipState, key: number, rec: Rec): boolean {
       if (n === node) break;
     }
     const cost = plural(w.comparisons, 'comparison');
+    rec.vars({ key, i: w.hitLevel, node: val(w.update[w.hitLevel]), 'node.next[i]': val(node) });
     rec.line('found');
     rec.step(
       w.comparisons < rank
@@ -292,6 +305,7 @@ export function search(s: SkipState, key: number, rec: Rec): boolean {
   }
   const pred = w.update[0];
   rec.markEdge(pid(pred, 0), 'bad');
+  rec.vars({ key, i: 0, node: val(pred), 'node.next[i]': val(pred.next[0]) });
   rec.line('miss');
   rec.step(
     s.size === 0
@@ -302,6 +316,7 @@ export function search(s: SkipState, key: number, rec: Rec): boolean {
 }
 
 export function insert(s: SkipState, key: number, rec: Rec): boolean {
+  rec.vars();
   const w = descend(s, key, rec, 'insert');
   if (w.hit) {
     rec.line('duplicate');
@@ -313,6 +328,7 @@ export function insert(s: SkipState, key: number, rec: Rec): boolean {
 
   if (rec.recording) {
     s.pending = { key, height: 1 };
+    rec.vars({ key, update: Array.from({ length: s.maxLevel }, (_, j) => (w.update[j] ? val(w.update[j]) : 'head')) });
     rec.line('place');
     rec.step(
       `${key} belongs ${gap(w.update[0], w.update[0].next[0])}. The last node visited on each level is remembered: its pointer changes if the coin flips take the tower that high.`,
@@ -325,6 +341,7 @@ export function insert(s: SkipState, key: number, rec: Rec): boolean {
   while (h < s.maxLevel) {
     if (s.rnd() >= P) {
       if (rec.recording) {
+        rec.vars({ height: h });
         rec.line('tails');
         rec.step(
           h === 1
@@ -338,6 +355,7 @@ export function insert(s: SkipState, key: number, rec: Rec): boolean {
     h++;
     if (rec.recording) {
       s.pending!.height = h;
+      rec.vars({ height: h });
       rec.line('heads');
       rec.step(
         h === s.maxLevel
@@ -362,6 +380,7 @@ export function insert(s: SkipState, key: number, rec: Rec): boolean {
       rec.mark(bid(node, i), 'key');
       rec.markEdge(pid(pred, i), 'ok');
       rec.markEdge(pid(node, i), 'ok');
+      rec.vars({ key, height: h, level: s.level, i, 'update[i]': val(pred), 'fresh.next[i]': val(succ) });
       if (fresh) rec.line('grow', 'splice');
       else rec.line('splice');
       rec.step(
@@ -376,6 +395,7 @@ export function insert(s: SkipState, key: number, rec: Rec): boolean {
   s.pointers += h;
   s.pending = null;
   if (rec.recording) {
+    rec.vars({ key, height: h, level: s.level });
     rec.line('done');
     rec.step(
       `${key} is stored with a tower ${plural(h, 'level')} tall. That took ${plural(w.comparisons, 'comparison')} and ${2 * h} pointer writes, and nothing was rebalanced.`,
@@ -386,12 +406,14 @@ export function insert(s: SkipState, key: number, rec: Rec): boolean {
 }
 
 export function remove(s: SkipState, key: number, rec: Rec): boolean {
+  rec.vars();
   const w = descend(s, key, rec, 'delete');
   const node = w.hit;
   if (!node) {
     if (rec.recording) {
       const pred = w.update[0];
       rec.markEdge(pid(pred, 0), 'bad');
+      rec.vars({ key, target: val(pred.next[0]), update: w.update.map(val) });
       rec.line('missing');
       rec.step(
         s.size === 0
@@ -405,6 +427,7 @@ export function remove(s: SkipState, key: number, rec: Rec): boolean {
   const h = node.next.length;
   rec.count('reads');
   if (rec.recording) {
+    rec.vars({ key, target: key, 'len(target.next)': h, update: w.update.map(val) });
     rec.line('found');
     rec.step(
       h === 1
@@ -424,6 +447,7 @@ export function remove(s: SkipState, key: number, rec: Rec): boolean {
     if (emptied) s.level--;
     if (rec.recording) {
       rec.markEdge(pid(pred, i), 'ok');
+      rec.vars({ key, target: key, i, 'update[i]': val(pred), 'target.next[i]': val(succ), level: s.level });
       if (emptied) rec.line('unlink', 'shrink');
       else rec.line('unlink');
       rec.step(
@@ -436,6 +460,7 @@ export function remove(s: SkipState, key: number, rec: Rec): boolean {
   s.size--;
   s.pointers -= h;
   if (rec.recording) {
+    rec.vars({ key, level: s.level });
     rec.line('done');
     rec.step(
       `${key} is deleted: ${plural(h, 'pointer')} rewritten after ${plural(w.comparisons, 'comparison')}, with no rebalancing. The list holds ${plural(s.size, 'key')} on ${plural(s.level, 'level')}.`,

@@ -1,7 +1,7 @@
 import { LABEL_MAX, SUB_ROOM } from '../../core/fit';
 import { CELL_H, TAG_H } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
-import type { Cell, Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef, Tone } from '../../core/types';
+import type { Cell, Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef, Tone, VarValue } from '../../core/types';
 import java from './code/StreamCheckpoints.java?raw';
 import python from './code/stream_checkpoints.py?raw';
 import { info } from './info';
@@ -114,6 +114,9 @@ const fmtResults = (rs: Result[]) => {
   const t = rs.map((r) => `${r.key}=${r.n}`);
   return t.length <= 1 ? t.join('') : `${t.slice(0, -1).join(', ')} and ${t[t.length - 1]}`;
 };
+/** Keyed state as the listing's dict holds it: only keys counted so far. */
+const dict = (counts: number[]) => `{${KEYS.flatMap((k, i) => (counts[i] ? [`${k}: ${counts[i]}`] : [])).join(', ')}}`;
+const tuples = (rs: Result[]) => rs.map((r) => `(${r.key}, ${r.n})`);
 const validSource = (p: number) => Number.isInteger(p) && p >= 0 && p < SOURCES;
 
 // ---- ids ----------------------------------------------------------------------
@@ -148,6 +151,7 @@ function countAndWrite(s: JobState, key: number, rec: Rec, call: string): number
   const old = s.counts[i];
   const n = old + 1;
   s.counts[i] = n;
+  rec.vars({ key, n });
   rec.markCell(COUNT, i, 'ok');
   rec.line(call, 'count');
   rec.step(
@@ -199,6 +203,7 @@ function carry(s: JobState, p: number, rec: Rec, replay: boolean): number {
     s.history.push({ p, offset });
     s.reached[p] = Math.max(s.reached[p], offset + 1);
   }
+  rec.vars({ p, 'offsets[p]': offset + 1, key });
   rec.mark(oid(p, offset), 'key');
   rec.line('read');
   rec.step(
@@ -218,6 +223,7 @@ function carry(s: JobState, p: number, rec: Rec, replay: boolean): number {
   rec.clearMarks();
   rec.mark(oid(p, offset), 'path');
   const n = countAndWrite(s, key, rec, 'emit');
+  rec.vars({ p, 'offsets[p]': offset + 1, key, 'count(key)': n });
   rec.unmark(oid(p, offset));
   return n;
 }
@@ -227,6 +233,7 @@ function carry(s: JobState, p: number, rec: Rec, replay: boolean): number {
 /** Read one record from partition p and carry it to the sinks. Returns the new count, or null. */
 export function process(s: JobState, partition: number | string, rec: Rec): number | null {
   const p = Number(partition);
+  rec.vars({ p: partition, running: s.running });
   rec.line('down');
   if (!validSource(p)) {
     rec.step(`This job reads partitions 0 and 1. There is no partition ${partition}.`);
@@ -248,6 +255,7 @@ export function process(s: JobState, partition: number | string, rec: Rec): numb
 
 /** Take a checkpoint with barriers. Returns its id, or null when the job is down. */
 export function checkpoint(s: JobState, rec: Rec): number | null {
+  rec.vars({ running: s.running });
   rec.line('down');
   if (!s.running) {
     rec.step(`The job is down, so no checkpoint can be taken. Press Recover first.`);
@@ -257,6 +265,7 @@ export function checkpoint(s: JobState, rec: Rec): number | null {
   const b = `B${id}`;
   const chk: Snapshot = { id, offsets: new Array<number>(SOURCES).fill(0), counts: [], txn: null, acks: 0 };
   s.pending = chk;
+  rec.vars({ 'chk.cid': id, next_id: s.nextId, 'chk.acks': 0 });
   rec.line('trigger');
   rec.step(
     `The checkpoint coordinator, in Flink's JobManager, starts checkpoint ${id}. It asks each source to put barrier ${b} into its stream. A barrier is a marker that travels with the records and splits them into before and after.`,
@@ -266,6 +275,7 @@ export function checkpoint(s: JobState, rec: Rec): number | null {
     chk.offsets[p] = s.offsets[p];
     chk.acks++;
     rec.markCell(PENDING, p, 'ok');
+    rec.vars({ 'chk.cid': id, next_id: s.nextId, 'chk.acks': chk.acks, p, 'chk.offsets': [...chk.offsets] });
     rec.line('inject');
     rec.step(
       `S${p} is about to read offset ${s.offsets[p]}. It saves "S${p}: ${s.offsets[p]}" to checkpoint storage, acks, and sends ${b} downstream behind every record it has already sent. ${chk.acks} of ${TASKS} tasks have acked.`,
@@ -276,6 +286,9 @@ export function checkpoint(s: JobState, rec: Rec): number | null {
 
   const atCount: Probe = { text: b, at: COUNT, cell: 1 };
   s.aligning = true;
+  let seen = 1;
+  const base = (extra: Record<string, VarValue> = {}) => ({ 'chk.cid': id, 'chk.acks': chk.acks, seen, ...extra });
+  rec.vars(base());
   rec.markEdge(eid(0), 'path');
   rec.line('first');
   rec.step(
@@ -290,6 +303,7 @@ export function checkpoint(s: JobState, rec: Rec): number | null {
   s.reached[0] = Math.max(s.reached[0], offset + 1);
   s.held = { key, offset };
   rec.count('reads');
+  rec.vars(base({ held: key, 'offsets[0]': offset + 1 }));
   rec.mark(oid(0, offset), 'path');
   rec.line('hold');
   rec.step(
@@ -298,6 +312,8 @@ export function checkpoint(s: JobState, rec: Rec): number | null {
   );
   rec.unmark(oid(0, offset));
 
+  seen++;
+  rec.vars(base({ held: key, 'offsets[0]': offset + 1 }));
   rec.markEdge(eid(1), 'path');
   rec.line('align');
   rec.compare(`${b} seen 2`, '=', 'inputs 2', 'aligned: take the snapshot', {
@@ -308,6 +324,7 @@ export function checkpoint(s: JobState, rec: Rec): number | null {
 
   chk.counts = [...s.counts];
   chk.acks++;
+  rec.vars(base({ held: key, 'chk.counts': dict(chk.counts) }));
   KEYS.forEach((_k, i) => rec.markCell(PENDING, SOURCES + i, 'ok'));
   rec.line('snapshot');
   rec.step(
@@ -321,6 +338,7 @@ export function checkpoint(s: JobState, rec: Rec): number | null {
   s.txn = [];
   s.txnId++;
   chk.acks += SINKS;
+  rec.vars({ 'chk.cid': id, 'chk.acks': chk.acks, held: key, 'chk.txn': tuples(s.pre.items) });
   rec.markCell(PENDING, SOURCES + KEYS.length, 'ok');
   for (const e of SINK_EDGES) rec.markEdge(e, 'path');
   rec.line('precommit');
@@ -333,6 +351,7 @@ export function checkpoint(s: JobState, rec: Rec): number | null {
   rec.markCell(PENDING, SOURCES + KEYS.length, 'idle');
   rec.clearMarks();
 
+  rec.vars(base({ held: key }));
   rec.line('release');
   rec.step(
     `Count no longer needs to hold channel 0, so it takes the buffered record, key ${key}. It is counted after the snapshot, so it belongs to checkpoint ${id + 1}.`,
@@ -343,6 +362,7 @@ export function checkpoint(s: JobState, rec: Rec): number | null {
   s.history.push({ p: 0, offset });
   countAndWrite(s, key, rec, 'release');
 
+  rec.vars(base({ tasks: TASKS }));
   rec.line('complete');
   rec.compare(`${b} acks ${chk.acks}`, '=', `tasks ${TASKS}`, `checkpoint ${id} is complete`, {
     probe: { text: b, at: PENDING, cell: 0 },
@@ -353,6 +373,7 @@ export function checkpoint(s: JobState, rec: Rec): number | null {
   s.pending = null;
   s.history = s.history.filter((h) => h.offset >= chk.offsets[h.p]);
   rec.count('checkpoints');
+  rec.vars(base({ tasks: TASKS, 'done.cid': chk.id }));
   rec.mark(DONE, 'ok');
   rec.step(
     `Checkpoint ${id} replaces checkpoint ${old} as the one to restart from: ${chk.offsets.map((o, p) => `S${p} at offset ${o}`).join(', ')}, with ${fmtCounts(chk.counts)}.`,
@@ -365,6 +386,7 @@ export function checkpoint(s: JobState, rec: Rec): number | null {
   s.pre = null;
   const shown = Math.min(pre.items.length, COM_SHOWN);
   for (let i = 0; i < shown; i++) rec.markCell(COM, lastIndex(s.committed.length, COM_SHOWN) - i, 'ok');
+  rec.vars({ 'chk.cid': id, 'chk.acks': chk.acks, 'done.cid': chk.id, 'chk.txn': tuples(pre.items) });
   rec.line('commit');
   rec.step(
     `The coordinator tells every task that checkpoint ${id} is complete. Only now does the two-phase sink commit transaction ${pre.id}` +
@@ -373,6 +395,7 @@ export function checkpoint(s: JobState, rec: Rec): number | null {
   );
   for (let i = 0; i < shown; i++) rec.markCell(COM, lastIndex(s.committed.length, COM_SHOWN) - i, 'idle');
 
+  rec.vars({ 'chk.cid': id });
   rec.line('finish');
   rec.step(
     `Checkpoint ${id} done: ${TASKS} acks, one barrier per source, and no stop to the stream apart from a short wait on channel 0. A crash from now on loses at most the work since ${b}.`,
@@ -382,6 +405,7 @@ export function checkpoint(s: JobState, rec: Rec): number | null {
 
 /** A task fails. Every task restarts, so all in-memory state is gone. */
 export function crash(s: JobState, rec: Rec): boolean {
+  rec.vars({ running: s.running });
   rec.line('lost');
   if (!s.running) {
     rec.step(`The job is already down. Press Recover to restart it.`);
@@ -389,6 +413,7 @@ export function crash(s: JobState, rec: Rec): boolean {
   }
   s.before = [...s.counts];
   s.running = false;
+  rec.vars({ running: false, offsets: null, counts: null });
   rec.mark(COUNT, 'bad');
   rec.step(
     `The Count task fails: say its machine dies. Its keyed state lived in that task's memory, so the counts ${fmtCounts(s.before)} are gone.`,
@@ -407,12 +432,14 @@ export function crash(s: JobState, rec: Rec): boolean {
 
 /** Restart from the last completed checkpoint and replay. Returns how many records were replayed. */
 export function recover(s: JobState, rec: Rec): number {
+  rec.vars({ running: s.running });
   rec.line('up');
   if (s.running) {
     rec.step(`Nothing has failed: the job is running. Press Crash first to see a recovery.`);
     return 0;
   }
   const chk = s.done;
+  rec.vars({ running: false, 'chk.cid': chk.id, counts: null, offsets: null });
   rec.mark(DONE, 'path');
   rec.line('restore');
   rec.step(
@@ -421,6 +448,7 @@ export function recover(s: JobState, rec: Rec): number {
       : `Flink restarts every task and loads checkpoint ${chk.id}, the last one that completed. A checkpoint that had started but not completed would be ignored.`,
   );
   s.counts = [...chk.counts];
+  rec.vars({ running: false, 'chk.cid': chk.id, counts: dict(s.counts), offsets: null });
   rec.mark(COUNT, 'ok');
   rec.step(
     `Count's keyed state is restored: ${fmtCounts(s.counts)}. These are the counts at barrier B${chk.id}: every record before it, none after.`,
@@ -429,6 +457,7 @@ export function recover(s: JobState, rec: Rec): number {
 
   s.offsets = [...chk.offsets];
   for (const h of s.history) rec.mark(oid(h.p, h.offset), 'path');
+  rec.vars({ running: false, 'chk.cid': chk.id, counts: dict(s.counts), offsets: [...s.offsets] });
   rec.line('rewind');
   rec.step(
     `The sources rewind to the offsets saved with that state: ${chk.offsets.map((o, p) => `S${p} to ${o}`).join(', ')}. Kafka still holds the records after them, so they can be read again. This is why the source has to be replayable.`,
@@ -437,6 +466,7 @@ export function recover(s: JobState, rec: Rec): number {
   const aborted = s.txn;
   const abortedId = s.txnId;
   for (let i = 0; i <= lastIndex(aborted.length, TXN_SHOWN); i++) rec.markCell(TXN, i, 'bad');
+  rec.vars({ running: false, 'chk.cid': chk.id, counts: dict(s.counts), offsets: [...s.offsets], txn: [] });
   rec.line('abort');
   rec.step(
     (aborted.length
@@ -450,6 +480,7 @@ export function recover(s: JobState, rec: Rec): number {
 
   s.running = true;
   const replay = [...s.history];
+  rec.vars({ running: true, 'chk.cid': chk.id, counts: dict(s.counts), offsets: [...s.offsets], txn: [] });
   rec.mark(DONE, 'path');
   rec.line('resume');
   rec.step(
@@ -466,6 +497,7 @@ export function recover(s: JobState, rec: Rec): number {
 
   const before = s.before ?? s.counts;
   const same = before.every((n, i) => n === s.counts[i]);
+  rec.vars({ running: true, 'chk.cid': chk.id, counts: dict(s.counts), offsets: [...s.offsets] });
   rec.line('resume');
   rec.compare('counts now', same ? '=' : '≠', 'before crash', same ? 'state is exactly-once' : 'state differs', {
     message: `Count now holds ${fmtCounts(s.counts)}. Before the crash it held ${fmtCounts(before)}. ` + (replay.length ? `Every record counts once, even though ${replay.length} ${replay.length === 1 ? 'was' : 'were'} processed twice.` : `Nothing needed replaying.`),

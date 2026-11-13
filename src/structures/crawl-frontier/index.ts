@@ -121,12 +121,14 @@ function heapPush(s: FrontierState, due: number, q: number, rec: Rec, ctx: Ctx, 
   rec.count('writes');
   let i = heap.length - 1;
   const probe = ctx.probe;
+  rec.vars({ due, q, i });
   rec.mark(heapId(q), 'ok');
   rec.line(via, 'push');
   rec.step(`${lead} ${i === 0 ? `It is the only entry, so it is the root.` : `The entry goes in at the end of the heap's array, index ${i}.`}`, { probe });
   while (i > 0) {
     const p = (i - 1) >> 1;
     const parent = heap[p];
+    rec.vars({ due, q, i, parent: p, 'heap[i]': [due, q], 'heap[parent]': [parent.due, parent.q] });
     rec.mark(heapId(parent.q), 'compare');
     ctx.cmp++;
     if (due >= parent.due) {
@@ -147,6 +149,7 @@ function heapPush(s: FrontierState, due: number, q: number, rec: Rec, ctx: Ctx, 
     heap[p] = { due, q };
     rec.count('writes');
     rec.mark(heapId(parent.q), 'path');
+    rec.vars({ due, q, i: p, parent: p, 'heap[i]': [due, q] });
     rec.line('swap_up');
     rec.step(p === 0 ? `${B(q)} rises to the root: it is now the soonest queue of all.` : `${B(q)} rises to index ${p}.`, { probe });
     i = p;
@@ -159,12 +162,14 @@ function heapPop(s: FrontierState, rec: Rec, ctx: Ctx, lead: string): void {
   const last = heap.pop() as HeapEntry;
   rec.count('writes');
   const probe = ctx.probe;
+  rec.vars({ last: [last.due, last.q] });
   rec.line('pop', 'take_root');
   if (heap.length === 0) {
     rec.step(`${lead} It was the only entry, so the heap is empty for a moment.`, { probe });
     return;
   }
   heap[0] = last;
+  rec.vars({ last: [last.due, last.q], i: 0, n: heap.length });
   rec.mark(heapId(last.q), 'path');
   rec.step(`${lead} The last entry in the heap's array, ${B(last.q)}, fills the hole at the root.`, { probe });
   const n = heap.length;
@@ -176,6 +181,7 @@ function heapPop(s: FrontierState, rec: Rec, ctx: Ctx, lead: string): void {
     if (r < n) {
       const left = heap[c];
       const right = heap[r];
+      rec.vars({ i, n, child: c, right: r, 'heap[child]': [left.due, left.q], 'heap[right]': [right.due, right.q] });
       rec.mark(heapId(left.q), 'compare');
       rec.mark(heapId(right.q), 'compare');
       ctx.cmp++;
@@ -197,6 +203,7 @@ function heapPop(s: FrontierState, rec: Rec, ctx: Ctx, lead: string): void {
       rec.unmark(heapId(right.q));
     }
     const child = heap[c];
+    rec.vars({ i, n, child: c, 'heap[i]': [last.due, last.q], 'heap[child]': [child.due, child.q] });
     rec.mark(heapId(child.q), 'compare');
     ctx.cmp++;
     if (last.due <= child.due) {
@@ -217,6 +224,7 @@ function heapPop(s: FrontierState, rec: Rec, ctx: Ctx, lead: string): void {
     heap[c] = last;
     rec.count('writes');
     rec.mark(heapId(child.q), 'path');
+    rec.vars({ i: c, n, child: c, 'heap[i]': [last.due, last.q] });
     rec.line('swap_down');
     rec.step(i === 0 ? `${B(child.q)} rises to the root: it is the soonest queue left.` : `${B(child.q)} rises to index ${i}.`, { probe });
     i = c;
@@ -235,6 +243,9 @@ export function add(s: FrontierState, host: string, priority: number, rec: Rec, 
   const queue = s.front[priority];
   const name = PRIORITIES[priority];
   const held = s.pending.get(host) ?? 0;
+  // The URL as the listing receives it; worked out here without using up its path number.
+  const asked = text ?? `${host}/${((s.paths.get(host) ?? 0) % 9) + 1}`;
+  rec.vars({ url: asked, priority, 'len(queue)': queue.length, waiting: held });
   if (queue.length >= s.frontCap) {
     rec.line('check', 'full');
     rec.step(
@@ -256,6 +267,7 @@ export function add(s: FrontierState, host: string, priority: number, rec: Rec, 
   s.pending.set(host, held + 1);
   rec.count('writes');
   const probe: Probe = { text: url.text, at: urlId(url) };
+  rec.vars({ url: url.text, priority, 'len(queue)': queue.length, waiting: held, 'pending[host]': held + 1 });
   rec.mark(urlId(url), 'key');
   rec.line('append');
   rec.step(
@@ -296,6 +308,7 @@ function refill(s: FrontierState, q: number, rec: Rec, ctx: Ctx, idle: boolean):
     const p = s.front.findIndex((f) => f.length > 0);
     if (p < 0) {
       if (!idle || pulls > 0) {
+        rec.vars({ q, url: null });
         rec.line(via, 'pull', 'dry');
         rec.step(
           `All three front queues are empty, so ${B(q)} stays idle: it has no host and no entry in the heap. The next call to Next tries again.`,
@@ -316,6 +329,7 @@ function refill(s: FrontierState, q: number, rec: Rec, ctx: Ctx, idle: boolean):
     rec.mark(urlId(url), 'compare');
     rec.markCell(rowId(host), 1, 'compare');
     ctx.cmp++;
+    rec.vars({ q, url: url.text, host, 'host in table': owner !== undefined });
     rec.line(via, 'pull', 'lookup');
     if (owner !== undefined) {
       rec.compare(`${url.text}: host ${host}`, '=', `${host} → ${B(owner)}`, `join ${B(owner)}`, {
@@ -327,6 +341,7 @@ function refill(s: FrontierState, q: number, rec: Rec, ctx: Ctx, idle: boolean):
       rec.count('writes');
       rec.mark(urlId(url), 'ok');
       rec.markCell(rowId(host), 1, 'idle');
+      rec.vars({ q, url: url.text, host, 'host in table': true, 'table[host]': owner });
       rec.line('route');
       rec.step(
         `${url.text} joins the back of ${B(owner)}. A host never has URLs in two back queues, and that is what keeps it to one request at a time.`,
@@ -346,6 +361,7 @@ function refill(s: FrontierState, q: number, rec: Rec, ctx: Ctx, idle: boolean):
     rec.count('writes', 2);
     rec.mark(urlId(url), 'ok');
     rec.markCell(rowId(host), 1, 'ok');
+    rec.vars({ q, url: url.text, host, 'host in table': false, 'table[host]': q, 'host[q]': host });
     rec.line('claim');
     rec.step(`${B(q)} becomes the queue for host ${host}: write ${host} → ${B(q)} in the table and move ${url.text} across. Every later URL for ${host} will be sent here.`, {
       probe,
@@ -376,7 +392,9 @@ export function next(s: FrontierState, rec: Rec): string | null {
   s.host.forEach((h, q) => {
     if (h === null) idle.push(q);
   });
+  rec.vars();
   if (idle.length && frontSize(s) > 0) {
+    rec.vars({ q: idle[0], 'host[q]': null });
     rec.line('idle');
     rec.step(
       `${idle.map(B).join(idle.length === 2 ? ' and ' : ', ')} ${idle.length === 1 ? 'has' : 'have'} no host. Before anything is leased, each idle back queue tries to take one from the front queues.`,
@@ -386,6 +404,7 @@ export function next(s: FrontierState, rec: Rec): string | null {
   rec.clearMarks();
 
   if (s.heap.length === 0) {
+    rec.vars({ heap: [] });
     rec.line('none');
     rec.step(`No back queue has a host, so the heap is empty and there is nothing to lease. Add a URL first.`);
     return null;
@@ -397,6 +416,7 @@ export function next(s: FrontierState, rec: Rec): string | null {
   const url = s.back[q][0];
   const probe: Probe = { text: url.text, at: urlId(url) };
   ctx.probe = probe;
+  rec.vars({ due: root.due, q, clock: s.clock });
   rec.mark(heapId(q), 'compare');
   rec.mark(urlId(url), 'key');
   rec.line('peek');
@@ -441,11 +461,14 @@ export function next(s: FrontierState, rec: Rec): string | null {
   rec.count('writes');
   rec.clearMarks();
   rec.mark(urlId(url), 'key');
+  rec.vars({ due: root.due, q, clock: s.clock, host, url: url.text });
   rec.line('lease');
   rec.step(`Hand ${url.text} to a fetcher as a lease. It leaves the head of ${B(q)}, which is first in, first out, like every queue here.`, { probe });
 
   const due = s.clock + s.delay;
   s.ready.set(host, due);
+  const mine = { q, clock: s.clock, host, url: url.text, 'ready[host]': due };
+  rec.vars(mine);
   rec.count('writes');
   rec.markCell(rowId(host), 2, 'ok');
   rec.line('ready');
@@ -463,6 +486,7 @@ export function next(s: FrontierState, rec: Rec): string | null {
     s.host[q] = null;
     rec.count('writes');
     rec.mark(rowId(host), 'bad');
+    rec.vars({ ...mine, 'host[q]': null });
     rec.line('release');
     rec.step(
       `${B(q)} is now empty, so host ${host} gives it up. Its row in the table loses the queue but keeps the time, in case more URLs for ${host} turn up.`,
@@ -475,6 +499,7 @@ export function next(s: FrontierState, rec: Rec): string | null {
   rec.clearMarks();
   rec.mark(urlId(url), 'key');
   const soonest = s.heap[0];
+  rec.vars(mine);
   rec.line('done');
   rec.step(
     `${url.text} is leased at tick ${s.clock} after ${plural(ctx.cmp, 'comparison')}. ` +
@@ -492,6 +517,7 @@ export function next(s: FrontierState, rec: Rec): string | null {
 export function tick(s: FrontierState, ticks: number, rec: Rec): number {
   const before = s.clock;
   s.clock += ticks;
+  rec.vars({ ticks, clock: s.clock });
   rec.mark(CLOCK, 'ok');
   rec.line('tick');
   rec.step(
@@ -675,6 +701,7 @@ function runAdd(s: FrontierState, args: (number | string)[], rec: Rec): void {
   const host = String(args[0]).toLowerCase();
   const priority = Math.min(3, Math.max(1, Number(args[1]) || 2)) - 1;
   if (!HOSTS.includes(host as (typeof HOSTS)[number])) {
+    rec.vars();
     rec.line('check');
     rec.step(`Sorry, this page draws five hosts, a to e, where a is short for a.example. "${host}" is not one of them, so nothing is added.`);
     return;

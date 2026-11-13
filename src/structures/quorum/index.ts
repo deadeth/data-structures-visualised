@@ -106,6 +106,7 @@ const validKey = (k: number) => Number.isInteger(k) && k >= 0 && k <= 999;
 
 /** Write key = value to every replica that is up. Returns true when W acknowledged it. */
 export function write(s: QuorumState, key: number, value: number, rec: Rec): boolean {
+  rec.vars({ key, value });
   rec.line('send');
   if (!validKey(key) || !validKey(value)) {
     rec.step(`Keys and values on this page are whole numbers from 0 to 999.`);
@@ -120,6 +121,7 @@ export function write(s: QuorumState, key: number, value: number, rec: Rec): boo
   }
   addKey(s, key);
   const version = ++s.clock;
+  rec.vars({ key, value, version });
   const atClient: Probe = { text: String(key), at: CLIENT };
   const at = (i: number): Probe => ({ text: String(key), at: cid(i, key) });
   rec.mark(kid(key), 'key');
@@ -132,6 +134,7 @@ export function write(s: QuorumState, key: number, value: number, rec: Rec): boo
   const missed: string[] = [];
   for (let i = 0; i < s.n; i++) {
     rec.markEdge(eid(i), 'path');
+    rec.vars({ key, value, version, acks, rep: rn(i), 'rep.up': s.up[i] });
     if (!s.up[i]) {
       rec.markEdge(eid(i), 'bad');
       rec.mark(cid(i, key), 'bad');
@@ -144,6 +147,7 @@ export function write(s: QuorumState, key: number, value: number, rec: Rec): boo
       continue;
     }
     const had = copyOf(s, i, key);
+    rec.vars({ key, value, version, acks, rep: rn(i), have: had.version });
     rec.mark(cid(i, key), 'compare');
     rec.line('newer');
     rec.compare(`new v${version}`, '>', `${rn(i)} ${vn(had)}`, `${rn(i)} stores it`, {
@@ -154,6 +158,7 @@ export function write(s: QuorumState, key: number, value: number, rec: Rec): boo
     });
     s.data[i][key] = { value, version };
     acks++;
+    rec.vars({ key, value, version, acks, rep: rn(i), have: had.version });
     rec.count('writes');
     rec.mark(cid(i, key), 'ok');
     rec.markEdge(eid(i), 'ok');
@@ -162,6 +167,7 @@ export function write(s: QuorumState, key: number, value: number, rec: Rec): boo
   }
 
   const ok = acks >= s.w;
+  rec.vars({ key, value, version, acks, w: s.w });
   rec.markCell(CONFIG, W_CELL, 'compare');
   rec.line('quorum');
   rec.compare(`acks ${acks}`, ok ? '≥' : '<', `W ${s.w}`, ok ? 'the write succeeds' : 'the write fails', {
@@ -205,6 +211,7 @@ function ordinal(n: number): string {
  * rest follow in order. Returns the copy returned, or null when the read failed.
  */
 export function read(s: QuorumState, key: number, first: number, rec: Rec): Copy | null {
+  rec.vars({ key, first: `R${first}` });
   rec.line('ask');
   if (!validKey(key)) {
     rec.step(`Keys on this page are whole numbers from 0 to 999.`);
@@ -229,6 +236,7 @@ export function read(s: QuorumState, key: number, first: number, rec: Rec): Copy
   const replies: number[] = [];
   for (let k = 0; k < s.n && replies.length < s.r; k++) {
     const i = (first - 1 + k) % s.n;
+    rec.vars({ key, first: rn(first - 1), k, i: rn(i), replies: replies.map(rn) });
     rec.markEdge(eid(i), 'path');
     rec.line('reply');
     if (!s.up[i]) {
@@ -238,6 +246,7 @@ export function read(s: QuorumState, key: number, first: number, rec: Rec): Copy
       continue;
     }
     replies.push(i);
+    rec.vars({ key, first: rn(first - 1), k, i: rn(i), replies: replies.map(rn) });
     rec.count('reads');
     rec.mark(cid(i, key), 'path');
     rec.markEdge(eid(i), 'ok');
@@ -247,6 +256,7 @@ export function read(s: QuorumState, key: number, first: number, rec: Rec): Copy
   const late = s.up.flatMap((u, i) => (u && !replies.includes(i) ? [i] : []));
   for (const i of late) rec.mark(cid(i, key), 'dim');
   const enough = replies.length >= s.r;
+  rec.vars({ key, replies: replies.map(rn), 'len(replies)': replies.length, r: s.r });
   rec.markCell(CONFIG, R_CELL, 'compare');
   rec.line('enough');
   rec.compare(`replies ${replies.length}`, enough ? '≥' : '<', `R ${s.r}`, enough ? 'enough to answer' : 'the read fails', {
@@ -273,6 +283,7 @@ export function read(s: QuorumState, key: number, first: number, rec: Rec): Copy
   for (const i of replies.slice(1)) {
     const a = copyOf(s, i, key);
     const b = copyOf(s, best, key);
+    rec.vars({ key, i: rn(i), best: rn(best), 'version(i)': a.version, 'version(best)': b.version });
     rec.mark(cid(i, key), 'compare');
     rec.mark(cid(best, key), 'compare');
     rec.line('newest');
@@ -285,6 +296,7 @@ export function read(s: QuorumState, key: number, first: number, rec: Rec): Copy
     if (newer) best = i;
   }
   const answer = { ...copyOf(s, best, key) };
+  rec.vars({ key, best: rn(best), value: answer.value, version: answer.version });
   rec.mark(cid(best, key), 'ok');
   rec.line('answer');
   rec.step(
@@ -299,6 +311,7 @@ export function read(s: QuorumState, key: number, first: number, rec: Rec): Copy
   for (const i of replies) {
     const c = copyOf(s, i, key);
     const stale = c.version < answer.version;
+    rec.vars({ key, value: answer.value, version: answer.version, i: rn(i), 'version(i)': c.version });
     if (i !== best) rec.mark(cid(i, key), 'compare');
     rec.line('stale');
     rec.compare(`${rn(i)} ${vn(c)}`, stale ? '<' : '=', vn(answer), stale ? 'stale: repair it' : 'up to date', {
@@ -311,6 +324,7 @@ export function read(s: QuorumState, key: number, first: number, rec: Rec): Copy
     });
     if (stale) {
       s.data[i][key] = { ...answer };
+      rec.vars({ key, value: answer.value, version: answer.version, i: rn(i), 'version(i)': answer.version });
       repaired++;
       rec.count('writes');
       rec.count('repairs');
@@ -329,6 +343,7 @@ export function read(s: QuorumState, key: number, first: number, rec: Rec): Copy
     rec.mark(cid(best, key), 'bad');
   }
   rec.mark(CLIENT, isStale ? 'bad' : 'ok');
+  rec.vars({ key, best: rn(best), value: answer.value, version: answer.version });
   rec.line('answer');
   const sum = `R + W = ${s.r} + ${s.w} = ${s.r + s.w}`;
   rec.step(
@@ -345,6 +360,7 @@ export function read(s: QuorumState, key: number, first: number, rec: Rec): Copy
 
 /** Take a replica down. It keeps its data. */
 export function down(s: QuorumState, replica: number, rec: Rec): boolean {
+  rec.vars({ i: `R${replica}` });
   rec.line('stop');
   if (!validReplica(s, replica)) {
     rec.step(`There are ${s.n} replicas, R1 to R${s.n}. There is no R${replica}.`);
@@ -356,6 +372,7 @@ export function down(s: QuorumState, replica: number, rec: Rec): boolean {
     return false;
   }
   s.up[i] = false;
+  rec.vars({ i: rn(i), up: false });
   const live = upCount(s);
   const lost = [live < s.w ? `writes (W = ${s.w})` : '', live < s.r ? `reads (R = ${s.r})` : ''].filter(Boolean);
   rec.step(
@@ -367,6 +384,7 @@ export function down(s: QuorumState, replica: number, rec: Rec): boolean {
 
 /** Bring a replica back. It returns with exactly what it held. */
 export function up(s: QuorumState, replica: number, rec: Rec): boolean {
+  rec.vars({ i: `R${replica}` });
   rec.line('start');
   if (!validReplica(s, replica)) {
     rec.step(`There are ${s.n} replicas, R1 to R${s.n}. There is no R${replica}.`);
@@ -378,6 +396,7 @@ export function up(s: QuorumState, replica: number, rec: Rec): boolean {
     return false;
   }
   s.up[i] = true;
+  rec.vars({ i: rn(i), up: true });
   const behind = s.keys.filter((k) => copyOf(s, i, k).version < newestVersion(s, k));
   for (const k of behind) rec.mark(cid(i, k), 'bad');
   rec.step(
@@ -391,6 +410,7 @@ export function up(s: QuorumState, replica: number, rec: Rec): boolean {
 
 /** Anti-entropy between two replicas: copy the newer version of every key each way. Returns copies made. */
 export function repair(s: QuorumState, a: number, b: number, rec: Rec): number {
+  rec.vars({ a: `R${a}`, b: `R${b}` });
   rec.line('each_key');
   if (!validReplica(s, a) || !validReplica(s, b)) {
     rec.step(`There are ${s.n} replicas, R1 to R${s.n}. Choose two of them.`);
@@ -414,6 +434,7 @@ export function repair(s: QuorumState, a: number, b: number, rec: Rec): number {
   for (const key of s.keys) {
     const ca = copyOf(s, i, key);
     const cb = copyOf(s, j, key);
+    rec.vars({ a: rn(i), b: rn(j), key, va: [ca.value, ca.version], vb: [cb.value, cb.version] });
     const probe: Probe = { text: String(key), at: cid(i, key) };
     rec.mark(kid(key), 'key');
     rec.mark(cid(i, key), 'compare');
@@ -437,6 +458,7 @@ export function repair(s: QuorumState, a: number, b: number, rec: Rec): number {
     }
     rec.unmark(kid(key));
   }
+  rec.vars({ a: rn(i), b: rn(j) });
   rec.line('each_key');
   rec.step(
     `Repair done: ${plural(s.keys.length, 'key')} compared, ${plural(copied, 'copy', 'copies')} made. A real store does not compare key by key: each replica builds a Merkle tree, a tree of hashes over ranges of keys. Equal hashes prove a range matches, so only ranges whose hashes differ are walked and sent.`,
@@ -446,6 +468,7 @@ export function repair(s: QuorumState, a: number, b: number, rec: Rec): number {
 
 /** Change W and R. Returns whether R + W > N. */
 export function tune(s: QuorumState, w: number, r: number, rec: Rec): boolean {
+  rec.vars({ w, r });
   rec.line('set');
   const ok = (x: number) => Number.isInteger(x) && x >= 1 && x <= s.n;
   if (!ok(w) || !ok(r)) {
@@ -460,6 +483,7 @@ export function tune(s: QuorumState, w: number, r: number, rec: Rec): boolean {
     `Set W = ${w} and R = ${r}. Nothing on the replicas changes: these numbers only say how many replies the coordinator waits for. Cassandra calls this the consistency level, and a client picks it per request.`,
   );
   const strong = r + w > s.n;
+  rec.vars({ w, r, n: s.n, 'r + w > n': strong });
   rec.markCell(CONFIG, W_CELL, 'compare');
   rec.markCell(CONFIG, R_CELL, 'compare');
   rec.line('rule');

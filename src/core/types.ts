@@ -54,6 +54,12 @@ export interface SceneNode {
   tone?: Tone;
   /** Categorical tint 0-5 for grouping (an owner, a level). Not a state. */
   hue?: number;
+  /**
+   * The node's own colour where the colour is the data: the red and black of a red-black tree. Drawn as a solid fill
+   * with white text, and kept under any tone (a tone then shows as the outline only), so it is never mistaken for the
+   * pale, dashed red of `bad`. Use it for nothing else.
+   */
+  ink?: 'red' | 'black';
   /** Small text above the node. */
   title?: string;
   /** Small text below the node. A newline breaks it onto a second line. */
@@ -129,7 +135,12 @@ export interface Frame {
   counters: Record<string, number>;
   /** Anchors in the example code that this step is executing. See src/core/code.ts. */
   lines?: string[];
+  /** The listing's variables at this step, in the order to show them: name and value as text. See `Rec.vars`. */
+  vars?: [string, string][];
 }
+
+/** A value a listing's variable can hold, as the page shows it. */
+export type VarValue = string | number | boolean | null | undefined | (string | number | null)[];
 
 export interface ArgDef {
   name: string;
@@ -157,6 +168,14 @@ export interface Rec {
    * arguments to clear it.
    */
   line(...anchors: string[]): void;
+  /**
+   * Say what the listing's variables hold now, for the "Variables" strip beside the code. Sticky, like `line`: the
+   * values apply to every frame from now until the next call. Each call replaces the whole set, so pass every variable
+   * that is in scope at that point, named as the listing names them (`lo`, `mid`, `a[mid]`), in the order to show them.
+   * A value of `undefined` leaves that name out. Call it with no arguments to clear the strip (a new call, a helper
+   * returning). Costs nothing with recording off.
+   */
+  vars(values?: Record<string, VarValue>): void;
   mark(nodeId: string, tone: Tone): void;
   markCell(nodeId: string, cell: number, tone: Tone): void;
   markEdge(edgeId: string, tone: Tone): void;

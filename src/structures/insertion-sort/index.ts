@@ -91,6 +91,7 @@ export function load(s: SortState, xs: number[], rec: Rec, message: string): voi
   s.items = items;
   s.sorted = Math.min(1, items.length);
   s.lift = null;
+  rec.vars({ values: items.map((it) => it.value), 'self.sorted': s.sorted });
   rec.line('load');
   rec.step(message);
 }
@@ -191,7 +192,9 @@ export interface Cost {
 export function insertNext(s: SortState, rec: Rec, brief = false): Cost | null {
   const a = s.items;
   const i = s.sorted;
+  rec.vars();
   if (i >= a.length) {
+    rec.vars({ i });
     rec.line('all_sorted');
     rec.step(a.length === 0 ? `The array is empty, so there is nothing to insert.` : `Every item is already in the sorted part. Load or set a new input.`);
     return null;
@@ -204,6 +207,9 @@ export function insertNext(s: SortState, rec: Rec, brief = false): Cost | null {
   a[i] = null;
   const lift: Lift = { item, i, j: i - 1 };
   s.lift = lift;
+  // insert_next's variables. a[j] is left out once j is below 0.
+  const show = (j: number) => rec.vars({ i, key: item.value, j, 'a[j]': j >= 0 ? a[j]?.value : undefined });
+  show(i - 1);
   rec.line('lift');
   rec.step(
     brief
@@ -220,6 +226,7 @@ export function insertNext(s: SortState, rec: Rec, brief = false): Cost | null {
   while (j >= 0) {
     const other = a[j]!;
     const ol = label(other);
+    show(j);
     rec.mark(nid(other), 'compare');
     comparisons++;
     if (other.value <= item.value) {
@@ -258,6 +265,8 @@ export function insertNext(s: SortState, rec: Rec, brief = false): Cost | null {
     lift.j = j - 1;
     rec.mark(nid(other), 'path');
     if (!brief) {
+      // j -= 1 is on this lit line, so the strip shows j after it.
+      show(j - 1);
       rec.line('shift');
       rec.step(
         j === 0
@@ -272,6 +281,7 @@ export function insertNext(s: SortState, rec: Rec, brief = false): Cost | null {
   a[j + 1] = item;
   s.sorted = i + 1;
   s.lift = null;
+  rec.vars({ i, key: item.value, j });
   rec.line('drop');
   const cost = `${plural(comparisons, 'comparison')}, ${plural(shifts, 'shift')}`;
   let why: string;
@@ -302,7 +312,9 @@ function tiesInOrder(items: Item[]): string | null {
 
 export function sort(s: SortState, rec: Rec): void {
   const n = s.items.length;
+  rec.vars();
   if (s.sorted >= n) {
+    rec.vars({ 'self.sorted': s.sorted, 'len(self.items)': n });
     rec.line('next');
     rec.step(n === 0 ? `The array is empty, so there is nothing to sort.` : `The array is already sorted. Load or set a new input.`);
     return;
@@ -318,6 +330,7 @@ export function sort(s: SortState, rec: Rec): void {
     w += cost.shifts;
   }
   rec.clearMarks();
+  rec.vars({ 'self.sorted': s.sorted, 'len(self.items)': n });
   for (const it of s.items) rec.mark(nid(it!), 'ok');
   const most = (n * (n - 1)) / 2;
   let verdict: string;

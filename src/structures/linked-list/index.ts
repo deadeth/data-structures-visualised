@@ -63,6 +63,9 @@ function locate(s: ListState, key: number): LNode | null {
 
 function insert(s: ListState, key: number, where: 'front' | 'back', rec: Rec): boolean {
   const label = String(key);
+  const hk = () => s.head?.key ?? null;
+  const tk = () => s.tail?.key ?? null;
+  rec.vars({ key, head: hk(), tail: tk() });
   if (s.keys.has(key)) {
     if (rec.recording) {
       const at = locate(s, key);
@@ -99,10 +102,12 @@ function insert(s: ListState, key: number, where: 'front' | 'back', rec: Rec): b
 
   if (!s.head) {
     rec.line('make');
+    rec.vars({ key, node: key, head: null, tail: null });
     rec.step(`Make a node for ${key}. Its next pointer is null, and nothing points to it yet.`, { probe });
     s.head = node;
     s.tail = node;
     s.size++;
+    rec.vars({ key, node: key, head: key, tail: key });
     rec.count('writes', 2);
     s.draft = null;
     rec.line('first');
@@ -112,14 +117,17 @@ function insert(s: ListState, key: number, where: 'front' | 'back', rec: Rec): b
 
   if (where === 'front') {
     const old = s.head;
+    rec.vars({ key, node: key, 'node.next': null, head: old.key, tail: tk() });
     rec.line('make');
     rec.step(`Make a node for ${key}. Nothing points to it yet, so it is not part of the list.`, { probe });
     node.next = old;
+    rec.vars({ key, node: key, 'node.next': old.key, head: old.key, tail: tk() });
     rec.count('writes');
     rec.markEdge(eid(node), 'ok');
     rec.line('link');
     rec.step(`Write 1: point the new node's next at the current head, ${old.key}. Anyone walking from head still sees the old list.`, { probe });
     s.head = node;
+    rec.vars({ key, node: key, 'node.next': old.key, head: key, tail: tk() });
     rec.count('writes');
     s.size++;
     s.draft = null;
@@ -134,14 +142,17 @@ function insert(s: ListState, key: number, where: 'front' | 'back', rec: Rec): b
   }
 
   const old = s.tail!;
+  rec.vars({ key, node: key, head: hk(), tail: old.key, 'tail.next': null });
   rec.line('make');
   rec.step(`Make a node for ${key}. Its next pointer is null because it will be the last node.`, { probe });
   old.next = node;
+  rec.vars({ key, node: key, head: hk(), tail: old.key, 'tail.next': key });
   rec.count('writes');
   rec.markEdge(eid(old), 'ok');
   rec.line('link');
   rec.step(`Write 1: the tail pointer leads straight to the last node, ${old.key}. Change its next pointer from null to the new node.`, { probe });
   s.tail = node;
+  rec.vars({ key, node: key, head: hk(), tail: key });
   rec.count('writes');
   s.size++;
   s.draft = null;
@@ -160,6 +171,7 @@ export const append = (s: ListState, key: number, rec: Rec): boolean => insert(s
 
 export function search(s: ListState, key: number, rec: Rec): boolean {
   const label = String(key);
+  rec.vars({ key, node: s.head?.key ?? null });
   if (!s.head) {
     rec.markCell(NULL_ID, 0, 'bad');
     rec.line('start', 'missing');
@@ -175,6 +187,7 @@ export function search(s: ListState, key: number, rec: Rec): boolean {
     seen++;
     rec.count('reads');
     const probe = { text: label, at: nid(cur) };
+    rec.vars({ key, node: cur.key, 'node.key': cur.key });
     rec.mark(nid(cur), 'compare');
     if (cur.key === key) {
       rec.line('compare');
@@ -193,6 +206,7 @@ export function search(s: ListState, key: number, rec: Rec): boolean {
     rec.markEdge(eid(cur), 'path');
   }
   rec.markCell(NULL_ID, 0, 'bad');
+  rec.vars({ key, node: null });
   rec.line('missing');
   rec.step(`Reached null, the end of the list, so ${key} is not here. A miss always reads every node: ${seen} this time.`, {
     probe: { text: label, at: NULL_ID },
@@ -202,6 +216,7 @@ export function search(s: ListState, key: number, rec: Rec): boolean {
 
 export function remove(s: ListState, key: number, rec: Rec): boolean {
   const label = String(key);
+  rec.vars({ key, prev: null, node: s.head?.key ?? null });
   if (!s.head) {
     rec.line('start', 'missing');
     rec.step(`The list is empty, so there is nothing to delete.`);
@@ -220,6 +235,7 @@ export function remove(s: ListState, key: number, rec: Rec): boolean {
     seen++;
     rec.count('reads');
     const probe = { text: label, at: nid(cur) };
+    rec.vars({ key, prev: prev?.key ?? null, node: cur.key, 'node.key': cur.key });
     rec.mark(nid(cur), 'compare');
     if (cur.key === key) {
       rec.line('compare');
@@ -237,6 +253,7 @@ export function remove(s: ListState, key: number, rec: Rec): boolean {
   }
   if (!cur) {
     s.prev = null;
+    rec.vars({ key, prev: prev?.key ?? null, node: null });
     rec.markCell(NULL_ID, 0, 'bad');
     rec.line('missing');
     rec.step(`Reached null without a match. ${key} is not in the list, so nothing is deleted. The walk read all ${plural(seen, 'node')}.`, {
@@ -252,6 +269,7 @@ export function remove(s: ListState, key: number, rec: Rec): boolean {
   if (rec.recording) s.ghost = { node: cur, slot };
   if (prev) {
     prev.next = next;
+    rec.vars({ key, prev: prev.key, node: key, 'node.next': next?.key ?? null, 'prev.next': next?.key ?? null });
     rec.count('writes');
     writes++;
     rec.markEdge(eid(prev), 'ok');
@@ -264,6 +282,7 @@ export function remove(s: ListState, key: number, rec: Rec): boolean {
     );
   } else {
     s.head = next;
+    rec.vars({ key, prev: null, node: key, 'node.next': next?.key ?? null, head: next?.key ?? null });
     rec.count('writes');
     writes++;
     rec.line('unlink_head');
@@ -276,6 +295,7 @@ export function remove(s: ListState, key: number, rec: Rec): boolean {
   }
   if (!next) {
     s.tail = prev;
+    rec.vars({ key, prev: prev?.key ?? null, node: key, 'node.next': null, tail: prev?.key ?? null });
     rec.count('writes');
     writes++;
     rec.line('move_tail');
@@ -290,6 +310,7 @@ export function remove(s: ListState, key: number, rec: Rec): boolean {
   s.size--;
   s.ghost = null;
   s.prev = null;
+  rec.vars({ key, prev: prev?.key ?? null, node: key, head: s.head?.key ?? null, tail: s.tail?.key ?? null });
   rec.clearMarks();
   rec.line('done');
   rec.step(

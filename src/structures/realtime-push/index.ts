@@ -1,6 +1,6 @@
 import { LABEL_MAX } from '../../core/fit';
 import { randomInt } from '../../core/rng';
-import type { Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef, Tone } from '../../core/types';
+import type { Decor, Probe, Rec, Scene, SceneEdge, SceneNode, StructureDef, Tone, VarValue } from '../../core/types';
 import java from './code/RealtimePush.java?raw';
 import python from './code/realtime_push.py?raw';
 import { info } from './info';
@@ -170,6 +170,11 @@ function take(s: PushState, ids: number[], rec: Rec): number[] {
   return waits;
 }
 
+/** The listing's variables: the clock and what the client has, then `extra`. */
+function watch(s: PushState, rec: Rec, extra: Record<string, VarValue> = {}): void {
+  rec.vars({ 'self.now': s.now, 'self.seen': s.seen, ...extra });
+}
+
 function follow(rec: Rec, name: string, ...nodes: string[]): void {
   rec.mark(msgId(name), 'key');
   for (const n of nodes) rec.mark(n, 'key');
@@ -191,6 +196,7 @@ function poll(s: PushState, rec: Rec, lead: string[]): void {
   rec.count('requests');
   const after = s.seen;
   const up = addRow(s, 'up', `GET /poll?after=${after}`);
+  watch(s, rec, { 'self.requests': s.requests });
   rec.line(...lead, 'ask');
   rec.step(
     `Tick ${s.now}: the client polls. GET /poll?after=${after} is an ordinary request: open, send the headers, wait for the answer. after=${after} tells the server which messages the client already has.`,
@@ -201,6 +207,7 @@ function poll(s: PushState, rec: Rec, lead: string[]): void {
     s.empty++;
     rec.count('empty');
     s.nextPoll = s.now + s.every;
+    watch(s, rec, { new: fresh, 'self.empty': s.empty, 'self.next_poll': s.nextPoll });
     rec.line('check', 'answer', 'empty', 'schedule');
     rec.step(
       `Nothing is newer than ${after}, so the server answers at once with 200 and an empty list. A wasted round trip: a full set of headers each way and no news. The next poll is due at tick ${s.nextPoll}.`,
@@ -209,6 +216,7 @@ function poll(s: PushState, rec: Rec, lead: string[]): void {
   }
   const first = `m${fresh[0]}`;
   follow(rec, first);
+  watch(s, rec, { new: fresh });
   rec.line('check', 'newer');
   rec.compare(`id ${fresh[0]}`, '>', `after ${after}`, `send ${names(fresh)}`, {
     probe: atServer(up, first),
@@ -219,6 +227,7 @@ function poll(s: PushState, rec: Rec, lead: string[]): void {
   s.nextPoll = s.now + s.every;
   rec.mark(rowS(down.seq), 'key');
   rec.markEdge(rowE(down.seq), 'key');
+  watch(s, rec, { new: fresh, 'self.delays': s.delays, 'self.next_poll': s.nextPoll });
   rec.line('answer', 'got', 'delay', 'schedule');
   rec.step(
     `200 [${names(fresh)}] goes back and the client has ${first}. It reached the server at tick ${s.arrived[fresh[0] - 1]} and sat there ${ticks(waits[0])} until this poll asked. That wait is the price of polling: on average about half the interval.`,
@@ -234,11 +243,13 @@ function push(s: PushState, rec: Rec, lead: string[], followed?: { name: string;
     if (!followed) return;
     const { name, note } = followed;
     if (!s.open) {
+      watch(s, rec, { 'self.open': false });
       rec.line(...lead, 'wait_poll');
       rec.step(`Nothing is open, and short polling never pushes anyway. ${name} waits at the server for the client's next request.`, { probe: atServer(note, name) });
       return;
     }
     const wait = s.nextPoll - s.now;
+    watch(s, rec, { 'self.next_poll': s.nextPoll });
     rec.line(...lead, 'wait_poll');
     rec.compare(`${name} at tick ${s.now}`, '<', `next poll at ${s.nextPoll}`, `${name} waits ${ticks(wait)}`, {
       probe: atServer(note, name),
@@ -251,6 +262,7 @@ function push(s: PushState, rec: Rec, lead: string[], followed?: { name: string;
   if (!s.open) {
     if (!followed) return;
     const { name, note } = followed;
+    watch(s, rec, { 'self.open': false, new: fresh });
     rec.line(...lead, 'nothing');
     rec.step(`The connection is down, so the server has nowhere to send ${name}. It keeps it until the client is back.`, { probe: atServer(note, name) });
     return;
@@ -265,6 +277,7 @@ function push(s: PushState, rec: Rec, lead: string[], followed?: { name: string;
     s.open = false;
     follow(rec, first, rowS(down.seq));
     rec.markEdge(rowE(down.seq), 'key');
+    watch(s, rec, { 'self.open': false, new: fresh, 'self.delays': s.delays });
     rec.line(...lead, 'answer_held');
     rec.step(
       followed
@@ -283,6 +296,7 @@ function push(s: PushState, rec: Rec, lead: string[], followed?: { name: string;
     const [wait] = take(s, [i], rec);
     follow(rec, name, rowS(down.seq));
     rec.markEdge(rowE(down.seq), 'key');
+    watch(s, rec, { new: fresh, i });
     rec.line(...lead, s.method === 'sse' ? 'sse_frame' : 'ws_frame', 'frame_taken');
     const late = wait ? ` It waited ${ticks(wait)}, the time the connection was down.` : ` It waited 0 ticks.`;
     rec.step(
@@ -321,6 +335,7 @@ function connect(s: PushState, rec: Rec, cause: Cause): void {
           : cause === 'reconnect'
             ? `The client simply issues its next request`
             : `The client opens a long poll`;
+    watch(s, rec, { 'self.open': true, after, 'self.requests': s.requests });
     rec.line(...lead, 'request', 'long_open', 'opened');
     rec.step(
       `${why}: GET /poll?after=${after}. It looks like any request, but the server does not answer until it has something newer than ${after}, or until the hold limit. One request is now held open.`,
@@ -329,6 +344,7 @@ function connect(s: PushState, rec: Rec, cause: Cause): void {
     addRow(s, 'up', after ? `GET /events, Last-Event-ID ${after}` : 'GET /events');
     addRow(s, 'down', '200 text/event-stream');
     s.since = s.now;
+    watch(s, rec, { 'self.open': true, after, 'self.requests': s.requests });
     rec.line(...lead, 'request', 'sse_open', 'opened');
     rec.step(
       (cause === 'reconnect'
@@ -340,6 +356,7 @@ function connect(s: PushState, rec: Rec, cause: Cause): void {
     addRow(s, 'up', 'GET, Upgrade: websocket');
     addRow(s, 'down', '101 Switching Protocols');
     s.since = s.now;
+    watch(s, rec, { 'self.open': true, after, 'self.requests': s.requests });
     rec.line(...lead, 'request', 'ws_open', 'opened');
     rec.step(
       (cause === 'reconnect' ? `The application's own code reconnects: the browser will not do it. ` : ``) +
@@ -362,6 +379,7 @@ function event(s: PushState, rec: Rec, lead: string[]): void {
   addMsg(s, { name, kind: 'server', at: s.now, out: null });
   const note = addRow(s, 'note', '', name);
   follow(rec, name, rowS(note.seq));
+  watch(s, rec, { 'self.arrived': s.arrived });
   rec.line(...lead, 'arrive');
   rec.step(`Tick ${s.now}: a new chat message, ${name}, reaches the server. Follow it to the client.`, { probe: atServer(note, name) });
   push(s, rec, ['push'], { name, note });
@@ -373,6 +391,7 @@ function expire(s: PushState, rec: Rec): void {
   s.empty++;
   rec.count('empty');
   s.open = false;
+  watch(s, rec, { 'self.open': false, idle: s.now - s.since, 'self.empty': s.empty });
   rec.line('held_long', 'expire');
   rec.step(
     `The request has been held ${ticks(TIMEOUT)}, the proxy's idle timeout in this model, and comes back empty: 204 No Content. A real server answers a little before the proxy's limit, say at 25 seconds against 30, because a proxy that cuts the request first hands the client an error such as 504.`,
@@ -382,6 +401,7 @@ function expire(s: PushState, rec: Rec): void {
 }
 
 function heartbeat(s: PushState, rec: Rec): void {
+  watch(s, rec, { idle: s.now - s.since, 'self.since': s.now });
   if (s.method === 'sse') {
     addRow(s, 'down', ': ping');
     rec.line('idle', 'sse_ping', 'quiet');
@@ -418,6 +438,7 @@ function run(s: PushState, k: number, rec: Rec): void {
 }
 
 function sorry(s: PushState, rec: Rec, anchor: string): void {
+  watch(s, rec);
   rec.line(anchor);
   rec.step(`Sorry, this page's clock stops at tick ${MAX_TICK} so the numbers stay readable, and it reads ${s.now}. Use Replay to start again from tick 0.`);
 }
@@ -425,6 +446,7 @@ function sorry(s: PushState, rec: Rec, anchor: string): void {
 // ---- operations ----------------------------------------------------------------
 
 export function tick(s: PushState, k: number, rec: Rec): boolean {
+  rec.vars();
   if (s.now + k > MAX_TICK) {
     sorry(s, rec, 'clock');
     return false;
@@ -436,6 +458,7 @@ export function tick(s: PushState, k: number, rec: Rec): boolean {
   const idle = s.now - s.since;
   const sent = s.requests - req;
   const wasted = s.empty - empty;
+  watch(s, rec, { ticks: k, idle, ...(s.method === 'short' ? { 'self.next_poll': s.nextPoll } : { 'self.since': s.since }) });
   rec.line('clock');
   rec.step(
     `Clock moved from tick ${from} to ${s.now}. ` +
@@ -449,8 +472,10 @@ export function tick(s: PushState, k: number, rec: Rec): boolean {
 }
 
 export function arrive(s: PushState, rec: Rec): void {
+  rec.vars();
   event(s, rec, []);
   const m = s.msgs[s.msgs.length - 1];
+  watch(s, rec, { 'self.arrived': s.arrived });
   rec.line('arrive', 'push');
   rec.step(
     m.out === null
@@ -460,6 +485,7 @@ export function arrive(s: PushState, rec: Rec): void {
 }
 
 export function clientSend(s: PushState, rec: Rec): void {
+  rec.vars();
   const name = `c${s.received + 1}`;
   addMsg(s, { name, kind: 'client', at: s.now, out: s.now });
   if (s.method === 'ws') {
@@ -467,6 +493,7 @@ export function clientSend(s: PushState, rec: Rec): void {
     s.since = s.now;
     follow(rec, name, rowS(up.seq));
     rec.markEdge(rowE(up.seq), 'key');
+    watch(s, rec, { 'self.received': s.received, 'self.since': s.since });
     rec.line('ws_send');
     rec.step(`The client sends ${name} as a frame on the socket it already has. No new request and no HTTP headers: one connection carries both directions.`, {
       probe: atServer(up, name),
@@ -478,6 +505,7 @@ export function clientSend(s: PushState, rec: Rec): void {
     addRow(s, 'down', '201 Created');
     follow(rec, name, rowS(up.seq));
     rec.markEdge(rowE(up.seq), 'key');
+    watch(s, rec, { 'self.received': s.received, 'self.requests': s.requests });
     rec.line('post');
     rec.step(
       (s.method === 'sse'
@@ -488,6 +516,7 @@ export function clientSend(s: PushState, rec: Rec): void {
     );
   }
   s.received++;
+  watch(s, rec, { 'self.received': s.received, ...(s.method === 'ws' ? { 'self.since': s.since } : { 'self.requests': s.requests }) });
   rec.line(s.method === 'ws' ? 'ws_send' : 'created', 'received');
   rec.step(`${name} reached the server at tick ${s.now}. ${s.method === 'ws' ? 'Cost: one frame.' : 'Cost: one more request and its response.'}`, {
     probe: { text: name, at: msgId(name), place: 'right' },
@@ -495,8 +524,10 @@ export function clientSend(s: PushState, rec: Rec): void {
 }
 
 export function connectOp(s: PushState, rec: Rec): void {
+  rec.vars();
   if (s.open) {
     s.held = null;
+    watch(s, rec, { 'self.open': true });
     rec.line('open');
     rec.step(
       s.method === 'short'
@@ -508,6 +539,7 @@ export function connectOp(s: PushState, rec: Rec): void {
 }
 
 export function drop(s: PushState, missed: number, rec: Rec): void {
+  rec.vars();
   if (s.now + RETRY > MAX_TICK) {
     sorry(s, rec, 'broken');
     return;
@@ -516,6 +548,7 @@ export function drop(s: PushState, missed: number, rec: Rec): void {
   s.broken = true;
   s.held = null;
   addRow(s, 'cut', 'connection lost', '', 'bad');
+  watch(s, rec, { 'self.open': false, missed });
   rec.line('broken');
   rec.step(
     s.method === 'short'
@@ -529,10 +562,12 @@ export function drop(s: PushState, missed: number, rec: Rec): void {
   const before = s.seen;
   for (let i = 0; i < missed; i++) event(s, rec, ['missed']);
   s.now += RETRY;
+  watch(s, rec, { 'self.open': false, missed, 'self.arrived': s.arrived });
   rec.line('retry');
   rec.step(`Tick ${s.now}: ${ticks(RETRY)} later, the client reconnects.`);
   connect(s, rec, 'reconnect');
   const got = s.seen - before;
+  watch(s, rec, { 'self.open': s.open, missed, 'self.arrived': s.arrived });
   rec.line('reconnect');
   rec.step(
     (missed ? `${plural(got, 'missed message')} arrived ${ticks(RETRY)} late, and none was lost or sent twice. ` : `Nothing was missed while the connection was down. `) +
@@ -545,7 +580,9 @@ export function drop(s: PushState, missed: number, rec: Rec): void {
 }
 
 export function waitIdle(s: PushState, rec: Rec): void {
+  rec.vars();
   if (s.method === 'short') {
+    watch(s, rec);
     rec.line('short_idle');
     rec.step(`Short polling holds nothing open: every request finishes at once, so no idle timeout can catch it. Its cost is the other way round, requests that find nothing.`);
     return;
@@ -556,6 +593,7 @@ export function waitIdle(s: PushState, rec: Rec): void {
     sorry(s, rec, 'wait');
     return;
   }
+  watch(s, rec, { limit, 'self.since': s.since, ticks: k });
   rec.line('wait');
   rec.step(
     `Nothing to send for ${ticks(k)}. The connection has been quiet since tick ${s.since}, and ${s.method === 'long' ? `a long poll is held at most ${ticks(TIMEOUT)}` : `the server sends a heartbeat after ${ticks(HEARTBEAT)} of quiet`}.`,
@@ -566,6 +604,7 @@ export function waitIdle(s: PushState, rec: Rec): void {
 export function replay(s: PushState, method: Method, rec: Rec): void {
   Object.assign(s, create(method, s.every));
   s.plan = [...PLAN];
+  rec.vars({ method, plan: PLAN, ticks: PLAY, 'self.now': s.now });
   rec.line('reset');
   rec.step(
     `Start again under ${METHOD_NAME[method]}. The same script plays every time: messages arrive at ticks ${PLAN.join(' and ')}, and the clock runs to tick ${PLAY}.`,
@@ -573,6 +612,7 @@ export function replay(s: PushState, method: Method, rec: Rec): void {
   connect(s, rec, 'start');
   run(s, PLAY, rec);
   const avg = average(s);
+  watch(s, rec, { 'self.requests': s.requests, 'self.empty': s.empty, 'self.delays': s.delays });
   rec.line('play');
   rec.step(
     `Under ${METHOD_NAME[method]}: ${plural(s.requests, 'request')}, ${plural(s.empty, 'empty response')}, ${s.delays.length} delivered, average delay ${avg === null ? 'none' : `${fmt(avg)} ticks`}. ` +

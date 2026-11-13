@@ -428,6 +428,7 @@ export class Stage {
       this.sizeWindow();
       this.scrollLog();
       this.code.show(this.player.frames[this.player.index]?.lines);
+      this.code.showVars(this.player.frames[this.player.index]?.vars);
     }
   }
 
@@ -941,6 +942,7 @@ export class Stage {
       this.scrollLog();
     }
     this.code?.show(frame.lines, this.frameMs);
+    this.code?.showVars(frame.vars);
     this.frameMs = 0;
 
     // Speak only when the reader is moving through the steps, not on every frame of playback.

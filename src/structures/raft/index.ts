@@ -165,6 +165,7 @@ function markHead(rec: Rec, v: Server, tone: Tone): void {
 export function timeout(s: RaftState, raw: number | string, rec: Rec): boolean {
   clearView(s);
   const c = find(s, raw);
+  rec.vars(c ? { c: S(c), 'c.up': c.up, 'c.role': c.role } : undefined);
   rec.line('skip');
   if (!c) {
     rec.step(`This cluster has servers S1 to S${s.servers.length}. There is no server ${raw}.`);
@@ -187,6 +188,7 @@ export function timeout(s: RaftState, raw: number | string, rec: Rec): boolean {
   s.view.candidate = c.id;
   s.view.votes = votes;
   const follow: Follow = { text: `${S(c)} t${c.term}`, index: null };
+  rec.vars({ c: S(c), 'c.term': c.term, 'c.voted_for': S(c), votes });
   rec.line('stand');
   rec.step(
     `${S(c)} has heard no heartbeat for its election timeout, a random wait of, say, 150 to 300 ms. It becomes a candidate: term ${before} becomes ${c.term}, it votes for itself, and it asks every other server for a vote. Follow the request.`,
@@ -197,6 +199,7 @@ export function timeout(s: RaftState, raw: number | string, rec: Rec): boolean {
   for (const p of peers(s, c)) {
     rec.count('messages');
     const probe = atHead(follow, p);
+    rec.vars({ c: S(c), 'c.term': c.term, votes, p: S(p), 'p.term': p.term });
     if (!reachable(s, c, p)) {
       markHead(rec, p, 'bad');
       rec.line('lost');
@@ -215,6 +218,7 @@ export function timeout(s: RaftState, raw: number | string, rec: Rec): boolean {
       });
       stepDown(c, p.term);
       clearView(s);
+      rec.vars({ c: S(c), 'c.term': c.term, votes, p: S(p), 'p.term': p.term });
       rec.unmark(headId(p));
       rec.line('behind');
       rec.step(`A candidate that sees a newer term gives up at once. ${S(c)} moves to term ${p.term} as a follower, and there is no leader from this attempt.`, {
@@ -240,6 +244,7 @@ export function timeout(s: RaftState, raw: number | string, rec: Rec): boolean {
 
     rec.line(...(adopted ? ['adopt'] : []), 'voted');
     const vf = p.votedFor;
+    rec.vars({ c: S(c), 'c.term': c.term, votes, p: S(p), 'p.term': p.term, 'p.voted_for': vf === null ? null : S(vf) });
     if (vf !== null && vf !== c.id) {
       rec.compare(`${S(p)} voted`, '=', S(vf), `already voted in term ${c.term}, refuse`, {
         probe,
@@ -263,6 +268,7 @@ export function timeout(s: RaftState, raw: number | string, rec: Rec): boolean {
     const lastOf = (v: Server) => (v.log.length ? entryId(v, v.log.length) : null);
     const marks = [lastOf(c), lastOf(p)].filter((x): x is string => x !== null);
     for (const id of marks) rec.markCell(id, 0, 'compare');
+    rec.vars({ c: S(c), votes, p: S(p), 'c.last_term()': ct, 'p.last_term()': pt });
     rec.line('log_check', 'last_term');
     let ok: boolean;
     if (ct !== pt) {
@@ -278,6 +284,7 @@ export function timeout(s: RaftState, raw: number | string, rec: Rec): boolean {
       rec.compare(`${S(c)} last term ${ct}`, '=', `${S(p)} last term ${pt}`, 'same last term, compare lengths', { probe });
       for (const id of marks) rec.markCell(id, 1, 'compare');
       ok = c.log.length >= p.log.length;
+      rec.vars({ c: S(c), votes, p: S(p), 'len(c.log)': c.log.length, 'len(p.log)': p.log.length });
       rec.line('log_check', 'last_index');
       rec.compare(`${S(c)} last index ${c.log.length}`, ok ? '≥' : '<', `${S(p)} last index ${p.log.length}`, ok ? 'at least as long, grant' : `${S(p)}'s log is longer, refuse`, {
         probe,
@@ -296,6 +303,7 @@ export function timeout(s: RaftState, raw: number | string, rec: Rec): boolean {
     p.votedFor = c.id;
     votes++;
     s.view.votes = votes;
+    rec.vars({ c: S(c), 'c.term': c.term, votes, p: S(p), 'p.term': p.term, 'p.voted_for': S(c) });
     markHead(rec, p, 'ok');
     rec.line('grant');
     rec.step(`${S(p)} grants its vote and writes it to disk first, so a restart cannot make it vote twice in term ${c.term}. ${S(c)} has ${plural(votes, 'vote')}.`, { probe });
@@ -304,6 +312,7 @@ export function timeout(s: RaftState, raw: number | string, rec: Rec): boolean {
 
   const maj = majority(s);
   const n = s.servers.length;
+  rec.vars({ c: S(c), 'c.term': c.term, votes, 'majority()': maj });
   rec.line('tally');
   if (votes < maj) {
     rec.compare(`votes ${votes}`, '<', `majority ${maj}`, 'no leader this term', { probe: atHead(follow, c) });
@@ -330,6 +339,7 @@ function becomeLeader(s: RaftState, c: Server, vote: Follow, rec: Rec): void {
     c.next[p.id] = c.log.length + 1;
     c.match[p.id] = 0;
   }
+  rec.vars({ c: S(c), 'c.term': c.term, 'c.role': 'leader', 'len(c.log)': c.log.length, next: c.log.length + 1, match: 0 });
   rec.line('win', 'lead');
   rec.step(
     `${S(c)} is the leader of term ${c.term}, and no other server can be: each voted once, and two majorities always share a server. It does not know how far each follower's log goes, so it guesses they all match its own: next = ${c.log.length + 1} for every follower.`,
@@ -341,6 +351,7 @@ function becomeLeader(s: RaftState, c: Server, vote: Follow, rec: Rec): void {
     c.log.push({ term: c.term, value: null });
     const i = c.log.length;
     follow = { text: 'nop', index: i };
+    rec.vars({ c: S(c), 'c.term': c.term, 'len(c.log)': i, 'c.log[-1]': [c.term, null] });
     rec.markCell(entryId(c, i), 1, 'key');
     rec.line('noop');
     rec.step(
@@ -349,6 +360,7 @@ function becomeLeader(s: RaftState, c: Server, vote: Follow, rec: Rec): void {
     );
   } else {
     follow = { text: `${S(c)} t${c.term}`, index: null };
+    rec.vars({ c: S(c), 'c.term': c.term, 'len(c.log)': c.log.length, 'self.max_log': s.maxLog });
     rec.line('noop');
     rec.step(`Sorry, this page draws at most ${s.maxLog} entries per log, so there is no room for the usual no-op. ${S(c)} sends an empty heartbeat instead.`, {
       probe: atHead(follow, c),
@@ -366,6 +378,7 @@ function broadcast(s: RaftState, L: Server, follow: Follow, lead: string[], rec:
     if (!reachable(s, L, p)) {
       rec.count('messages');
       markHead(rec, p, 'bad');
+      rec.vars({ leader: S(L), p: S(p), reachable: false });
       rec.line(...lead, 'each', 'unreachable');
       rec.step(`${why(s, L, p)}, so the AppendEntries to ${S(p)} is lost. The leader keeps trying on every heartbeat, and ${S(p)} catches up when it can hear again.`, {
         probe: atHead(follow, p),
@@ -385,6 +398,7 @@ function replicate(s: RaftState, L: Server, f: Server, follow: Follow, lead: str
   const probe = atHead(follow, f);
   const intro = follow.index === null ? `${S(L)}'s heartbeat reaches ${S(f)}` : `${S(L)}'s AppendEntries reaches ${S(f)}`;
   rec.markCell(headId(f), 1, 'compare');
+  rec.vars({ leader: S(L), f: S(f), 'leader.term': L.term, 'f.term': f.term });
   rec.line(...lead, 'check_term');
   if (f.term > L.term) {
     rec.compare(`${S(L)} term ${L.term}`, '<', `${S(f)} term ${f.term}`, `${S(L)} is out of date, it steps down`, {
@@ -393,6 +407,7 @@ function replicate(s: RaftState, L: Server, f: Server, follow: Follow, lead: str
     });
     stepDown(L, f.term);
     clearView(s);
+    rec.vars({ leader: S(L), f: S(f), 'leader.term': L.term, 'leader.role': L.role });
     rec.unmark(headId(f));
     rec.line(...lead, 'deposed');
     rec.step(
@@ -431,6 +446,7 @@ function replicate(s: RaftState, L: Server, f: Server, follow: Follow, lead: str
   for (;;) {
     const prev = L.next[f.id] - 1;
     s.view.nextAt = prev + 1;
+    rec.vars({ leader: S(L), f: S(f), 'leader.next[f]': prev + 1, prev, 'len(f.log)': f.log.length });
     if (prev === 0) {
       rec.line(...lead, 'prev', 'empty');
       rec.step(`next = 1, so the entry before it is index 0: there is nothing to check. An empty prefix always matches.`, { probe });
@@ -446,6 +462,7 @@ function replicate(s: RaftState, L: Server, f: Server, follow: Follow, lead: str
     } else {
       const ft = f.log[prev - 1].term;
       const same = lt === ft;
+      rec.vars({ f: S(f), prev, 'f.log[prev-1][0]': ft, 'leader.log[prev-1][0]': lt });
       rec.markCell(entryId(f, prev), 0, 'compare');
       rec.markCell(entryId(L, prev), 0, 'compare');
       rec.line(...lead, 'prev', 'has_prev', 'same_term', ...(same ? ['agree'] : []));
@@ -464,6 +481,7 @@ function replicate(s: RaftState, L: Server, f: Server, follow: Follow, lead: str
     L.next[f.id]--;
     retries++;
     s.view.nextAt = L.next[f.id];
+    rec.vars({ leader: S(L), f: S(f), 'leader.next[f]': L.next[f.id], prev, 'len(f.log)': f.log.length });
     rec.count('messages');
     rec.line(...lead, 'back');
     rec.step(`${S(L)} moves next for ${S(f)} back one, to ${L.next[f.id]}, and sends again. Each retry is another round trip. Real servers skip back faster, for example a whole term at a time.`, {
@@ -481,6 +499,7 @@ function replicate(s: RaftState, L: Server, f: Server, follow: Follow, lead: str
     if (i <= f.log.length) {
       const fe = f.log[i - 1];
       const id = entryId(f, i);
+      rec.vars({ leader: S(L), f: S(f), prev, i, 'entry[0]': e.term, 'f.log[i-1][0]': fe.term });
       rec.markCell(id, 0, 'compare');
       rec.line(...lead, 'conflict');
       if (fe.term === e.term) {
@@ -514,6 +533,7 @@ function replicate(s: RaftState, L: Server, f: Server, follow: Follow, lead: str
   clearView(s);
   if (follow.index !== null && copied.includes(follow.index)) rec.markCell(entryId(f, follow.index), 1, 'key');
   markHead(rec, f, 'ok');
+  rec.vars({ leader: S(L), f: S(f), 'leader.match[f]': top, 'leader.commit': L.commit, 'f.commit': f.commit });
   rec.line(...lead, ...(removed ? ['truncate'] : []), ...(copied.length ? ['copy'] : []), 'ack');
   rec.step(
     (removed
@@ -541,6 +561,7 @@ function advanceCommit(s: RaftState, L: Server, follow: Follow, lead: string[], 
     const copies = holders.length;
     lastCopies = copies;
     const id = entryId(L, i);
+    rec.vars({ leader: S(L), top: L.log.length, n: i, copies, 'majority()': maj, 'leader.commit': L.commit });
     rec.mark(id, 'compare');
     rec.line(...lead, 'scan', 'majority');
     if (copies < maj) {
@@ -557,6 +578,7 @@ function advanceCommit(s: RaftState, L: Server, follow: Follow, lead: string[], 
       message: `Entry ${i} is on ${copies} of ${n} servers (${list(holders.map(S))}): a majority. Any future leader needs votes from a majority, and one of them holds this entry, so it will survive.`,
     });
     const t = L.log[i - 1].term;
+    rec.vars({ leader: S(L), n: i, copies, 'leader.log[n-1][0]': t, 'leader.term': L.term });
     rec.line(...lead, 'own_term');
     if (t !== L.term) {
       rec.line(...lead, 'own_term', 'older');
@@ -573,6 +595,7 @@ function advanceCommit(s: RaftState, L: Server, follow: Follow, lead: string[], 
     });
     const from = L.commit;
     L.commit = i;
+    rec.vars({ leader: S(L), n: i, 'leader.log[n-1][0]': t, 'leader.term': L.term, 'leader.commit': L.commit });
     rec.clearMarks();
     rec.line(...lead, 'commit');
     const what = `${S(L)} moves its commit index from ${from} to ${i}: ${range(from + 1, i)} ${from + 1 === i ? 'is' : 'are'} committed`;
@@ -600,6 +623,7 @@ function advanceCommit(s: RaftState, L: Server, follow: Follow, lead: string[], 
       p.commit = Math.max(p.commit, Math.min(i, L.match[p.id] ?? 0));
       if (p.commit > was) told.push(p);
     }
+    rec.vars({ leader: S(L), n: i, 'leader.commit': L.commit, told: told.map(S), deaf: deaf.map(S) });
     rec.line(...lead, 'tell');
     rec.step(
       (told.length
@@ -610,6 +634,7 @@ function advanceCommit(s: RaftState, L: Server, follow: Follow, lead: string[], 
     );
     return follow.index === null || L.commit >= follow.index;
   }
+  rec.vars({ leader: S(L), top: L.log.length, 'leader.commit': L.commit, copies: lastCopies, 'majority()': maj });
   rec.line(...lead, 'waiting');
   const reach = 1 + peers(s, L).filter((p) => reachable(s, L, p)).length;
   rec.step(
@@ -627,18 +652,21 @@ function advanceCommit(s: RaftState, L: Server, follow: Follow, lead: string[], 
 export function write(s: RaftState, raw: number | string, rec: Rec): boolean {
   clearView(s);
   const value = Number(raw);
+  rec.vars({ value });
   rec.line('find');
   if (!Number.isInteger(value) || value < 1 || value > MAX_VALUE) {
     rec.step(`Values on this page are whole numbers from 1 to ${MAX_VALUE}.`);
     return false;
   }
   const L = clientLeader(s);
+  rec.vars({ value, leader: L ? S(L) : null });
   if (!L) {
     rec.line('find', 'no_leader');
     rec.step(`No server is leader, so the client has nobody to send ${value} to. It retries after an election: time out a follower.`);
     return false;
   }
   if (L.log.length >= s.maxLog) {
+    rec.vars({ value, leader: S(L), 'len(leader.log)': L.log.length, 'self.max_log': s.maxLog });
     rec.line('full');
     rec.step(`Sorry, this page draws at most ${s.maxLog} entries per log, and ${S(L)}'s log is full. Use Start over for a fresh cluster. A real server compacts its log into a snapshot instead.`);
     return false;
@@ -647,6 +675,7 @@ export function write(s: RaftState, raw: number | string, rec: Rec): boolean {
   const i = L.log.length;
   const follow: Follow = { text: String(value), index: i };
   const stale = peers(s, L).some((p) => p.up && p.term > L.term);
+  rec.vars({ value, leader: S(L), 'leader.term': L.term, index: i });
   rec.markCell(entryId(L, i), 1, 'key');
   rec.line('find', 'append');
   rec.step(
@@ -656,6 +685,7 @@ export function write(s: RaftState, raw: number | string, rec: Rec): boolean {
     { probe: atEntry(follow, L, i) },
   );
   if (!broadcast(s, L, follow, ['send'], rec)) {
+    rec.vars({ value, leader: S(L), index: i, 'broadcast()': false });
     rec.line('send');
     rec.step(`The write is not acknowledged. The client retries with the new leader, and entry ${i} on ${S(L)} will be overwritten if it never reached a majority.`, {
       probe: atFollowed(follow, L),
@@ -669,6 +699,7 @@ export function write(s: RaftState, raw: number | string, rec: Rec): boolean {
 export function crash(s: RaftState, raw: number | string, rec: Rec): boolean {
   clearView(s);
   const v = find(s, raw);
+  rec.vars(v ? { s: S(v), 's.up': v.up } : undefined);
   rec.line('crash');
   if (!v) {
     rec.step(`This cluster has servers S1 to S${s.servers.length}. There is no server ${raw}.`);
@@ -682,6 +713,7 @@ export function crash(s: RaftState, raw: number | string, rec: Rec): boolean {
   v.up = false;
   v.next = {};
   v.match = {};
+  rec.vars({ s: S(v), 's.up': false, 's.term': v.term, 's.voted_for': v.votedFor === null ? null : S(v.votedFor), 'len(s.log)': v.log.length });
   rec.step(
     `${S(v)} crashes. Its term (${v.term}), its vote and its log are on disk and survive; its commit index and any leader state are lost. ` +
       (was === 'leader'
@@ -695,6 +727,7 @@ export function crash(s: RaftState, raw: number | string, rec: Rec): boolean {
 export function recover(s: RaftState, raw: number | string, rec: Rec): boolean {
   clearView(s);
   const v = find(s, raw);
+  rec.vars(v ? { s: S(v), 's.up': v.up } : undefined);
   rec.line('restart');
   if (!v) {
     rec.step(`This cluster has servers S1 to S${s.servers.length}. There is no server ${raw}.`);
@@ -709,10 +742,12 @@ export function recover(s: RaftState, raw: number | string, rec: Rec): boolean {
   v.commit = 0;
   v.next = {};
   v.match = {};
+  rec.vars({ s: S(v), 's.up': true, 's.role': 'follower', 's.term': v.term, 's.commit': 0 });
   rec.step(
     `${S(v)} restarts as a follower. Its term (${v.term}), vote and log were on disk, so they are back. Its commit index was only in memory, so it starts at 0 until a leader says otherwise.`,
   );
   const L = leaderFor(s, v);
+  rec.vars({ s: S(v), 's.term': v.term, 's.commit': 0, leader: L ? S(L) : null });
   rec.line('find_leader');
   if (!L) {
     rec.line('find_leader', 'no_leader');
@@ -722,6 +757,7 @@ export function recover(s: RaftState, raw: number | string, rec: Rec): boolean {
   const follow: Follow = { text: `${S(L)} t${L.term}`, index: null };
   if (!replicate(s, L, v, follow, ['rpc'], rec)) return true;
   if (L.log.length > L.commit) advanceCommit(s, L, follow, ['rpc'], rec);
+  rec.vars({ s: S(v), 's.term': v.term, 's.commit': v.commit, leader: S(L), 'len(s.log)': v.log.length });
   rec.line('rpc');
   rec.step(`${S(v)} is back in step: its log is the same as ${S(L)}'s up to ${L.log.length}, and it knows entries up to ${v.commit} are committed.`, {
     probe: atHead(follow, v),
@@ -733,6 +769,7 @@ export function recover(s: RaftState, raw: number | string, rec: Rec): boolean {
 export function partition(s: RaftState, raw: number | string, rec: Rec): boolean {
   clearView(s);
   const v = find(s, raw);
+  rec.vars(v ? { s: S(v), 'self.cut': s.servers.filter((x) => s.cut[x.id - 1]).map(S) } : undefined);
   rec.line('cut');
   if (!v) {
     rec.step(`This cluster has servers S1 to S${s.servers.length}. There is no server ${raw}.`);
@@ -750,6 +787,7 @@ export function partition(s: RaftState, raw: number | string, rec: Rec): boolean
     return false;
   }
   s.cut[v.id - 1] = true;
+  rec.vars({ s: S(v), 'self.cut': s.servers.filter((x) => s.cut[x.id - 1]).map(S) });
   const farSide = s.servers.filter((x) => s.cut[x.id - 1]);
   const nearSide = s.servers.filter((x) => !s.cut[x.id - 1]);
   const maj = majority(s);
@@ -767,14 +805,17 @@ export function partition(s: RaftState, raw: number | string, rec: Rec): boolean
 /** Reconnect everyone. Leaders, newest term first, send a heartbeat round. */
 export function heal(s: RaftState, rec: Rec): boolean {
   clearView(s);
+  rec.vars({ 'self.cut': s.servers.filter((x) => s.cut[x.id - 1]).map(S) });
   rec.line('heal');
   if (!s.cut.some(Boolean)) {
     rec.step(`There is no partition: every server that is up can already reach every other.`);
     return false;
   }
   s.cut.fill(false);
+  rec.vars({ 'self.cut': [] });
   rec.step(`The partition heals and messages flow between every pair of servers again. Nothing changes until someone sends something: the next heartbeats.`);
   const leaders = s.servers.filter((v) => v.role === 'leader').sort((a, b) => b.term - a.term);
+  rec.vars({ 'self.cut': [], leaders: leaders.map(S) });
   rec.line('leaders');
   if (!leaders.some((v) => v.up)) {
     rec.step(`No server that is up is a leader. The first election timer to fire starts an election.`);
@@ -784,6 +825,7 @@ export function heal(s: RaftState, rec: Rec): boolean {
   for (const L of leaders) {
     if (!L.up || L.role !== 'leader') continue;
     const follow: Follow = { text: `${S(L)} t${L.term}`, index: null };
+    rec.vars({ leaders: leaders.map(S), leader: S(L), 'leader.term': L.term });
     rec.line('heartbeat');
     rec.step(`${S(L)}, leader of term ${L.term}, sends its heartbeat to every server. A heartbeat is an AppendEntries carrying whatever that follower is missing, usually nothing, so it runs the same checks.`, {
       probe: atHead(follow, L),
@@ -793,6 +835,7 @@ export function heal(s: RaftState, rec: Rec): boolean {
       summary.push(`${S(L)} leads term ${L.term}`);
     } else summary.push(`${S(L)} stepped down`);
   }
+  rec.vars({ leaders: leaders.map(S) });
   rec.line('heartbeat');
   const now = clientLeader(s);
   const down = s.servers.filter((v) => !v.up);
@@ -812,6 +855,7 @@ export function reset(s: RaftState, rec: Rec): void {
   s.servers = fresh.servers;
   s.cut = fresh.cut;
   clearView(s);
+  rec.vars({ n: s.servers.length, 'self.cut': [] });
   rec.line('reset');
   rec.step(`A fresh cluster: every server is a follower in term 0 with an empty log. Time out any server to elect a leader.`);
 }

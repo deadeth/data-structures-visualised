@@ -1,4 +1,17 @@
-import type { Compare, Frame, Probe, Rec, Scene, Tone } from './types';
+import type { Compare, Frame, Probe, Rec, Scene, Tone, VarValue } from './types';
+
+/** How a variable's value reads in the strip beside the code: lists in brackets, long ones cut in the middle. */
+export function showValue(v: VarValue): string {
+  if (v === null) return 'null';
+  if (typeof v === 'boolean') return v ? 'true' : 'false';
+  if (Array.isArray(v)) {
+    const items = v.map((x) => (x === null ? 'null' : String(x)));
+    const cut = items.length > 12 ? [...items.slice(0, 8), '…', ...items.slice(-3)] : items;
+    return `[${cut.join(', ')}]`;
+  }
+  const s = String(v);
+  return s.length > 40 ? `${s.slice(0, 37)}…` : s;
+}
 
 /**
  * Collects frames while an operation runs.
@@ -17,6 +30,7 @@ export class Recorder<S> implements Rec {
   private cellMarks = new Map<string, Tone>();
   private edgeMarks = new Map<string, Tone>();
   private anchors: string[] = [];
+  private watch: [string, string][] | undefined;
 
   constructor(
     private readonly state: S,
@@ -30,6 +44,12 @@ export class Recorder<S> implements Rec {
 
   line(...anchors: string[]): void {
     if (this.recording) this.anchors = anchors;
+  }
+
+  vars(values?: Record<string, VarValue>): void {
+    if (!this.recording) return;
+    const list = values ? Object.entries(values).filter(([, v]) => v !== undefined).map(([k, v]): [string, string] => [k, showValue(v)]) : [];
+    this.watch = list.length ? list : undefined;
   }
 
   mark(nodeId: string, tone: Tone): void {
@@ -92,7 +112,7 @@ export class Recorder<S> implements Rec {
       const tone = this.edgeMarks.get(e.id);
       if (tone) e.tone = tone;
     }
-    this.frames.push({ scene, message, probe: extra.probe, compare: extra.compare, counters: { ...this.counters }, lines: this.anchors.length ? [...this.anchors] : undefined });
+    this.frames.push({ scene, message, probe: extra.probe, compare: extra.compare, counters: { ...this.counters }, lines: this.anchors.length ? [...this.anchors] : undefined, vars: this.watch });
   }
 }
 

@@ -119,6 +119,7 @@ export function produce(s: LogState, key: number, rec: Rec): { partition: number
   const count = s.partitions.length;
   const raw = 31 * key + 7;
   const h = hashKey(key);
+  rec.vars({ key, h });
   rec.line('hash');
   rec.step(
     `Produce a record with key ${key}. The producer does not choose a partition by hand. It hashes the key: 31 × ${key} + 7 = ${raw}, and ${raw} mod ${PRIME} = ${h}.`,
@@ -127,6 +128,7 @@ export function produce(s: LogState, key: number, rec: Rec): { partition: number
   const p = h % count;
   const part = s.partitions[p];
   rec.mark(hid(p), 'path');
+  rec.vars({ key, h, p });
   rec.line('pick');
   rec.step(
     `${h} mod ${count} = ${p}, so the record goes to partition ${p}. The same key always gives the same sum, so every record with key ${key} lands in this one partition.`,
@@ -141,6 +143,7 @@ export function produce(s: LogState, key: number, rec: Rec): { partition: number
   }
 
   const offset = endOf(part);
+  rec.vars({ key, h, p, offset });
   rec.line('offset');
   rec.step(
     `Partition ${p} has taken ${plural(offset, 'record')} since it was made, so its next free offset is ${offset}. The record goes there, at the end. A log never writes into the middle.`,
@@ -153,6 +156,7 @@ export function produce(s: LogState, key: number, rec: Rec): { partition: number
   rec.count('writes');
   const probe = probeAt(key, p, offset);
   rec.mark(oid(p, offset), 'key');
+  rec.vars({ key, h, p, offset, 'part.records': part.records });
   rec.line('append');
   rec.step(
     `Append ${key} at offset ${offset}. ` +
@@ -161,6 +165,7 @@ export function produce(s: LogState, key: number, rec: Rec): { partition: number
     { probe },
   );
 
+  rec.vars({ key, h, p, offset });
   rec.line('done');
   const list = earlier.length > 1 ? `${earlier.slice(0, -1).join(', ')} and ${earlier[earlier.length - 1]}` : String(earlier[0]);
   rec.step(
@@ -183,6 +188,7 @@ function behind(s: LogState, g: GroupId, p: number): string {
 export function consume(s: LogState, group: number | string, partition: number | string, rec: Rec): number | null {
   const g = asGroup(group);
   const p = Number(partition);
+  rec.vars({ group: String(group), p });
   rec.line('check');
   if (!g) {
     rec.step(`There are two consumer groups on this page, A and B. Enter a or b as the group.`);
@@ -197,6 +203,7 @@ export function consume(s: LogState, group: number | string, partition: number |
   const pos = grp.position[p];
   const end = endOf(part);
   const slot = oid(p, pos);
+  rec.vars({ group: g, p, pos, 'part.end()': end });
 
   if (pos >= end) {
     rec.mark(slot, 'compare');
@@ -222,6 +229,7 @@ export function consume(s: LogState, group: number | string, partition: number |
   rec.count('reads');
   if (again) rec.count('redelivered');
   rec.mark(slot, 'key');
+  rec.vars({ group: g, p, pos, 'part.end()': end, key });
   rec.line('read');
   rec.step(
     `Read offset ${pos}: key ${key}. The record is copied to the consumer and stays in the log. Reading deletes nothing, so group ${name(other(g))} can read the same record whenever it gets here.` +
@@ -232,6 +240,7 @@ export function consume(s: LogState, group: number | string, partition: number |
   grp.position[p] = pos + 1;
   grp.seen[p] = Math.max(grp.seen[p], pos + 1);
   const open = grp.position[p] - grp.committed[p];
+  rec.vars({ group: g, p, pos, 'part.end()': end, key, 'g.position[p]': grp.position[p] });
   rec.line('advance');
   rec.step(
     `Move ${name(g)}'s position to ${pos + 1}. That number lives only in the consumer's memory. Its committed offset here is still ${grp.committed[p]}, so a crash now would deliver ${open === 1 ? 'this record' : `the last ${open} records`} again. 1 record read, none removed.`,
@@ -243,6 +252,7 @@ export function consume(s: LogState, group: number | string, partition: number |
 /** Save a group's position on every partition. Returns how many committed offsets moved. */
 export function commit(s: LogState, group: number | string, rec: Rec): number {
   const g = asGroup(group);
+  rec.vars({ group: g ?? String(group), moved: g ? 0 : undefined });
   rec.line('each');
   if (!g) {
     rec.step(`There are two consumer groups on this page, A and B. Enter a or b as the group.`);
@@ -257,6 +267,7 @@ export function commit(s: LogState, group: number | string, rec: Rec): number {
   for (let p = 0; p < s.partitions.length; p++) {
     const c = grp.committed[p];
     const pos = grp.position[p];
+    rec.vars({ group: g, p, 'g.committed[p]': c, 'g.position[p]': pos, moved });
     rec.line('ahead');
     if (c < pos) {
       rec.compare(`${name(g)} commit ${c}`, '<', `pos ${pos}`, `save ${pos}`, {
@@ -265,6 +276,7 @@ export function commit(s: LogState, group: number | string, rec: Rec): number {
       grp.committed[p] = pos;
       moved++;
       records += pos - c;
+      rec.vars({ group: g, p, 'g.committed[p]': pos, 'g.position[p]': pos, moved });
       rec.line('save');
       rec.step(`Partition ${p}: the committed offset moves to ${pos}. Records below offset ${pos} will not be handed to group ${name(g)} again, whatever happens to its consumer.`);
     } else {
@@ -273,6 +285,7 @@ export function commit(s: LogState, group: number | string, rec: Rec): number {
       });
     }
   }
+  rec.vars({ group: g, moved });
   rec.line('done');
   rec.step(
     moved
@@ -285,6 +298,7 @@ export function commit(s: LogState, group: number | string, rec: Rec): number {
 /** The group's consumer dies and restarts from its committed offsets. Returns how many records it will read again. */
 export function crash(s: LogState, group: number | string, rec: Rec): number {
   const g = asGroup(group);
+  rec.vars({ group: g ?? String(group), again: g ? 0 : undefined });
   rec.line('each');
   if (!g) {
     rec.step(`There are two consumer groups on this page, A and B. Enter a or b as the group.`);
@@ -303,12 +317,14 @@ export function crash(s: LogState, group: number | string, rec: Rec): number {
     grp.position[p] = c;
     if (n === 0) continue;
     for (let o = c; o < pos; o++) rec.mark(oid(p, o), 'path');
+    rec.vars({ group: g, p, 'g.committed[p]': c, 'g.position[p]': c, again });
     rec.line('rewind');
     rec.step(
       `Partition ${p}: the position falls back from ${pos} to the committed offset, ${c}. ` +
         (n === 1 ? `The record at offset ${c} was read but never committed, so it will be delivered again.` : `The ${n} records at offsets ${c} to ${pos - 1} were read but never committed, so they will be delivered again.`),
     );
   }
+  rec.vars({ group: g, again });
   rec.line('done');
   rec.step(
     again
@@ -321,12 +337,14 @@ export function crash(s: LogState, group: number | string, rec: Rec): number {
 /** Retention drops the oldest segment of a partition. Returns how many unread records the groups were moved past. */
 export function trim(s: LogState, partition: number | string, rec: Rec): number {
   const p = Number(partition);
+  rec.vars({ p });
   rec.line('oldest');
   if (!validPartition(s, p)) {
     rec.step(`This topic has partitions 0 to ${s.partitions.length - 1}. There is no partition ${partition} to trim.`);
     return 0;
   }
   const part = s.partitions[p];
+  rec.vars({ p, 'part.start': part.start, 'len(part.records)': part.records.length });
   if (part.records.length < SEGMENT) {
     rec.line('oldest', 'keep');
     rec.step(
@@ -343,6 +361,7 @@ export function trim(s: LogState, partition: number | string, rec: Rec): number 
   part.records.splice(0, SEGMENT);
   part.start += SEGMENT;
   const start = part.start;
+  rec.vars({ p, 'part.start': start, 'len(part.records)': part.records.length });
   rec.line('drop');
   rec.step(
     `The whole segment is deleted at once. On disk it is one file, so no other record is touched. The log now starts at offset ${start}. Offsets are never reused: the next record here still gets offset ${endOf(part)}.`,
@@ -353,6 +372,7 @@ export function trim(s: LogState, partition: number | string, rec: Rec): number 
   for (const g of GROUPS) {
     const grp = s.groups[g];
     const pos = grp.position[p];
+    rec.vars({ p, 'part.start': start, g, 'g.position[p]': pos, 'g.committed[p]': grp.committed[p], skipped });
     rec.line('behind');
     if (pos < start) {
       const n = start - pos;
@@ -365,6 +385,7 @@ export function trim(s: LogState, partition: number | string, rec: Rec): number 
       skipped += n;
       rec.count('skipped', n);
       lost.push(`group ${name(g)} missed ${n}`);
+      rec.vars({ p, 'part.start': start, g, 'g.position[p]': start, 'g.committed[p]': start, skipped });
       rec.line('reset');
       rec.step(
         `Group ${name(g)} is moved up to the new start, offset ${start}, and carries on from there. In Kafka the consumer finds out on its next fetch: the broker answers "offset out of range" and the consumer resets as its auto.offset.reset setting says. The skipped records are gone for good.`,
@@ -376,6 +397,7 @@ export function trim(s: LogState, partition: number | string, rec: Rec): number 
       if (grp.committed[p] < start) {
         const c = grp.committed[p];
         grp.committed[p] = start;
+        rec.vars({ p, 'part.start': start, g, 'g.position[p]': pos, 'g.committed[p]': start, skipped });
         rec.line('stale');
         rec.step(
           `Group ${name(g)}'s committed offset, ${c}, pointed into the deleted segment, so it moves up to ${start}. The records it had read but not committed can no longer be replayed after a crash.`,
@@ -390,6 +412,7 @@ export function trim(s: LogState, partition: number | string, rec: Rec): number 
       : part.records.length === 1
         ? `Partition ${p} now keeps only offset ${start}`
         : `Partition ${p} now keeps offsets ${start} to ${last}`;
+  rec.vars({ p, 'part.start': start, skipped });
   rec.line('done');
   rec.step(
     kept +

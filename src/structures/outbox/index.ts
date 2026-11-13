@@ -1,7 +1,7 @@
 import { CAPTION_ROOM, LABEL_MAX, PROBE_H, SUB_ROOM } from '../../core/fit';
 import { CELL_GAP, CELL_H, TAG_H, TRAY_PAD } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
-import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef } from '../../core/types';
+import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef, VarValue } from '../../core/types';
 import java from './code/Outbox.java?raw';
 import python from './code/outbox.py?raw';
 import { info } from './info';
@@ -115,6 +115,8 @@ export function create(approach: Approach = 'outbox', maxOutbox = OUTBOX_MAX, ma
 const ev = (e: Event | number) => `e${typeof e === 'number' ? e : e.id}`;
 const payload = (e: Event) => `${e.account} +${e.amount}`;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+/** A string as the listing holds it, for the Variables strip. */
+const q = (x: string) => `"${x}"`;
 const approachName = (a: Approach) => (a === 'outbox' ? 'outbox' : 'dual write');
 
 export function asApproach(raw: number | string): Approach | null {
@@ -211,8 +213,11 @@ type CrashAt = 'after_commit' | 'before_commit' | null;
 /** Commit to the database, then publish as a second step. */
 function writeDual(s: OutboxState, account: number, amount: number, crash: CrashAt, rec: Rec): Event | null {
   const before = s.balances[account];
+  const armed = crash ? q(crash) : null;
+  const txv = before + amount;
   s.pending = { account, amount, row: null };
   rec.mark(aid(account), 'path');
+  rec.vars({ account, amount, 'tx.accounts[account]': txv });
   rec.line('begin');
   rec.step(`Begin a database transaction and add ${amount} to account ${account}: ${before} becomes ${before + amount}. Nobody else can see the change until it commits.`);
 
@@ -225,6 +230,7 @@ function writeDual(s: OutboxState, account: number, amount: number, crash: Crash
   const e = newEvent(s, account, amount);
   s.inflight = e;
   rec.markCell(SVC, 1, 'key');
+  rec.vars({ account, amount, 'tx.accounts[account]': txv, event: ev(e) });
   rec.line('event');
   rec.step(`Build event ${ev(e)}, "${payload(e)}", in the service's memory. Until it is published it exists nowhere else.`, { probe: atService(e) });
 
@@ -233,6 +239,7 @@ function writeDual(s: OutboxState, account: number, amount: number, crash: Crash
     rec.mark(SVC, 'bad');
     rec.markCell(SVC, 1, 'bad');
     rec.count('lost');
+    rec.vars({ account, amount, event: ev(e), armed });
     rec.line('between');
     rec.step(
       `The service crashes here, between the two steps. The commit is on disk. The event was only in memory, so it dies with the process.`,
@@ -241,6 +248,7 @@ function writeDual(s: OutboxState, account: number, amount: number, crash: Crash
     s.serviceDown = false;
     s.inflight = null;
     rec.unmark(SVC);
+    rec.vars({ account, amount, armed: null });
     rec.line('restart');
     rec.step(
       `The service restarts. Nothing on disk says an event is owed, so nobody will ever publish ${ev(e)}. The database says account ${account} holds ${s.balances[account]}; the consumer will go on believing ${s.totals[account]}. The event is lost for good.`,
@@ -252,6 +260,7 @@ function writeDual(s: OutboxState, account: number, amount: number, crash: Crash
   s.inflight = null;
   rec.markCell(SVC, 1, 'idle');
   rec.mark(lid(offset), 'key');
+  rec.vars({ account, amount, event: ev(e), 'len(log)': s.log.length });
   rec.line('publish');
   rec.step(`Publish ${ev(e)} to the log, a separate call to a separate system. It lands at offset ${offset}.`, { probe: atLog(e, offset) });
 
@@ -266,14 +275,18 @@ function writeDual(s: OutboxState, account: number, amount: number, crash: Crash
 /** One transaction: the business change and the outbox row. */
 function writeOutbox(s: OutboxState, account: number, amount: number, crash: CrashAt, rec: Rec): Event | null {
   const before = s.balances[account];
+  const armed = crash ? q(crash) : null;
+  const txv = before + amount;
   s.pending = { account, amount, row: null };
   rec.mark(aid(account), 'path');
+  rec.vars({ account, amount, 'tx.accounts[account]': txv });
   rec.line('tx_begin');
   rec.step(`Begin one database transaction and add ${amount} to account ${account}: ${before} becomes ${before + amount}, not yet committed.`);
 
   const e = newEvent(s, account, amount);
   s.pending.row = { event: e, published: false };
   rec.markCell(oid(e.id), 0, 'key');
+  rec.vars({ account, amount, 'tx.accounts[account]': txv, event: ev(e) });
   rec.line('tx_outbox');
   rec.step(
     `In the same transaction, insert ${ev(e)}, "${payload(e)}", into the outbox table, marked unpublished. The event is a row in the same database as the change it describes.`,
@@ -283,11 +296,13 @@ function writeOutbox(s: OutboxState, account: number, amount: number, crash: Cra
   if (crash === 'before_commit') {
     s.serviceDown = true;
     rec.mark(SVC, 'bad');
+    rec.vars({ account, amount, event: ev(e), armed });
     rec.line('before_commit');
     rec.step(`The service crashes before COMMIT.`, { probe: atRow(e) });
     rec.mark(aid(account), 'bad');
     rec.mark(oid(e.id), 'bad');
     rec.markCell(oid(e.id), 0, 'bad');
+    rec.vars({ account, amount, armed: null });
     rec.line('restart_before');
     rec.step(
       `The database rolls the transaction back: the change to account ${account} and the outbox row vanish together. No event without the write, no write without the event. The caller gets an error and can retry.`,
@@ -311,10 +326,12 @@ function writeOutbox(s: OutboxState, account: number, amount: number, crash: Cra
   if (crash === 'after_commit') {
     s.serviceDown = true;
     rec.mark(SVC, 'bad');
+    rec.vars({ account, amount, event: ev(e), armed });
     rec.line('after_commit');
     rec.step(`The service crashes straight after the commit, the same moment that lost the event in dual write.`, { probe: atRow(e) });
     s.serviceDown = false;
     rec.unmark(SVC);
+    rec.vars({ account, amount, armed: null });
     rec.line('restart');
     rec.step(
       `Nothing is lost. ${ev(e)} is a committed row, marked unpublished, and the relay will find it. The service did not have to survive for its event to go out.`,
@@ -334,9 +351,11 @@ function writeOutbox(s: OutboxState, account: number, amount: number, crash: Cra
 /** Dual write the other way round: publish first, then the commit fails. */
 function publishFirst(s: OutboxState, account: number, amount: number, rec: Rec): void {
   const before = s.balances[account];
+  const armed = q('before_commit');
   const e = newEvent(s, account, amount);
   s.inflight = e;
   rec.markCell(SVC, 1, 'key');
+  rec.vars({ account, amount, event: ev(e) });
   rec.line('pf_event');
   rec.step(`Dual write, publishing first this time. Build event ${ev(e)}, "${payload(e)}".`, { probe: atService(e) });
 
@@ -344,16 +363,19 @@ function publishFirst(s: OutboxState, account: number, amount: number, rec: Rec)
   s.inflight = null;
   rec.markCell(SVC, 1, 'idle');
   rec.mark(lid(offset), 'key');
+  rec.vars({ account, amount, event: ev(e), 'len(log)': s.log.length });
   rec.line('pf_publish');
   rec.step(`Publish ${ev(e)} before touching the database. It is at offset ${offset}, and any consumer may read it from now on.`, { probe: atLog(e, offset) });
 
   s.pending = { account, amount, row: null };
   rec.mark(aid(account), 'path');
+  rec.vars({ account, amount, event: ev(e), 'tx.accounts[account]': before + amount });
   rec.line('pf_begin');
   rec.step(`Begin the database transaction and add ${amount} to account ${account}.`, { probe: atLog(e, offset) });
 
   s.serviceDown = true;
   rec.mark(SVC, 'bad');
+  rec.vars({ account, amount, event: ev(e), armed });
   rec.line('pf_fail');
   rec.step(`The service crashes before COMMIT. A deadlock or a broken constraint would end the same way: the commit fails.`, { probe: atLog(e, offset) });
 
@@ -364,6 +386,7 @@ function publishFirst(s: OutboxState, account: number, amount: number, rec: Rec)
   rec.unmark(SVC);
   rec.mark(aid(account), 'bad');
   rec.mark(lid(offset), 'bad');
+  rec.vars({ account, amount, armed: null });
   rec.line('restart_before');
   rec.step(
     `The database rolls back: account ${account} stays ${before}. But ${ev(e)} is already on the log, announcing a change that never happened. That is a phantom event, and the consumer will apply it. Retrying the write would publish a second event for the same money.`,
@@ -373,6 +396,7 @@ function publishFirst(s: OutboxState, account: number, amount: number, rec: Rec)
 
 /** A normal write, by whichever approach is chosen. */
 export function write(s: OutboxState, account: number, amount: number, rec: Rec): Event | null {
+  rec.vars({ account, amount, approach: q(s.approach) });
   rec.line('choose');
   if (!checkArgs(s, account, amount, rec)) return null;
   if (s.approach === 'outbox' ? noRoomForOutbox(s, rec) : noRoomOnLog(s, 1, rec)) return null;
@@ -386,6 +410,7 @@ export function write(s: OutboxState, account: number, amount: number, rec: Rec)
 
 /** The service dies straight after its database commit. */
 export function crashBetween(s: OutboxState, account: number, amount: number, rec: Rec): Event | null {
+  rec.vars({ account, amount, armed: q('after_commit') });
   rec.line('arm');
   if (!checkArgs(s, account, amount, rec)) return null;
   if (s.approach === 'outbox' && noRoomForOutbox(s, rec)) return null;
@@ -397,6 +422,7 @@ export function crashBetween(s: OutboxState, account: number, amount: number, re
 
 /** The service dies inside its transaction. Dual write publishes first, so the event escapes. */
 export function crashBefore(s: OutboxState, account: number, amount: number, rec: Rec): void {
+  rec.vars({ account, amount, armed: q('before_commit'), approach: q(s.approach) });
   rec.line('arm_before');
   if (!checkArgs(s, account, amount, rec)) return;
   if (s.approach === 'outbox' ? noRoomForOutbox(s, rec) : noRoomOnLog(s, 1, rec)) return;
@@ -410,8 +436,10 @@ export function crashBefore(s: OutboxState, account: number, amount: number, rec
 }
 
 /** Publish unpublished rows in outbox order. Returns how many were published and marked, and whether it crashed. */
-function relayRun(s: OutboxState, crash: boolean, rec: Rec): { marked: number; crashed: boolean } {
+function relayRun(s: OutboxState, crash: boolean, rec: Rec, armed?: VarValue): { marked: number; crashed: boolean } {
   const rows = s.outbox.filter((r) => !r.published);
+  const ids = rows.map((r) => ev(r.event));
+  rec.vars({ armed, rows: ids });
   rec.line('query');
   if (!rows.length) {
     rec.step(
@@ -441,6 +469,7 @@ function relayRun(s: OutboxState, crash: boolean, rec: Rec): { marked: number; c
     const offset = append(s, e, rec);
     rec.markCell(oid(e.id), 0, 'key');
     rec.mark(lid(offset), 'key');
+    rec.vars({ armed, rows: ids, row: ev(e), 'row["published"]': false });
     rec.line('relay_publish');
     rec.step(
       again
@@ -464,6 +493,7 @@ function relayRun(s: OutboxState, crash: boolean, rec: Rec): { marked: number; c
     rec.unmark(lid(offset));
     rec.markCell(oid(e.id), 0, 'key');
     rec.markCell(oid(e.id), 1, 'ok');
+    rec.vars({ armed, rows: ids, row: ev(e), 'row["published"]': true });
     rec.line('mark');
     rec.step(`Mark ${ev(e)} published: a one-row update in the database. The relay will not send it again.`, { probe: atRow(e) });
     rec.markCell(oid(e.id), 0, 'idle');
@@ -472,8 +502,10 @@ function relayRun(s: OutboxState, crash: boolean, rec: Rec): { marked: number; c
 }
 
 export function relay(s: OutboxState, rec: Rec): number {
+  rec.vars();
   const { marked } = relayRun(s, false, rec);
   if (marked) {
+    rec.vars({ 'len(rows)': marked });
     rec.line('relay_done');
     rec.step(
       `Relayed ${plural(marked, 'event')} in outbox order, which is commit order, so events for one account reach the log in the order they happened. The relay needed nothing from the service: only the database.`,
@@ -483,10 +515,12 @@ export function relay(s: OutboxState, rec: Rec): number {
 }
 
 export function crashRelay(s: OutboxState, rec: Rec): number {
+  rec.vars({ armed: q('relay') });
   rec.line('relay_arm');
   rec.step(`Make the relay crash between publishing a row and marking it published.`);
-  const first = relayRun(s, true, rec);
+  const first = relayRun(s, true, rec, q('relay'));
   if (!first.crashed) {
+    rec.vars({ armed: null });
     rec.line('relay_restart');
     rec.step(`There was no unpublished row, so there was nothing to crash on. Write something first.`);
     return 0;
@@ -494,9 +528,11 @@ export function crashRelay(s: OutboxState, rec: Rec): number {
   s.relayDown = false;
   rec.unmark(RELAY);
   rec.clearMarks();
+  rec.vars({ armed: null });
   rec.line('relay_restart');
   rec.step(`The relay restarts. It keeps no memory of what it sent: the outbox is its only record, and the outbox says nothing was sent.`);
-  const second = relayRun(s, false, rec);
+  const second = relayRun(s, false, rec, null);
+  rec.vars({ armed: null, 'len(rows)': second.marked });
   rec.line('relay_done');
   rec.step(
     `Relayed ${plural(second.marked, 'event')}, one of them for the second time. This is at-least-once delivery: an event is never lost, but it can arrive twice. Every consumer must cope with that.`,
@@ -508,6 +544,7 @@ export function crashRelay(s: OutboxState, rec: Rec): number {
 function consumeOne(s: OutboxState, rec: Rec): 'applied' | 'skipped' | null {
   const pos = s.position;
   const end = s.log.length;
+  rec.vars({ position: pos, 'len(log)': end });
   rec.line('caught_up');
   if (pos >= end) {
     rec.mark(lid(pos), 'compare');
@@ -524,14 +561,16 @@ function consumeOne(s: OutboxState, rec: Rec): 'applied' | 'skipped' | null {
   const record = s.log[pos];
   const e = record.event;
   rec.mark(lid(pos), 'key');
+  rec.vars({ position: pos, event: ev(e) });
   rec.line('read');
   rec.step(
     `Read offset ${pos}: ${ev(e)}, "${payload(e)}".` + (record.phantom ? ` The consumer cannot know this one is a phantom: it looks like any other event.` : ``),
     { probe: atLog(e, pos) },
   );
 
-  rec.line('seen');
   const seen = s.processed.includes(e.id);
+  rec.vars({ position: pos, event: ev(e), 'event.id in processed': seen });
+  rec.line('seen');
   if (seen) {
     const probe = atDone(s, e);
     if (probe.cell !== undefined) rec.markCell(DONE, probe.cell, 'compare');
@@ -542,6 +581,7 @@ function consumeOne(s: OutboxState, rec: Rec): 'applied' | 'skipped' | null {
     if (probe.cell !== undefined) rec.markCell(DONE, probe.cell, 'idle');
     s.position = pos + 1;
     rec.mark(lid(pos), 'path');
+    rec.vars({ position: pos + 1, event: ev(e), 'event.id in processed': seen });
     rec.line('skip');
     rec.step(
       `Skip it. Account ${e.account}'s total stays ${s.totals[e.account]}, and duplicates applied stay at 0. Move on to offset ${pos + 1}.`,
@@ -558,6 +598,7 @@ function consumeOne(s: OutboxState, rec: Rec): 'applied' | 'skipped' | null {
   const before = s.totals[e.account];
   s.cpending = { account: e.account, amount: e.amount, id: null };
   rec.mark(tid(e.account), 'path');
+  rec.vars({ position: pos, event: ev(e), 'tx.totals[event.account]': before + e.amount });
   rec.line('apply');
   rec.step(
     `Begin a transaction in the consumer's own database and add ${e.amount} to its total for account ${e.account}: ${before} becomes ${before + e.amount}.`,
@@ -577,6 +618,7 @@ function consumeOne(s: OutboxState, rec: Rec): 'applied' | 'skipped' | null {
   rec.mark(tid(e.account), 'ok');
   rec.markCell(DONE, doneCells(s).indexOf(e.id), 'ok');
   rec.mark(lid(pos), 'path');
+  rec.vars({ position: pos + 1, event: ev(e), 'tx.totals[event.account]': before + e.amount });
   rec.line('commit_c');
   rec.step(
     `Commit both together, then move to offset ${pos + 1}. A crash before this commit loses both, so the event is simply read again. A crash after it leaves the id recorded, so a second copy is skipped.`,
@@ -588,6 +630,7 @@ function consumeOne(s: OutboxState, rec: Rec): 'applied' | 'skipped' | null {
 
 export function consume(s: OutboxState, count: number | string, rec: Rec): { applied: number; skipped: number } {
   const n = Number(count);
+  rec.vars();
   rec.line('caught_up');
   if (!Number.isInteger(n) || n < 1 || n > LOG_SHOWN) {
     rec.step(`Read from 1 to ${LOG_SHOWN} events at a time.`);
@@ -616,6 +659,8 @@ export function consume(s: OutboxState, count: number | string, rec: Rec): { app
 }
 
 export function prune(s: OutboxState, rec: Rec): number {
+  const kept: string[] = [];
+  rec.vars({ 'len(outbox)': s.outbox.length, kept });
   rec.line('prune_each');
   if (!s.outbox.length) {
     rec.step(`The outbox table is empty. Nothing to prune.`);
@@ -625,11 +670,14 @@ export function prune(s: OutboxState, rec: Rec): number {
   for (const r of s.outbox) {
     const e = r.event;
     rec.mark(oid(e.id), 'compare');
+    rec.vars({ 'len(outbox)': s.outbox.length, kept: [...kept], row: ev(e), 'row["published"]': r.published });
+    if (!r.published) kept.push(ev(e));
     rec.line('prune_check');
     if (r.published) {
       rec.compare(`${ev(e)} published`, '=', 'yes', 'delete it', { probe: atRow(e) });
       rec.mark(oid(e.id), 'bad');
     } else {
+      rec.vars({ 'len(outbox)': s.outbox.length, kept: [...kept], row: ev(e), 'row["published"]': r.published });
       rec.line('prune_check', 'prune_keep');
       rec.compare(`${ev(e)} published`, '=', 'no', 'keep it: the relay still owes it', { probe: atRow(e) });
       rec.mark(oid(e.id), 'path');
@@ -640,6 +688,7 @@ export function prune(s: OutboxState, rec: Rec): number {
   const removed = before - s.outbox.length;
   rec.count('pruned', removed);
   rec.clearMarks();
+  rec.vars({ 'len(outbox)': before, kept, removed });
   rec.line('prune_delete');
   rec.step(
     removed
@@ -651,6 +700,7 @@ export function prune(s: OutboxState, rec: Rec): number {
 
 export function setApproach(s: OutboxState, raw: number | string, rec: Rec): void {
   const a = asApproach(raw);
+  rec.vars({ approach: q(a ?? String(raw).trim()) });
   rec.line('set');
   if (!a) {
     rec.step(`There are two approaches: dual or outbox.`);

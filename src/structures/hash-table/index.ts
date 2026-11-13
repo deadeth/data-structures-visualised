@@ -73,13 +73,18 @@ export function longestChain(s: HashState): number {
  * Hash the key, go to its bucket and walk the chain.
  * Returns the bucket and the key's position in the chain, or -1 if it is not there.
  */
+/** How the listing's `prev` shows: the bucket's dummy head, or the key of the node at `i` in the chain. */
+const prevName = (b: number, chain: number[], i: number): string | number => (i < 0 ? `head ${b}` : chain[i]);
+
 function find(s: HashState, key: number, rec: Rec): { b: number; pos: number } {
   const n = s.buckets.length;
   const b = key % n;
   const chain = s.buckets[b];
   if (key > 99) s.wide = true;
   rec.count('reads');
+  rec.vars();
   if (rec.recording) {
+    rec.vars({ key, 'len(buckets)': n, prev: prevName(b, chain, -1), 'prev.next': chain.length ? chain[0] : null });
     rec.mark(bid(b), 'path');
     rec.line('bucket');
     rec.step(`Go straight to bucket ${b}. The hash says where ${key} must live, so no other bucket is read.`, {
@@ -93,6 +98,7 @@ function find(s: HashState, key: number, rec: Rec): { b: number; pos: number } {
     rec.markEdge(eid(k), 'path');
     rec.mark(kid(k), 'compare');
     const probe: Probe = { text: String(key), at: kid(k), place: 'left' };
+    if (rec.recording) rec.vars({ key, 'len(buckets)': n, prev: prevName(b, chain, i - 1), 'prev.next': k });
     if (k === key) {
       rec.line('scan', 'hit');
       rec.compare(key, '=', k, 'match', { probe });
@@ -109,6 +115,7 @@ export function search(s: HashState, key: number, rec: Rec): boolean {
   const { b, pos } = find(s, key, rec);
   if (!rec.recording) return pos >= 0;
   const walked = pos >= 0 ? pos + 1 : s.buckets[b].length;
+  rec.vars({ key, prev: prevName(b, s.buckets[b], (pos >= 0 ? pos : walked) - 1), 'prev.next': pos >= 0 ? key : null });
   rec.line('result');
   if (pos >= 0) {
     const others = s.size - walked;
@@ -140,6 +147,7 @@ export function insert(s: HashState, key: number, rec: Rec): boolean {
   s.size++;
   rec.count('writes');
   if (rec.recording) {
+    rec.vars({ key, prev: prevName(b, chain, chain.length - 2), 'prev.next': key, size: s.size });
     rec.clearMarks();
     rec.mark(bid(b), 'path');
     rec.mark(kid(key), 'key');
@@ -156,6 +164,7 @@ export function insert(s: HashState, key: number, rec: Rec): boolean {
       rec.clearMarks();
       rec.mark(kid(key), 'key');
       const n = s.buckets.length;
+      rec.vars({ key, size: s.size, 'len(buckets)': n });
       rec.line('load', 'done');
       rec.step(
         `${key} is stored in bucket ${b}. ${plural(s.size, 'key')} in ${n} buckets is a load factor of ${ratio(s.size, n)}` +
@@ -167,6 +176,7 @@ export function insert(s: HashState, key: number, rec: Rec): boolean {
   resize(s, rec, key);
   if (rec.recording) {
     const n = s.buckets.length;
+    rec.vars({ key, size: s.size, 'len(buckets)': n });
     rec.clearMarks();
     rec.mark(kid(key), 'key');
     rec.line('done');
@@ -188,6 +198,7 @@ function resize(s: HashState, rec: Rec, followed: number): void {
   if (rec.recording) {
     rec.clearMarks();
     rec.mark(kid(followed), 'key');
+    rec.vars({ key: followed, size: s.size, 'len(buckets)': was });
     rec.line('load');
     rec.step(
       `${plural(s.size, 'key')} in ${was} buckets is a load factor of ${ratio(s.size, was)}, past the limit of 0.75. The table has to grow before the chains get any longer.`,
@@ -196,6 +207,7 @@ function resize(s: HashState, rec: Rec, followed: number): void {
   }
   s.buckets = fresh;
   if (mig) {
+    rec.vars({ 'len(old)': was, 'len(buckets)': n });
     rec.line('grow');
     rec.step(
       `Double the array to ${n} buckets${n === START_BUCKETS * 2 ? ', drawn as a second column' : ''}. The hash is now key mod ${n}, so every key is hashed again: it stays put or moves up by exactly ${was}.` +
@@ -228,6 +240,7 @@ function resize(s: HashState, rec: Rec, followed: number): void {
       }
       mig.bucket = b;
       mig.pos = j + 1;
+      rec.vars({ 'len(old)': was, 'len(buckets)': n, node: k, b: nb, after: j + 1 < chain.length ? chain[j + 1] : null });
       if (lastKey >= 0 && lastKey !== followed) rec.mark(kid(lastKey), 'path');
       if (lastBucket >= 0) rec.unmark(bid(lastBucket));
       if (k !== followed) rec.mark(kid(k), 'ok');
@@ -249,6 +262,8 @@ function resize(s: HashState, rec: Rec, followed: number): void {
           if (k % n >= was) moved++;
         }
         const stayed = batch.length - moved;
+        const last = batch[batch.length - 1];
+        rec.vars({ 'len(old)': was, 'len(buckets)': n, node: last, b: last % n });
         rec.step(
           `${batchFrom === b ? `Bucket ${b}` : `Buckets ${batchFrom} to ${b}`}: ${plural(stayed, 'key')} ${stayed === 1 ? 'stays' : 'stay'}, ${moved} ${moved === 1 ? 'moves' : 'move'} up by ${was}.`,
         );
@@ -265,6 +280,7 @@ export function remove(s: HashState, key: number, rec: Rec): boolean {
   const { b, pos } = find(s, key, rec);
   const chain = s.buckets[b];
   if (pos < 0) {
+    rec.vars({ key, prev: prevName(b, chain, chain.length - 1), 'prev.next': null });
     rec.mark(bid(b), 'bad');
     rec.line('missing');
     rec.step(
@@ -276,14 +292,17 @@ export function remove(s: HashState, key: number, rec: Rec): boolean {
     rec.mark(kid(key), 'bad');
     const before = pos === 0 ? `bucket ${b}` : `${chain[pos - 1]}`;
     const after = pos === chain.length - 1 ? `${before} now ends the chain` : `${before} now points to ${chain[pos + 1]}`;
+    rec.vars({ key, prev: prevName(b, chain, pos - 1), 'prev.next': key, 'prev.next.next': pos + 1 < chain.length ? chain[pos + 1] : null, size: s.size });
     rec.line('unlink');
     rec.step(`Found ${key}. Unlink it by changing one pointer: ${after}.`, { probe: { text: String(key), at: kid(key), place: 'left' } });
   }
+  const prevAt = prevName(b, chain, pos - 1);
   chain.splice(pos, 1);
   s.size--;
   rec.count('writes');
   if (rec.recording) {
     const n = s.buckets.length;
+    rec.vars({ key, prev: prevAt, 'prev.next': pos < chain.length ? chain[pos] : null, size: s.size });
     rec.clearMarks();
     rec.mark(bid(b), 'path');
     rec.line('done');
