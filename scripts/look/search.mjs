@@ -1,0 +1,32 @@
+import { createServer } from 'vite';
+import puppeteer from 'puppeteer-core';
+const server = await createServer({ server: { port: 0, host: '127.0.0.1' }, logLevel: 'error' });
+await server.listen();
+const base = server.resolvedUrls.local[0];
+const browser = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox', '--disable-gpu', '--force-prefers-reduced-motion'] });
+const page = await browser.newPage();
+await page.setViewport({ width: 1440, height: 900 });
+const errors = [];
+page.on('pageerror', (e) => errors.push(String(e)));
+page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+await page.goto(`${base}#/`, { waitUntil: 'networkidle0' });
+await page.keyboard.press('/');
+await page.keyboard.type('simhash', { delay: 30 });
+await page.waitForFunction(() => document.querySelectorAll('.search-results li').length > 0, { timeout: 15000 });
+await new Promise((r) => setTimeout(r, 300));
+await page.screenshot({ path: '.shots/search-simhash.png' });
+const res = async (q) => { await page.evaluate((q) => { location.hash = '#/search/' + encodeURIComponent(q); }, q); await page.waitForFunction((q) => document.querySelector('h1')?.textContent === 'Search: ' + q && !/Searching/.test(document.querySelector('.search-summary').textContent), {}, q); return page.evaluate(() => [document.querySelector('.search-summary').textContent, ...[...document.querySelectorAll('.search-results li')].slice(0, 5).map((li) => li.querySelector('.search-kind').textContent + ': ' + li.querySelector('h2').textContent)]); };
+for (const q of ['kafka', 'lease', 'bloom filter', 'eviction', 'zzzz']) console.log(q, '=>', JSON.stringify(await res(q)));
+// follow a term link and a component link
+await page.evaluate(() => { location.hash = '#/search/simhash'; });
+await page.waitForFunction(() => document.querySelector('.search-results li a'));
+await page.evaluate(() => document.querySelector('.search-results li a').click());
+await page.waitForSelector('.hld-glossary dt.found', { timeout: 15000 });
+console.log('term link ok:', await page.evaluate(() => document.querySelector('.hld-glossary dt.found').textContent));
+await page.evaluate(() => { location.hash = '#/d/web-crawler/f/cross'; });
+await page.waitForFunction(() => /URL filter to discovered-urls topic/.test(document.querySelector('.hld-detail-head h3')?.textContent ?? ''), { timeout: 15000 });
+await new Promise((r) => setTimeout(r, 300));
+await page.screenshot({ path: '.shots/hld-flow-detail.png' });
+console.log('flow link ok');
+await browser.close(); await server.close();
+if (errors.length) { console.error(errors.join('\n')); process.exit(1); }

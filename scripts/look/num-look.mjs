@@ -1,0 +1,16 @@
+import { createServer } from 'vite';
+import puppeteer from 'puppeteer-core';
+const [route] = process.argv.slice(2);
+const server = await createServer({ server: { port: 0, host: '127.0.0.1', hmr: false, watch: null }, logLevel: 'error' });
+await server.listen();
+const browser = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox', '--disable-gpu', '--force-prefers-reduced-motion'] });
+const page = await browser.newPage();
+await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
+await page.goto(`${server.resolvedUrls.local[0]}#/d/${route}`, { waitUntil: 'networkidle0' });
+await new Promise((x) => setTimeout(x, 1200));
+const el = await page.$('.hld-figures');
+await el.evaluate((e) => e.scrollIntoView({ block: 'center' }));
+await new Promise((x) => setTimeout(x, 300));
+await el.screenshot({ path: `.shots/num-${route.replace(/\//g, '_')}.png` });
+console.log(await el.evaluate((e) => e.innerText));
+await browser.close(); await server.close();
