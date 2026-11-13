@@ -1,5 +1,5 @@
 import { LABEL_MAX, PROBE_H, probeWidth } from '../../core/fit';
-import { CELL_H } from '../../core/geometry';
+import { CELL_GAP, CELL_H, TRAY_PAD, nodeSize } from '../../core/geometry';
 import { randomInt } from '../../core/rng';
 import type { Decor, Probe, Rec, Scene, SceneNode, StructureDef } from '../../core/types';
 import java from './code/SimHash.java?raw';
@@ -24,6 +24,20 @@ import { info } from './info';
 export const BITS = 8;
 /** Most stored pages the canvas draws. */
 export const MAX_DOCS = 5;
+/**
+ * The block-table index splits a fingerprint into BLOCKS blocks of BLOCK_BITS
+ * bits, block 0 on the left. Two fingerprints at most BLOCKS − 1 bits apart
+ * agree exactly on at least one block, so with 4 blocks every threshold on
+ * this page (1 to 3) is safe. Real indexes split 64 bits into 4 blocks of 16.
+ */
+export const BLOCKS = 4;
+export const BLOCK_BITS = BITS / BLOCKS;
+const BLOCK_VALUES = 1 << BLOCK_BITS;
+
+/** The value of one block of a fingerprint, as the listings' block_key works it out. */
+export function blockKey(fp: number, block: number): number {
+  return (fp >> (BITS - BLOCK_BITS * (block + 1))) & (BLOCK_VALUES - 1);
+}
 
 /** The word hash, the same sum as the listings: a polynomial hash folded down to 8 bits. */
 export function wordHash(word: string): number {
@@ -107,22 +121,49 @@ export interface XorWork {
   showXor: boolean;
 }
 
+/** The working of Find with block tables: the new fingerprint in blocks, and one candidate and the XOR while comparing. */
+export interface BlockWork {
+  kind: 'blocks';
+  fp: number;
+  other: { page: number; fp: number } | null;
+  /** Stored pages that share no block with the new page, once the lookups are done. */
+  untouched: number[];
+}
+
 export interface SimState {
   /** Two fingerprints this many bits apart or fewer count as near-duplicates. */
   threshold: number;
   /** Stored pages, oldest first. */
   docs: Doc[];
+  /** `tables[block][value]`: the stored pages whose fingerprint has that value in that block, oldest first. */
+  tables: number[][][];
   /** What the last operation worked out. Drawn, never read by an operation. */
-  work: VoteWork | XorWork | null;
+  work: VoteWork | XorWork | BlockWork | null;
 }
 
+const emptyTables = () => Array.from({ length: BLOCKS }, () => Array.from({ length: BLOCK_VALUES }, () => [] as number[]));
+
 export function create(threshold = 2): SimState {
-  return { threshold, docs: [], work: null };
+  return { threshold, docs: [], tables: emptyTables(), work: null };
+}
+
+function file(s: SimState, d: Doc): void {
+  for (let b = 0; b < BLOCKS; b++) s.tables[b][blockKey(d.fp, b)].push(d.page);
+}
+
+function unfile(s: SimState, d: Doc): void {
+  for (let b = 0; b < BLOCKS; b++) {
+    const bucket = s.tables[b][blockKey(d.fp, b)];
+    bucket.splice(bucket.indexOf(d.page), 1);
+  }
 }
 
 export const toBits = (n: number) => n.toString(2).padStart(BITS, '0');
 /** A fingerprint or hash as the strip shows it: a Python binary literal, bit 7 first. */
 const lit = (n: number) => `0b${toBits(n)}`;
+/** A block value as bits, and as the strip shows it. */
+const keyBits = (k: number) => k.toString(2).padStart(BLOCK_BITS, '0');
+const keyLit = (k: number) => `0b${keyBits(k)}`;
 const signed = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '0');
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const quote = (words: readonly string[]) => `“${words.join(' ')}”`;
@@ -154,6 +195,11 @@ const aid = (c: number) => `a${c}`;
 const bid = (c: number) => `b${c}`;
 const xid = (c: number) => `x${c}`;
 const did = (n: number) => `d${n}`;
+/** Block b of the new fingerprint, of the candidate, and of their XOR; and bucket v of table b. */
+const qid = (b: number) => `q${b}`;
+const cid = (b: number) => `c${b}`;
+const rid = (b: number) => `r${b}`;
+const tid = (b: number, v: number) => `t${b}-${v}`;
 
 /**
  * Hash every word, add its votes to the totals and take the signs.
@@ -266,18 +312,21 @@ export function fingerprint(s: SimState, n: number, rec: Rec): number | null {
     if (rec.recording) {
       rec.mark(did(oldest.page), 'bad');
       rec.step(
-        `This page draws at most ${MAX_DOCS} stored pages so they stay readable. The oldest, page ${oldest.page}, drops off to make room. A real index keeps every fingerprint.`,
+        `This page draws at most ${MAX_DOCS} stored pages so they stay readable. The oldest, page ${oldest.page}, drops off to make room, and out of the block tables. A real index keeps every fingerprint.`,
       );
       rec.clearMarks();
     }
-    s.docs.shift();
+    unfile(s, s.docs.shift()!);
   }
-  s.docs.push({ page: n, words: p.words, fp });
+  const doc: Doc = { page: n, words: p.words, fp };
+  s.docs.push(doc);
+  file(s, doc);
   if (rec.recording) {
     rec.mark(did(n), 'ok');
     for (let c = 0; c < BITS; c++) rec.mark(fid(c), 'ok');
+    rec.line('store', 'file');
     rec.step(
-      `Page ${n} is stored as ${toBits(fp)}: ${plural(p.words.length, 'word')} hashed and ${BITS} totals tested. The fingerprint is ${BITS} bits however long the page is. Real systems use 64.`,
+      `Page ${n} is stored as ${toBits(fp)}: ${plural(p.words.length, 'word')} hashed and ${BITS} totals tested. The fingerprint is ${BITS} bits however long the page is. Real systems use 64. It is also filed in ${BLOCKS} block tables, one per ${BLOCK_BITS}-bit block, for Find with block tables.`,
     );
   }
   return fp;
@@ -374,6 +423,19 @@ export function compare(s: SimState, a: number, b: number, rec: Rec): number | n
   return distance;
 }
 
+/** What a find concluded about page n, for the last frame of Find near copies and Find with block tables. */
+function outcomeOf(s: SimState, n: number, found: number[], distances: number[]): string {
+  const wrong = found.filter((d) => d !== n && !sameTopic(d, n));
+  if (!s.docs.length) return `Nothing is stored, so there is nothing to compare page ${n} with. A crawler would treat it as new.`;
+  if (!found.length) return `No stored page is within ${plural(s.threshold, 'bit')} of page ${n}, so a crawler would treat it as new: index it and follow its links.`;
+  const which = `${found.length === 1 ? 'page' : 'pages'} ${list(found)} (${list(distances.map((d) => plural(d, 'bit')))} apart)`;
+  return wrong.length === found.length
+    ? `Page ${n} matches ${which}, but ${wrong.length === 1 ? 'that is a different page' : 'those are different pages'}: a false positive. With only ${BITS} bits, about ${percent(chanceWithin(s.threshold))} of unrelated pairs land this close.`
+    : wrong.length
+      ? `Page ${n} matches ${which}. ${wrong.length === 1 ? `Page ${wrong[0]} is` : `Pages ${list(wrong)} are`} a false positive, a different page that happens to land close. The rest are real near copies, so a crawler would skip page ${n}.`
+      : `Page ${n} is a near-duplicate of ${which}. A crawler would not index it again or follow its links.`;
+}
+
 /** Find the stored pages within the threshold of a library page, without storing it. Returns their page numbers. */
 export function near(s: SimState, n: number, rec: Rec): number[] {
   rec.clearMarks();
@@ -434,22 +496,153 @@ export function near(s: SimState, n: number, rec: Rec): number[] {
     const scan = s.docs.length
       ? `That took ${plural(s.docs.length, 'comparison')}, one for each stored page. A real index avoids the scan by looking up blocks of the fingerprint.`
       : '';
-    const wrong = found.filter((d) => d !== n && !sameTopic(d, n));
-    let outcome: string;
-    if (!s.docs.length) outcome = `Nothing is stored, so there is nothing to compare page ${n} with. A crawler would treat it as new.`;
-    else if (!found.length) outcome = `No stored page is within ${plural(s.threshold, 'bit')} of page ${n}, so a crawler would treat it as new: index it and follow its links.`;
-    else {
-      const which = `${found.length === 1 ? 'page' : 'pages'} ${list(found)} (${list(distances.map((d) => plural(d, 'bit')))} apart)`;
-      outcome =
-        wrong.length === found.length
-          ? `Page ${n} matches ${which}, but ${wrong.length === 1 ? 'that is a different page' : 'those are different pages'}: a false positive. With only ${BITS} bits, about ${percent(chanceWithin(s.threshold))} of unrelated pairs land this close.`
-          : wrong.length
-            ? `Page ${n} matches ${which}. ${wrong.length === 1 ? `Page ${wrong[0]} is` : `Pages ${list(wrong)} are`} a false positive, a different page that happens to land close. The rest are real near copies, so a crawler would skip page ${n}.`
-            : `Page ${n} is a near-duplicate of ${which}. A crawler would not index it again or follow its links.`;
-    }
+    const outcome = outcomeOf(s, n, found, distances);
     rec.vars({ fp: lit(fp), found: [...found] });
     rec.line('near_done');
     rec.step(`${outcome} ${scan}`.trim(), probe ? { probe } : {});
+  }
+  return found;
+}
+
+/** The bits of block b, by number, high bit first: "7 and 6" for block 0. */
+const blockBitNames = (b: number) => {
+  const hi = BITS - 1 - BLOCK_BITS * b;
+  return list(Array.from({ length: BLOCK_BITS }, (_, i) => hi - i));
+};
+const pagesText = (pages: number[]) => `${pages.length === 1 ? 'page' : 'pages'} ${list(pages)}`;
+
+/**
+ * Find the stored pages within the threshold of a library page through the block tables. Only pages that share at
+ * least one block value with the new page are compared. Returns their page numbers, in the order they became candidates.
+ */
+export function nearBlocks(s: SimState, n: number, rec: Rec): number[] {
+  rec.clearMarks();
+  rec.vars();
+  rec.line('nb_start');
+  const p = pageOf(n);
+  if (!p) {
+    rec.step(noSuchPage(n));
+    return [];
+  }
+  const w = startVote(s, n);
+  rec.vars({ words: [...p.words], totals: [...w.totals] });
+  rec.line('nb_start', 'start');
+  rec.step(
+    `Is page ${n}, ${quote(p.words)}, a near copy of anything stored? This time look it up in the block tables instead of scanning. First work out its fingerprint, one word to a step. The page is not stored.`,
+  );
+  const fp = vote(w, rec, true);
+  rec.clearMarks();
+
+  const work: BlockWork = { kind: 'blocks', fp, other: null, untouched: [] };
+  s.work = work;
+  const candidates: number[] = [];
+  rec.vars({ fp: lit(fp), candidates: [] });
+  rec.line('nb_blocks');
+  if (rec.recording) {
+    rec.step(
+      `Split ${toBits(fp)} into ${BLOCKS} blocks of ${BLOCK_BITS} bits. Two fingerprints up to ${BLOCKS - 1} bits apart differ in at most ${BLOCKS - 1} blocks, so at least one of the ${BLOCKS} blocks matches exactly. Each block has its own table, so look up each block in its table.`,
+    );
+  }
+
+  for (let b = 0; b < BLOCKS; b++) {
+    const key = blockKey(fp, b);
+    const probe: Probe = { text: keyBits(key), at: qid(b), place: 'below' };
+    if (rec.recording) {
+      rec.vars({ fp: lit(fp), block: b, key: keyLit(key), candidates: [...candidates] });
+      rec.line('nb_key', 'key');
+      rec.step(`Block ${b} is bits ${blockBitNames(b)} of the fingerprint: ${keyBits(key)}. That value picks the bucket to read in table ${b}.`, { probe });
+    }
+    const bucket = s.tables[b][key];
+    rec.count('reads');
+    const fresh = bucket.filter((d) => !candidates.includes(d));
+    const old = bucket.filter((d) => candidates.includes(d));
+    candidates.push(...fresh);
+    if (rec.recording) {
+      rec.mark(qid(b), 'compare');
+      rec.mark(tid(b, key), 'compare');
+      for (const d of fresh) rec.mark(did(d), 'path');
+      rec.vars({ fp: lit(fp), block: b, key: keyLit(key), bucket: [...bucket], candidates: [...candidates] });
+      rec.line(...(!bucket.length ? ['nb_lookup'] : fresh.length ? ['nb_lookup', 'nb_new', 'nb_add'] : ['nb_lookup', 'nb_new']));
+      const head = `Table ${b}, bucket ${keyBits(key)}`;
+      let message: string;
+      if (!bucket.length) message = `${head} is empty: no stored page has ${keyBits(key)} in block ${b}. Nothing to add.`;
+      else if (!old.length) {
+        message = `${head} holds ${pagesText(bucket)}. ${fresh.length === 1 ? 'It has' : 'They have'} the same ${BLOCK_BITS} bits here as the new page, so ${fresh.length === 1 ? 'it becomes a candidate' : 'they become candidates'}.`;
+      } else if (!fresh.length) {
+        message = `${head} holds ${pagesText(bucket)}, already ${old.length === 1 ? 'a candidate' : 'candidates'}. Nothing new.`;
+      } else {
+        message = `${head} holds ${pagesText(bucket)}. ${fresh.length === 1 ? `Page ${fresh[0]} becomes a candidate` : `Pages ${list(fresh)} become candidates`}; ${old.length === 1 ? `page ${old[0]} is` : `pages ${list(old)} are`} on the list already.`;
+      }
+      rec.step(message, { probe });
+      rec.mark(qid(b), 'idle');
+      rec.mark(tid(b, key), 'path');
+    }
+  }
+
+  const untouched = s.docs.map((d) => d.page).filter((d) => !candidates.includes(d));
+  work.untouched = untouched;
+  if (rec.recording && candidates.length) {
+    rec.vars({ fp: lit(fp), candidates: [...candidates], found: [] });
+    rec.line('nb_each');
+    rec.step(
+      untouched.length
+        ? `${plural(BLOCKS, 'lookup')} gave ${plural(candidates.length, 'candidate')}: ${pagesText(candidates)}. ${untouched.length === 1 ? `Page ${untouched[0]} shares` : `Pages ${list(untouched)} share`} no block with the new page, so ${untouched.length === 1 ? 'it is' : 'they are'} at least ${BLOCKS} bits away and never compared.`
+        : `${plural(BLOCKS, 'lookup')} gave ${plural(candidates.length, 'candidate')}: every stored page shares a block with the new page, so every one must be compared.`,
+    );
+  }
+
+  const found: number[] = [];
+  const distances: number[] = [];
+  let probe: Probe | undefined;
+  for (const page of candidates) {
+    const doc = stored(s, page)!;
+    const x = fp ^ doc.fp;
+    const distance = hamming(fp, doc.fp);
+    work.other = { page, fp: doc.fp };
+    probe = { text: toBits(fp), at: did(page), place: 'left' };
+    if (rec.recording) {
+      rec.vars({ fp: lit(fp), page, 'pages[page]': lit(doc.fp), distance, found: [...found] });
+      rec.mark(did(page), 'compare');
+      for (let b = 0; b < BLOCKS; b++) {
+        const xb = blockKey(x, b);
+        for (let i = 0; i < BLOCK_BITS; i++) rec.markCell(rid(b), i, (xb >> (BLOCK_BITS - 1 - i)) & 1 ? 'ok' : 'dim');
+      }
+      rec.line('nb_distance');
+      const same = Array.from({ length: BLOCKS }, (_, b) => b).filter((b) => blockKey(x, b) === 0);
+      rec.step(
+        `Page ${page}: ${toBits(fp)} XOR ${toBits(doc.fp)} is ${toBits(x)}, which holds ${plural(distance, 'one')}. ${same.length === 1 ? `Block ${same[0]} is` : `Blocks ${list(same)} are`} 00 in the XOR: that is where the two agree exactly.`,
+        { probe },
+      );
+    }
+    const within = distance <= s.threshold;
+    if (within) {
+      found.push(page);
+      distances.push(distance);
+    }
+    rec.mark(did(page), within ? 'ok' : 'dim');
+    if (rec.recording) rec.vars({ fp: lit(fp), page, 'pages[page]': lit(doc.fp), distance, found: [...found] });
+    rec.line(...(within ? ['nb_test', 'nb_keep'] : ['nb_test']));
+    rec.compare(`distance ${distance}`, within ? '≤' : '>', s.threshold, within ? 'near-duplicate, keep it' : 'too far, move on', {
+      probe,
+      message: within
+        ? `${plural(distance, 'bit')} apart, within the threshold of ${s.threshold}. Page ${page} goes on the list of near-duplicates.`
+        : `${plural(distance, 'bit')} apart, over the threshold of ${s.threshold}. Page ${page} is not a near-duplicate.`,
+    });
+  }
+
+  if (rec.recording) {
+    const total = s.docs.length;
+    let cost = '';
+    if (total && untouched.length) {
+      cost = `That took ${plural(BLOCKS, 'lookup')} and ${plural(candidates.length, 'comparison')}; the scan makes ${total}. ${untouched.length === 1 ? `Page ${untouched[0]} was` : `Pages ${list(untouched)} were`} never touched.`;
+    } else if (total) {
+      cost = `That took ${plural(BLOCKS, 'lookup')} and ${plural(total, 'comparison')}, no fewer than the scan: every stored page shares a block with page ${n}. A ${BLOCK_BITS}-bit block has only ${BLOCK_VALUES} values, so a bucket holds about a quarter of the pages. With 64 bits and 16-bit blocks, about n / 65,536 of them.`;
+    }
+    // The working is finished: unmark the XOR so the last frame (and a phone's view of it) centres on the result.
+    for (let b = 0; b < BLOCKS; b++) for (let i = 0; i < BLOCK_BITS; i++) rec.markCell(rid(b), i, 'idle');
+    rec.vars({ fp: lit(fp), candidates: [...candidates], found: [...found] });
+    rec.line('nb_done');
+    rec.step(`${outcomeOf(s, n, found, distances)} ${cost}`.trim(), probe ? { probe } : {});
   }
   return found;
 }
@@ -489,17 +682,80 @@ function bitRow(nodes: SceneNode[], id: (c: number) => string, y: number, text: 
 
 const rowLabel = (id: string, y: number, text: string): Decor => ({ id, type: 'label', x: LABEL_W - 4, y: y + 5, text, anchor: 'end' });
 
+/*
+ * Find with block tables replaces the working on the left with the new fingerprint split into blocks, a candidate and
+ * the XOR under it while comparing, and below them the four tables, one row each, with a node per bucket: the block
+ * value, then the pages filed under it.
+ */
+const B_LABEL_X = LEFT;
+const B_X0 = LEFT + 72;
+const B_NODE_W = 2 * TRAY_PAD + BLOCK_BITS * BIT_W + (BLOCK_BITS - 1) * CELL_GAP;
+const B_PITCH = 96;
+const B_ROW = 50;
+const B_XOR_Y = 2 * B_ROW + 6;
+export const TABLE_Y0 = B_XOR_Y + 58;
+const TABLE_PITCH = 47;
+const BUCKET_GAP = 8;
+const KEY_W = 34;
+const EMPTY_W = 30;
+/** Right edge the buckets must keep inside, so the fingerprint chip beside the stored pages never covers them. */
+export const TABLES_RIGHT = TABLE_RIGHT;
+const blockX = (b: number) => B_X0 + B_NODE_W / 2 + b * B_PITCH;
+
+function blockRow(nodes: SceneNode[], id: (b: number) => string, y: number, fp: number, from?: string): void {
+  for (let b = 0; b < BLOCKS; b++) {
+    const bits = keyBits(blockKey(fp, b));
+    nodes.push({ id: id(b), x: blockX(b), y, cells: [...bits].map((t) => ({ text: t, w: BIT_W })), from });
+  }
+}
+
+/** The bucket nodes of one table, left to right, as drawn. Exported so the test can check the widest case. */
+export function bucketNodes(tables: number[][][], b: number): SceneNode[] {
+  const y = TABLE_Y0 + b * TABLE_PITCH;
+  const nodes: SceneNode[] = [];
+  let x = B_X0;
+  for (let v = 0; v < BLOCK_VALUES; v++) {
+    const pages = tables[b][v];
+    const cells = [{ text: keyBits(v), w: KEY_W }, pages.length ? { text: pages.join(' ') } : { text: '', w: EMPTY_W }];
+    const node: SceneNode = { id: tid(b, v), x: 0, y, cells };
+    const w = nodeSize(node).w;
+    node.x = x + w / 2;
+    x += w + BUCKET_GAP;
+    nodes.push(node);
+  }
+  return nodes;
+}
+
+function blockLayout(s: SimState, w: BlockWork, nodes: SceneNode[], decor: Decor[]): void {
+  const left = (id: string, y: number, text: string): Decor => ({ id, type: 'label', x: B_LABEL_X, y: y + 5, text });
+  blockRow(nodes, qid, 0, w.fp, undefined);
+  decor.push(left('lab-new', 0, 'new'));
+  for (let b = 0; b < BLOCKS; b++) decor.push({ id: `block-${b}`, type: 'label', x: blockX(b), y: HEAD_Y - 4, text: `block ${b}`, anchor: 'middle' });
+  if (w.other) {
+    blockRow(nodes, cid, B_ROW, w.other.fp, did(w.other.page));
+    decor.push(left('lab-other', B_ROW, `page ${w.other.page}`));
+    blockRow(nodes, rid, B_XOR_Y, w.fp ^ w.other.fp);
+    decor.push(left('lab-xor', B_XOR_Y, 'XOR'));
+  }
+  for (let b = 0; b < BLOCKS; b++) {
+    nodes.push(...bucketNodes(s.tables, b));
+    decor.push(left(`lab-table-${b}`, TABLE_Y0 + b * TABLE_PITCH, `table ${b}`));
+  }
+}
+
 export function layout(s: SimState): Scene {
   const nodes: SceneNode[] = [];
   const decor: Decor[] = [
     // Two empty labels pin the corners, so the view does not rescale as rows come and go or the chip moves outside the nodes.
     { id: 'corner-a', type: 'label', x: LEFT, y: TOP, text: '' },
     { id: 'corner-b', type: 'label', x: RIGHT, y: BOTTOM, text: '' },
-    { id: 'bit-head', type: 'label', x: LABEL_W - 4, y: HEAD_Y, text: 'bit', anchor: 'end' },
   ];
-  for (let c = 0; c < BITS; c++) decor.push({ id: `bit-${c}`, type: 'label', x: bitX(c), y: HEAD_Y, text: String(BITS - 1 - c), anchor: 'middle' });
-
   const w = s.work;
+  if (w?.kind !== 'blocks') {
+    decor.push({ id: 'bit-head', type: 'label', x: LABEL_W - 4, y: HEAD_Y, text: 'bit', anchor: 'end' });
+    for (let c = 0; c < BITS; c++) decor.push({ id: `bit-${c}`, type: 'label', x: bitX(c), y: HEAD_Y, text: String(BITS - 1 - c), anchor: 'middle' });
+  }
+
   if (!w) {
     decor.push({ id: 'hint', type: 'label', x: 0, y: 5, text: 'Fingerprint a page to see\nits words vote here.' });
   } else if (w.kind === 'vote') {
@@ -513,6 +769,8 @@ export function layout(s: SimState): Scene {
     bitRow(nodes, vid, votesY, (bit) => signed(w.totals[bit]));
     bitRow(nodes, fid, signY, (bit) => (w.bits[bit] == null ? '' : String(w.bits[bit])));
     decor.push(rowLabel('lab-votes', votesY, 'totals'), rowLabel('lab-sign', signY, 'fingerprint'));
+  } else if (w.kind === 'blocks') {
+    blockLayout(s, w, nodes, decor);
   } else {
     const id = w.top.ids === 'f' ? fid : aid;
     bitRow(nodes, id, 0, (bit) => String((w.top.fp >> bit) & 1), w.top.from);
@@ -538,7 +796,8 @@ export function layout(s: SimState): Scene {
   s.docs.forEach((d, i) => {
     const y = i * DOC_PITCH;
     nodes.push({ id: did(d.page), x: DOC_LEFT + DOC_W / 2, y, cells: [{ text: toBits(d.fp), w: DOC_W }] });
-    decor.push({ id: `doc-name-${d.page}`, type: 'label', x: DOC_LEFT + DOC_W + 10, y: y + 5, text: `page ${d.page}`, strong: true });
+    const untouched = w?.kind === 'blocks' && w.untouched.includes(d.page);
+    decor.push({ id: `doc-name-${d.page}`, type: 'label', x: DOC_LEFT + DOC_W + 10, y: y + 5, text: untouched ? `page ${d.page} · untouched` : `page ${d.page}`, strong: true });
     decor.push({ id: `doc-words-${d.page}`, type: 'label', x: DOC_LEFT, y: y + CELL_H / 2 + 16, text: d.words.join(' ') });
   });
   return { nodes, edges: [], decor };
@@ -596,7 +855,7 @@ const def: StructureDef<SimState> = {
       label: 'Fingerprint',
       intent: 'primary',
       args: [PAGE],
-      code: ['add', 'fingerprint', 'word_hash'],
+      code: ['add', 'fingerprint', 'block_key', 'word_hash'],
       run: (s, [n], rec) => void fingerprint(s, Number(n), rec),
       suggest: (s) => [unstoredPage(s)],
     },
@@ -616,12 +875,21 @@ const def: StructureDef<SimState> = {
       run: (s, [n], rec) => void near(s, Number(n), rec),
       suggest: (s) => [unstoredPage(s)],
     },
+    {
+      id: 'near_blocks',
+      label: 'Find with block tables',
+      args: [PAGE],
+      code: ['near_blocks', 'block_key', 'add', 'hamming', 'fingerprint', 'word_hash'],
+      run: (s, [n], rec) => void nearBlocks(s, Number(n), rec),
+      suggest: (s) => [unstoredPage(s)],
+    },
   ],
   layout,
   source: { python, java },
   counters: [
     { key: 'comparisons', label: 'Comparisons' },
     { key: 'hashes', label: 'Words hashed' },
+    { key: 'reads', label: 'Table lookups' },
   ],
   status: (s) => [
     { label: 'Stored pages', value: String(s.docs.length) },
@@ -634,6 +902,7 @@ const def: StructureDef<SimState> = {
     ['compare', TOUR_PAGE, TOUR_COPY],
     ['compare', TOUR_PAGE, TOUR_OTHER],
     ['near', TOUR_NEW],
+    ['near_blocks', TOUR_NEW],
   ],
   info,
 };

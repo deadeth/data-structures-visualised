@@ -7,6 +7,12 @@ import { makeRng } from '../../core/rng';
 import type { Frame, Scene } from '../../core/types';
 import def, {
   BITS,
+  BLOCKS,
+  BLOCK_BITS,
+  TABLES_RIGHT,
+  blockKey,
+  bucketNodes,
+  nearBlocks,
   MAX_DOCS,
   PAGES,
   SEED_PAGES,
@@ -31,6 +37,15 @@ const quiet = (s: SimState) => new Recorder(s, layout, false);
 const loud = (s: SimState) => new Recorder(s, layout, true);
 const fp = (n: number) => fingerprintOf(PAGES[n - 1].words);
 const popcount = (x: number) => x.toString(2).replace(/0/g, '').length;
+/** Do two fingerprints agree exactly on at least one block? */
+const shareBlock = (a: number, b: number) => Array.from({ length: BLOCKS }, (_, i) => i).some((i) => blockKey(a, i) === blockKey(b, i));
+
+/** The block tables rebuilt from the stored pages, oldest first, to check the state keeps them in step. */
+function tablesOf(s: SimState): number[][][] {
+  const t = Array.from({ length: BLOCKS }, () => Array.from({ length: 1 << BLOCK_BITS }, () => [] as number[]));
+  for (const d of s.docs) for (let b = 0; b < BLOCKS; b++) t[b][blockKey(d.fp, b)].push(d.page);
+  return t;
+}
 
 /** A fingerprint worked out the slow way, straight from the definition. */
 function reference(words: readonly string[]): number {
@@ -73,14 +88,17 @@ function checkFrames(frames: Frame[]): void {
       const x1 = d.anchor === 'end' ? d.x - tw : d.anchor === 'middle' ? d.x - tw / 2 : d.x;
       boxes.push({ id: d.id, x1, y1: d.y - LABEL_MAX * 0.65, x2: x1 + tw, y2: d.y + (labelLines(d.text).length - 1) * LABEL_LINE + LABEL_MAX * 0.65 });
     }
+    // Collected and checked once: an expect per pair of boxes made this helper the slowest part of the suite.
+    const problems: string[] = [];
     for (let i = 0; i < boxes.length; i++) {
       const a = boxes[i];
-      expect(a.x1, `${a.id} left`).toBeGreaterThanOrEqual(edge.x1 - 0.5);
-      expect(a.x2, `${a.id} right`).toBeLessThanOrEqual(edge.x2 + 0.5);
-      expect(a.y1, `${a.id} top`).toBeGreaterThanOrEqual(edge.y1 - LABEL_MAX);
-      expect(a.y2, `${a.id} bottom`).toBeLessThanOrEqual(edge.y2 + 0.5);
-      for (let j = i + 1; j < boxes.length; j++) expect(overlaps(a, boxes[j]), `${a.id} overlaps ${boxes[j].id}`).toBe(false);
+      if (a.x1 < edge.x1 - 0.5) problems.push(`${a.id} left`);
+      if (a.x2 > edge.x2 + 0.5) problems.push(`${a.id} right`);
+      if (a.y1 < edge.y1 - LABEL_MAX) problems.push(`${a.id} top`);
+      if (a.y2 > edge.y2 + 0.5) problems.push(`${a.id} bottom`);
+      for (let j = i + 1; j < boxes.length; j++) if (overlaps(a, boxes[j])) problems.push(`${a.id} overlaps ${boxes[j].id}`);
     }
+    expect(problems, f.message).toEqual([]);
     // Magenta is only ever on the cell that holds the followed key.
     for (const n of f.scene.nodes) if (n.tone === 'key') expect(n.cells[0].text).toBe(f.probe?.text);
     expect(f.scene.edges.length).toBe(0);
@@ -196,12 +214,18 @@ describe('SimHash', () => {
             // One test per bit, then one against the threshold.
             expect(rec.counters).toEqual({ comparisons: BITS + 1 });
           }
-        } else {
+        } else if (roll < 0.85) {
           const want = model.filter((d) => popcount(d.fp ^ fp(n)) <= threshold).map((d) => d.page);
           expect(near(s, n, rec)).toEqual(want);
           expect(rec.counters).toEqual({ hashes: PAGES[n - 1].words.length, comparisons: BITS + model.length });
+        } else {
+          const want = model.filter((d) => popcount(d.fp ^ fp(n)) <= threshold).map((d) => d.page);
+          expect([...nearBlocks(s, n, rec)].sort((x, y) => x - y)).toEqual([...want].sort((x, y) => x - y));
+          const sharing = model.filter((d) => shareBlock(d.fp, fp(n))).length;
+          expect(rec.counters).toEqual({ hashes: PAGES[n - 1].words.length, comparisons: BITS + sharing, reads: BLOCKS });
         }
         expect(s.docs.map((d) => ({ page: d.page, fp: d.fp }))).toEqual(model);
+        expect(s.tables).toEqual(tablesOf(s));
         expect(s.docs.length).toBeLessThanOrEqual(MAX_DOCS);
       }
     });
@@ -220,12 +244,14 @@ describe('SimHash', () => {
         const off = quiet(b);
         if (roll < 0.35) expect(fingerprint(a, n, on)).toBe(fingerprint(b, n, off));
         else if (roll < 0.7) expect(compare(a, n, m, on)).toBe(compare(b, n, m, off));
-        else expect(near(a, n, on)).toEqual(near(b, n, off));
+        else if (roll < 0.85) expect(near(a, n, on)).toEqual(near(b, n, off));
+        else expect(nearBlocks(a, n, on)).toEqual(nearBlocks(b, n, off));
         expect(off.frames.length).toBe(0);
         expect(on.frames.length).toBeGreaterThan(0);
         expect(on.counters).toEqual(off.counters);
         expect(on.frames[on.frames.length - 1].counters).toEqual(on.counters);
         expect(a.docs).toEqual(b.docs);
+        expect(a.tables).toEqual(b.tables);
         if (i % 5 === 0) checkFrames(on.frames);
       }
     }
@@ -389,6 +415,8 @@ describe('SimHash', () => {
     for (const n of [3, 6, 9, 12, 1]) fingerprint(s, n, rec);
     compare(s, 3, 9, rec);
     near(s, 10, rec);
+    nearBlocks(s, 10, rec);
+    nearBlocks(s, 11, rec);
     checkFrames(rec.frames);
     const first = corners(rec.frames[0].scene);
     for (const f of rec.frames) expect(corners(f.scene)).toEqual(first);
@@ -399,7 +427,7 @@ describe('SimHash', () => {
   it('seed and tour run cleanly through the definition', () => {
     expect(def.id).toBe('simhash');
     expect(def.tour.length).toBeGreaterThanOrEqual(4);
-    expect(def.tour.length).toBeLessThanOrEqual(6);
+    expect(def.tour.length).toBeLessThanOrEqual(7);
     const s = def.create({ threshold: 2 });
     const run = (id: string, args: (number | string)[], recording: boolean) => {
       const rec = new Recorder(s, def.layout, recording);
@@ -422,6 +450,8 @@ describe('SimHash', () => {
     expect(finals[2]).toContain('6 of 8 bits differ');
     expect(finals[2]).toContain('not near-duplicates');
     expect(finals[3]).toContain('near-duplicate of pages 1 and 2');
+    expect(finals[4]).toContain('near-duplicate of pages 1 and 2');
+    expect(finals[4]).toContain('Pages 4 and 7 were never touched');
     for (const op of def.ops) {
       for (let i = 0; i < 8; i++) {
         const args = op.suggest!(s);
@@ -432,4 +462,115 @@ describe('SimHash', () => {
     }
     expect(def.status!(s).length).toBe(4);
   }, 60_000);
+
+  it('a block key is the bits of that block, block 0 on the left', () => {
+    expect(BLOCKS * BLOCK_BITS).toBe(BITS);
+    for (let x = 0; x < 1 << BITS; x++) {
+      const bits = toBits(x);
+      for (let b = 0; b < BLOCKS; b++) expect(blockKey(x, b)).toBe(parseInt(bits.slice(b * BLOCK_BITS, (b + 1) * BLOCK_BITS), 2));
+    }
+    // Pigeonhole: any two fingerprints up to BLOCKS - 1 bits apart agree on a whole block.
+    for (let a = 0; a < 1 << BITS; a++) for (let b = 0; b < 1 << BITS; b++) if (popcount(a ^ b) < BLOCKS) expect(shareBlock(a, b)).toBe(true);
+  });
+
+  it('the block-table find returns what the scan returns and compares only pages that share a block', () => {
+    const rnd = makeRng(65536);
+    let finds = 0;
+    for (const threshold of [1, 2, 3]) {
+      for (let order = 0; order < 60; order++) {
+        // A random store of up to MAX_DOCS pages, put in a random order, some dropped off the front.
+        const s = create(threshold);
+        const adds = 1 + Math.floor(rnd() * 9);
+        for (let i = 0; i < adds; i++) fingerprint(s, 1 + Math.floor(rnd() * PAGES.length), quiet(s));
+        expect(s.tables).toEqual(tablesOf(s));
+        for (let n = 1; n <= PAGES.length; n++) {
+          const rec = quiet(s);
+          const got = nearBlocks(s, n, rec);
+          const scan = near(s, n, quiet(s));
+          expect([...got].sort((x, y) => x - y)).toEqual([...scan].sort((x, y) => x - y));
+          expect(new Set(got).size).toBe(got.length);
+          const sharing = s.docs.filter((d) => shareBlock(d.fp, fp(n)));
+          expect(rec.counters.comparisons).toBe(BITS + sharing.length);
+          finds++;
+        }
+        // With frames: every page compared shares a block with the query, and every page that shares one is compared.
+        const n = 1 + Math.floor(rnd() * PAGES.length);
+        const rec = loud(s);
+        nearBlocks(s, n, rec);
+        const compared = rec.frames.filter((f) => f.compare && String(f.compare.left).startsWith('distance')).map((f) => Number(f.probe!.at.slice(1)));
+        expect(new Set(compared)).toEqual(new Set(s.docs.filter((d) => shareBlock(d.fp, fp(n))).map((d) => d.page)));
+        if (order % 10 === 0) checkFrames(rec.frames);
+      }
+    }
+    expect(finds).toBe(3 * 60 * PAGES.length);
+  });
+
+  it('the block-table find in the tour skips pages 4 and 7 and finds pages 1 and 2', () => {
+    const s = create(2);
+    for (const n of [...SEED_PAGES, TOUR_COPY]) fingerprint(s, n, quiet(s));
+    const rec = loud(s);
+    expect(nearBlocks(s, TOUR_NEW, rec)).toEqual([1, 2]);
+    checkFrames(rec.frames);
+    expect(rec.counters).toEqual({ hashes: PAGES[TOUR_NEW - 1].words.length, comparisons: BITS + 3, reads: BLOCKS });
+    const lookups = rec.frames.filter((f) => f.lines?.includes('nb_lookup'));
+    expect(lookups.length).toBe(BLOCKS);
+    // Block values of page 3 (00001000): 00, 00, 10, 00. The probe sits under each block in turn.
+    expect(lookups.map((f) => f.probe)).toEqual(['00', '00', '10', '00'].map((text, b) => ({ text, at: `q${b}`, place: 'below' })));
+    expect(lookups.map((f) => f.lines)).toEqual([['nb_lookup', 'nb_new', 'nb_add'], ['nb_lookup', 'nb_new'], ['nb_lookup'], ['nb_lookup', 'nb_new']]);
+    expect(lookups[0].message).toContain('pages 5, 1 and 2');
+    expect(lookups[2].message).toContain('is empty');
+    const tests = rec.frames.filter((f) => f.compare && String(f.compare.left).startsWith('distance'));
+    expect(tests.map((f) => f.probe!.at)).toEqual(['d5', 'd1', 'd2']);
+    expect(tests.map((f) => f.compare!.op)).toEqual(['>', '≤', '≤']);
+    const last = rec.frames[rec.frames.length - 1];
+    expect(last.lines).toEqual(['nb_done']);
+    expect(last.message).toContain('3 comparisons; the scan makes 5. Pages 4 and 7 were never touched.');
+    const name = (id: string) => (last.scene.decor!.find((d) => d.id === id) as { text: string }).text;
+    expect(name('doc-name-4')).toBe('page 4 · untouched');
+    expect(name('doc-name-7')).toBe('page 7 · untouched');
+    expect(name('doc-name-1')).toBe('page 1');
+    expect(last.scene.nodes.find((x) => x.id === 'd4')!.tone).toBeUndefined();
+    expect(last.scene.nodes.find((x) => x.id === 'd5')!.tone).toBe('dim');
+    expect(last.scene.nodes.find((x) => x.id === 'd1')!.tone).toBe('ok');
+  });
+
+  it('after the tour, page 12 makes every stored page a candidate, as the notes say', () => {
+    const s = def.create({ threshold: 2 });
+    for (const [id, ...args] of [...def.seed, ...def.tour]) def.ops.find((o) => o.id === id)!.run(s, args, quiet(s));
+    const rec = loud(s);
+    nearBlocks(s, 12, rec);
+    expect(rec.counters.comparisons).toBe(BITS + s.docs.length);
+    expect(rec.frames[rec.frames.length - 1].message).toContain('no fewer than the scan');
+  });
+
+  it('says so when every stored page is a candidate', () => {
+    const s = create(2);
+    for (const n of [1, 2, 3, 10]) fingerprint(s, n, quiet(s));
+    const rec = loud(s);
+    nearBlocks(s, 1, rec);
+    checkFrames(rec.frames);
+    const last = rec.frames[rec.frames.length - 1].message;
+    expect(last).toContain('no fewer than the scan');
+    expect(last).toContain('n / 65,536');
+  });
+
+  it('every table fits its row for every possible set of stored pages', () => {
+    const pages = PAGES.map((_, i) => i + 1);
+    let sets = 0;
+    const pick = (from: number, chosen: number[]) => {
+      if (chosen.length === MAX_DOCS) {
+        const s = create();
+        for (const n of chosen) fingerprint(s, n, quiet(s));
+        for (let b = 0; b < BLOCKS; b++) {
+          const last = bucketNodes(s.tables, b)[(1 << BLOCK_BITS) - 1];
+          expect(last.x + nodeSize(last).w / 2, `${chosen} table ${b}`).toBeLessThanOrEqual(TABLES_RIGHT);
+        }
+        sets++;
+        return;
+      }
+      for (let i = from; i < pages.length; i++) pick(i + 1, [...chosen, pages[i]]);
+    };
+    pick(0, []);
+    expect(sets).toBe(792);
+  });
 });
