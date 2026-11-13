@@ -2157,3 +2157,39 @@ td.num {
     display: none;
   }
 }
+
+/*
+ * Large monitors. The page uses more of the width, text and controls are a size up, the canvas is taller and the
+ * side column for steps and code is wider, so a 2560px screen is not a small page with an empty right half.
+ */
+@media (min-width: 1800px) {
+  main {
+    max-width: 1720px;
+  }
+
+  .stage {
+    --canvas-h: clamp(300px, calc(100vh - 480px), 720px);
+  }
+
+  .stage.with-code:not(.code-beside):not(.compact) {
+    --canvas-h: clamp(240px, calc(100vh - 530px), 720px);
+  }
+
+  .stage.beside:not(.compact) {
+    grid-template-columns: minmax(0, 1fr) 380px;
+  }
+
+  .stage.code-beside:not(.compact) {
+    grid-template-columns: minmax(0, 1fr) clamp(480px, 36%, 660px);
+  }
+}
+
+@media (min-width: 2200px) {
+  html {
+    font-size: 112.5%;
+  }
+
+  main {
+    max-width: 2000px;
+  }
+}

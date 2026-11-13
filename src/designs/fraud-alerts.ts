@@ -100,6 +100,109 @@ export const fraudAlerts: Design = {
         { text: 'About 46 payments a second on average and 1,000 a second designed peak (see Numbers).', from: '1 million businesses x about 4 payments a business a day = 4 million a day (Numbers table; the million rests on Tide\'s about 750,000 UK members). 4,000,000 / 86,400 seconds = about 46 a second. The 1,000 a second peak is a design choice, about 20 times the average, to cover busy hours and attacks (assumption).' },
         { text: 'Risk call budget (my target): 150 ms at the 99th percentile, inside the payment request.', from: 'A target, not a sum: the brief\'s decision target. Features about 10 ms + model about 20 ms leaves about 120 ms for the network hop, the rules and logging. Stripe Radar decides in under 100 ms (in Sources), so the figure is realistic.' },
       ],
+      tables: [
+        { title: "payments: one row a payment", lang: 'sql', code: `CREATE TABLE payments (
+  payment_id      text PRIMARY KEY,         -- 'pay_8KD3F2'
+  account_id      text NOT NULL,            -- 'acc_51207'
+  idempotency_key uuid NOT NULL,            -- from the client
+  payee_id        text NOT NULL,
+  amount_pence    bigint NOT NULL CHECK (amount_pence > 0),
+  scheme          text NOT NULL,            -- 'FPS'
+  device_id       text NOT NULL,
+  status          text NOT NULL,  -- pending, held, sent, rejected
+  version         int NOT NULL DEFAULT 1,
+  hold_expires_at timestamptz,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, idempotency_key)
+);
+-- the expiry job reads only held payments
+CREATE INDEX payments_held ON payments (hold_expires_at)
+  WHERE status = 'held';`,
+          note: "Assumed PostgreSQL: the page shows SQL but names no database. The unique key on account and Idempotency-Key makes POST /payments safe to repeat. The ledger's balances and reservations are left out here." },
+        { title: "outbox: events to publish", lang: 'sql', code: `CREATE TABLE outbox (
+  event_id   text PRIMARY KEY,   -- payment id : version
+  account_id text NOT NULL,      -- becomes the Kafka key
+  event_type text NOT NULL,      -- 'payment.held'
+  payload    jsonb NOT NULL,     -- the message value
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+-- CDC reads inserts from the database log, not this table.
+-- Rows are kept a day for debugging, then deleted.`,
+          note: "The event id is the payment id and its version, pay_8KD3F2:2, so a row published twice carries the same id." },
+        { title: "payment_commands: answers already applied", lang: 'sql', code: `CREATE TABLE payment_commands (
+  idempotency_key text PRIMARY KEY,   -- the alert id, 'A-91'
+  payment_id      text NOT NULL REFERENCES payments,
+  command         text NOT NULL,      -- reject, release
+  result_status   text NOT NULL,      -- 'rejected'
+  result_version  int NOT NULL,       -- 3
+  created_at      timestamptz NOT NULL DEFAULT now()
+);`,
+          note: "Keyed by the alert id, so a repeated Reject from the Reply service finds the first result, rejected at version 3." },
+      ],
+      queries: [
+        { title: "Create the payment, safe to repeat", lang: 'sql', code: `INSERT INTO payments (payment_id, account_id, idempotency_key,
+  payee_id, amount_pence, scheme, device_id, status)
+VALUES ('pay_8KD3F2', 'acc_51207',
+        '6f1c2e0a-4b7d-4e8a-9d3f-2a5b8c1e7f40', 'pye_77310',
+        480000, 'FPS', 'dev_web_9c1e', 'pending')
+ON CONFLICT (account_id, idempotency_key) DO NOTHING
+RETURNING payment_id;
+-- no row back: a retry. Read the first payment instead:
+SELECT payment_id, status
+  FROM payments
+ WHERE account_id = 'acc_51207'
+   AND idempotency_key = '6f1c2e0a-4b7d-4e8a-9d3f-2a5b8c1e7f40';`,
+          note: "Every POST /payments, about 46 a second on average and 1,000 at peak. The unique key on (account_id, idempotency_key) finds the retry." },
+        { title: "Hold and announce, one transaction", lang: 'sql', code: `BEGIN;
+UPDATE payments
+   SET status = 'held', version = 2,
+       hold_expires_at = '2026-11-19 23:59:59+00'
+ WHERE payment_id = 'pay_8KD3F2'
+   AND status = 'pending' AND version = 1;
+INSERT INTO outbox (event_id, account_id, event_type, payload)
+VALUES ('pay_8KD3F2:2', 'acc_51207', 'payment.held',
+        '{"payment_id": "pay_8KD3F2", "version": 2}');
+COMMIT;`,
+          note: "The statement on \"state changes\", shortened. The version check means 0 rows if something else moved the payment first." },
+        { title: "\"Not me\": reject, once", lang: 'sql', code: `BEGIN;
+INSERT INTO payment_commands (idempotency_key, payment_id,
+  command, result_status, result_version)
+VALUES ('A-91', 'pay_8KD3F2', 'reject', 'rejected', 3)
+ON CONFLICT (idempotency_key) DO NOTHING;
+-- 0 rows: a repeat. ROLLBACK and return the saved result.
+UPDATE payments
+   SET status = 'rejected', version = 3,
+       hold_expires_at = NULL
+ WHERE payment_id = 'pay_8KD3F2'
+   AND status = 'held' AND version = 2;
+-- 0 rows: no longer held. ROLLBACK, return the current state.
+INSERT INTO outbox (event_id, account_id, event_type, payload)
+VALUES ('pay_8KD3F2:3', 'acc_51207', 'payment.rejected',
+        '{"payment_id": "pay_8KD3F2", "version": 3,
+          "reason": "owner_not_me"}');
+COMMIT;`,
+          note: "Run for the Reply service's Reject. The command row and the version check together make a double tap harmless." },
+        { title: "Expire holds nobody answered", lang: 'sql', code: `SELECT payment_id, account_id, version
+  FROM payments
+ WHERE status = 'held'
+   AND hold_expires_at < now()
+ ORDER BY hold_expires_at
+ LIMIT 100
+   FOR UPDATE SKIP LOCKED;
+-- each row: status 'rejected', version + 1 and an outbox
+-- row, in one transaction, as for "not me"`,
+          note: "A job every minute. The partial index payments_held holds only held payments, a few days' worth at most. An expired hold is rejected, never released." },
+        { title: "Outbox lag and clean-up", lang: 'sql', code: `SELECT slot_name,
+       pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(),
+                                      confirmed_flush_lsn))
+         AS not_yet_published
+  FROM pg_replication_slots
+ WHERE slot_name = 'outbox_cdc';
+
+DELETE FROM outbox
+ WHERE created_at < now() - interval '1 day';`,
+          note: "The lag check backs the alarm on unpublished events: with CDC it is the replication slot's lag, not a column. The slot name is an example. Clean-up runs hourly." },
+      ],
       fails: 'If the risk engine times out, apply a fixed fallback policy by band: small payments to known payees go through, large payments to new payees are held. Never wait past the budget. If the outbox relay stalls, holds still happen but alerts are late, so alarm on the age of the oldest unpublished row.',
       alternatives: [
         { name: 'Decide in line, hold before submission', chosen: true, good: 'Stops the money while it can still be stopped. The alert pipeline only has to report a decision already made.', cost: 'Adds the risk call to every outbound payment, and a fallback policy for when it is slow.',
@@ -160,6 +263,62 @@ export const fraudAlerts: Design = {
         { text: 'Budget: 150 ms at the 99th percentile, of which reading features about 10 ms and the model about 20 ms (my targets).', from: 'Targets, not sums. 150 ms is the brief\'s decision target. 10 ms is one Redis round trip, the timeout on the features call. 20 ms assumes a model scored in the engine\'s own process, with no further hop. 150 - 10 - 20 = about 120 ms left for the network, the rules, logging and slow tails.' },
         { text: 'Fraud is rare: about 1 in 10,000 transactions at Monzo, about 1 in 1,000 payments at Stripe.', from: 'Quoted from the Monzo and Stripe posts (in Sources), not derived. They count different populations, so they need not agree; the Numbers table uses Monzo\'s figure for a bank.' },
         { text: 'Stripe reports wrongly blocking about 0.1 per cent of legitimate payments.', from: 'Quoted from Stripe\'s post on Radar (in Sources), not derived. No sum on this page uses it.' },
+      ],
+      tables: [
+        { title: "rule_sets: rules and model in force", lang: 'sql', code: `CREATE TABLE rule_sets (
+  rules_version text PRIMARY KEY,  -- 'rules-418'
+  model_version text NOT NULL,     -- 'model-2026-11-02'
+  rules         jsonb NOT NULL,    -- conditions and actions
+  action_limits jsonb NOT NULL,    -- holds a minute, and so on
+  status        text NOT NULL,     -- draft, live, retired
+  created_by    text NOT NULL,
+  live_from     timestamptz
+);
+-- at most one live set at a time
+CREATE UNIQUE INDEX rule_sets_one_live ON rule_sets ((true))
+  WHERE status = 'live';`,
+          note: "Assumed PostgreSQL; the page names no store for rules. The partial unique index allows only one live set." },
+        { title: "risk_decisions: every decision and its inputs", lang: 'sql', code: `CREATE TABLE risk_decisions (
+  payment_id    text NOT NULL,     -- 'pay_8KD3F2'
+  decided_at    timestamptz NOT NULL,
+  account_id    text NOT NULL,
+  action        text NOT NULL,     -- allow, warn, hold, block
+  score         real,              -- 0.93; NULL on fallback
+  reasons       text[] NOT NULL,
+  features      jsonb NOT NULL,    -- the inputs, as read
+  model_version text NOT NULL,
+  rules_version text NOT NULL,
+  PRIMARY KEY (payment_id, decided_at)
+) PARTITION BY RANGE (decided_at);
+
+CREATE TABLE risk_decisions_2026_11_13
+  PARTITION OF risk_decisions
+  FOR VALUES FROM ('2026-11-13') TO ('2026-11-14');`,
+          note: "About 4 million rows a day, one partition a day. Simplified: this log could equally go to Kafka and a warehouse." },
+      ],
+      queries: [
+        { title: "Load the live rules", lang: 'sql', code: `SELECT rules_version, model_version, rules, action_limits
+  FROM rule_sets
+ WHERE status = 'live';`,
+          note: "At start-up and when a new set goes live, never per payment: the 150 ms budget has no room for it." },
+        { title: "Log the decision", lang: 'sql', code: `INSERT INTO risk_decisions (payment_id, decided_at,
+  account_id, action, score, reasons, features,
+  model_version, rules_version)
+VALUES ('pay_8KD3F2', '2026-11-13 23:40:12+00', 'acc_51207',
+        'hold', 0.93,
+        '{new_device, new_payee_velocity, unusual_hour}',
+        '{"new_payees_1h": 3, "pays_1h": 1,
+          "device_seen": false, "missing": []}',
+        'model-2026-11-02', 'rules-418');`,
+          note: "Once per payment, written after the verdict is returned, so logging never slows the payment." },
+        { title: "Back-test a rule change", lang: 'sql', code: `SELECT payment_id, action, score, features
+  FROM risk_decisions
+ WHERE decided_at >= '2026-11-13'
+   AND decided_at <  '2026-11-14'
+   AND rules_version = 'rules-418';
+-- run rules-419 over each row's features and compare
+-- its action with the logged one`,
+          note: "Offline, before rules-419 ships. Partition pruning keeps it to one day's partition." },
       ],
       fails: 'A crash or timeout: the payment service applies its fallback policy. A bad rule: each action carries a rate limit, as in Monzo\'s action applier, which stops applying an action past its limit and alerts an engineer. One broken rule cannot hold every payment in the bank.',
       alternatives: [
@@ -234,6 +393,51 @@ export const fraudAlerts: Design = {
       numbers: [
         { text: 'Assume about 1 KB a business for a million businesses: about 1 GB, which fits in memory with room for payee pairs.', from: '1 million businesses (Numbers table) x about 1 KB a business (assumption: a few dozen counters, timestamps and small sets of devices and countries) = about 1 GB. One server\'s memory holds many times that, so business and payee pairs fit alongside.' },
         { text: 'All features for an account in one hash: one read, not twenty.', from: 'Not a sum. "Twenty" stands for one read per feature if each lived under its own key. One hash is one round trip, which is what keeps features inside about 10 ms.' },
+      ],
+      tables: [
+        { title: "feat:<account>: one hash per account", lang: 'text', code: `key     feat:acc_51207          one hash per account
+type    hash, about 1 KB
+fields  written in line by the risk engine's script:
+  pays_1h           0        payments in the last hour
+  sent_today_pence  0        amount sent today
+  late_pays_ytd     0        payments after 23:00 this year
+  new_payees_1h     3        payees added in the last hour
+  dev:dev_ios_41a2  1        devices seen (one field each)
+  cc:GB             1        countries seen (one field each)
+fields  written by the stream and batch jobs:
+  sent_7d_pence     1250000  longer windows
+  usual_start       08       usual hours, from batch
+  usual_end         19
+expiry  a year after the account's last activity`,
+          note: "Field names as on \"features\". How an hour rolls over is left out: the script can keep a start time beside each counter and reset it." },
+      ],
+      queries: [
+        { title: "Read and count, per payment", lang: 'text', code: `# loaded once at start-up; returns the sha used below
+SCRIPT LOAD "<the script: HGETALL, then HINCRBY each counter>"
+
+# then once per payment, the call shown on "features":
+EVALSHA <sha> 1 feat:acc_51207 480000 dev_web_9c1e NL
+# -> the old hash and the new counts, in one round trip`,
+          note: "Once per payment, with a timeout of about 10 ms. The script itself is not shown." },
+        { title: "Writes from outside the payment path", lang: 'text', code: `# when a payee is added (pye_77310 at 23:38:05)
+HINCRBY feat:acc_51207 new_payees_1h 1
+# -> 3
+
+# the stream job, every few seconds, for longer windows
+HSET feat:acc_51207 sent_7d_pence 1250000
+
+# the nightly batch job
+HSET feat:acc_51207 usual_start 08 usual_end 19
+EXPIRE feat:acc_51207 31536000`,
+          note: "The payee increment is what makes new_payees_1h 3 on the tour. Stream and batch jobs own the longer windows." },
+        { title: "Rebuild after a loss", lang: 'text', code: `# after losing Redis: replay the last day of payment-events
+# from the beginning of a new consumer group, and for each
+# payment.created event run the same increments:
+HINCRBY feat:acc_51207 pays_1h 1
+HINCRBY feat:acc_51207 sent_today_pence 480000
+# until it catches up, missing features count as risky
+# for large payments to new payees`,
+          note: "Possible because payment-events keeps a week. Until the rebuild ends, every account looks quiet." },
       ],
       fails: 'If the counters are lost, every account looks quiet, which is exactly what a fraudster wants. Rebuild them by replaying the last day of payment events, and until then treat missing features as risky for large payments to new payees. Reads have a timeout: return what has resolved and mark the rest missing.',
       alternatives: [
@@ -419,6 +623,94 @@ export const fraudAlerts: Design = {
         { text: 'Assume about 1.4 million people and 2 million devices, a few KB each: a few GB in all, which fits in a cache.', from: '1 million businesses x about 1.4 people each = 1.4 million people, each with about 1.4 devices = about 2 million devices (Numbers table assumptions). That is about 3.4 million records; at 1 to 3 KB each (assumption) it is about 3.4 to 10 GB. Either end fits in a cache.' },
         { text: 'Target: one read per alert, under 10 ms.', from: 'A target. At about 1 alert a second at peak and 100 in a burst the load is trivial, and 10 ms sits well inside the call\'s 50 ms timeout and the alert service\'s 500 ms.' },
       ],
+      tables: [
+        { title: "people and devices", lang: 'sql', code: `CREATE TABLE people (
+  person_id   text PRIMARY KEY,    -- 'per_1101'
+  business_id text NOT NULL,       -- 'biz_3318'
+  role        text NOT NULL,       -- owner, director, bookkeeper
+  language    text NOT NULL,       -- 'en-GB'
+  mobile      text,                -- verified, for SMS and voice
+  email       text,
+  quiet_from  time,                -- 22:00
+  quiet_to    time                 -- 07:00
+);
+CREATE INDEX people_business ON people (business_id);
+
+CREATE TABLE devices (
+  device_id  text PRIMARY KEY,     -- 'dev_ios_41a2'
+  person_id  text NOT NULL REFERENCES people,
+  push_token text NOT NULL,        -- APNs or FCM address
+  bound_at   timestamptz NOT NULL,
+  revoked_at timestamptz           -- set on a 410 from APNs
+);
+CREATE INDEX devices_person ON devices (person_id)
+  WHERE revoked_at IS NULL;`,
+          note: "Assumed PostgreSQL behind a cache; the page names neither. A 410 from APNs sets revoked_at." },
+        { title: "channel order and category rules", lang: 'sql', code: `CREATE TABLE channel_prefs (
+  person_id        text NOT NULL REFERENCES people,
+  category         text NOT NULL,  -- security .. marketing
+  position         int NOT NULL,   -- 1 = try first
+  channel          text NOT NULL,  -- push, sms, voice, email
+  min_amount_pence bigint,         -- bookkeeper: 100000
+  opted_out        boolean NOT NULL DEFAULT false,
+  PRIMARY KEY (person_id, category, position)
+);
+
+CREATE TABLE category_rules (
+  category            text PRIMARY KEY,  -- 'security'
+  priority            text NOT NULL,     -- 'P0'
+  ignores_quiet_hours boolean NOT NULL,  -- true for security
+  ignores_opt_outs    boolean NOT NULL,  -- true for security
+  ladder              jsonb NOT NULL     -- after_seconds a step
+);`,
+          note: "Security ignores quiet hours and opt-outs; its ladder is the bank's, [0, 90, 300, 600] seconds. The person picks only the order." },
+        { title: "The cache in front", lang: 'text', code: `key     prefs:biz_3318:security   one per business, category
+type    string, JSON: people, channels in order, devices,
+        language, quiet hours, thresholds
+expiry  5 minutes, and deleted when a setting changes`,
+          note: "About 1 million businesses at a few KB each: a few GB, which fits in memory." },
+      ],
+      queries: [
+        { title: "Resolve: cache first", lang: 'text', code: `GET prefs:biz_3318:security
+# hit: build the plan from it, under 10 ms
+# miss: run the read below, then
+SET prefs:biz_3318:security '<json>' EX 300
+
+# after any change to this business's settings commits
+DEL prefs:biz_3318:security`,
+          note: "About 1 alert a second at peak, 100 in a burst. Deleting on change keeps a removed person from being alerted for long." },
+        { title: "Resolve: the read on a cache miss", lang: 'sql', code: `SELECT p.person_id, p.role, p.language,
+       p.quiet_from, p.quiet_to,
+       c.position, c.channel, c.min_amount_pence,
+       c.opted_out
+  FROM people p
+  JOIN channel_prefs c
+    ON c.person_id = p.person_id
+   AND c.category = 'security'
+ WHERE p.business_id = 'biz_3318'
+ ORDER BY p.person_id, c.position;
+
+SELECT device_id, push_token
+  FROM devices
+ WHERE person_id = 'per_1101'
+   AND revoked_at IS NULL;`,
+          note: "Two index reads: people_business, then devices_person. The service applies the category rules to the rows." },
+        { title: "Owner puts SMS before push", lang: 'sql', code: `BEGIN;
+DELETE FROM channel_prefs
+ WHERE person_id = 'per_1101' AND category = 'security';
+INSERT INTO channel_prefs (person_id, category, position,
+                           channel)
+VALUES ('per_1101', 'security', 1, 'sms'),
+       ('per_1101', 'security', 2, 'push'),
+       ('per_1101', 'security', 3, 'voice');
+COMMIT;`,
+          note: "Then DEL the cache key. The owner can reorder security channels but cannot remove the category." },
+        { title: "A dead push token", lang: 'sql', code: `UPDATE devices
+   SET revoked_at = now()
+ WHERE device_id = 'dev_ios_41a2'
+   AND revoked_at IS NULL;`,
+          note: "Run when APNs answers 410, so the next plan skips the device." },
+      ],
       fails: 'If Preferences is down, fail open for security alerts: use the last cached plan or, if there is none, the mandatory default (the owner\'s bound devices by push, then the owner\'s verified mobile by SMS). Never drop a fraud alert because a settings service is down. For marketing, fail closed and send nothing.',
       alternatives: [
         { name: 'A preference service with a read-through cache', chosen: true, good: 'One place for every team\'s rules, and fast.', cost: 'A network call on the alert path, with a fallback to keep.',
@@ -480,6 +772,89 @@ export const fraudAlerts: Design = {
       numbers: [
         { text: 'Fraud alerts: 8,000 a day at about 2 KB, which is tiny.', from: '8,000 alerts a day (Numbers table) x about 2 KB (assumption: the alert, its plan, and a few attempt and answer rows) = about 16 MB a day, about 6 GB a year.' },
         { text: 'Assume every notification of every kind: about 5 million a day at 1 KB with 1.5 attempts each, about 7.5 GB a day or 2.7 TB a year.', from: 'About 4 million payment notifications + about 1 million campaign messages = about 5 million a day (Numbers table). 5 million x 1 KB x 1.5 attempts = 7.5 GB a day; x 365 = about 2.7 TB a year. 1 KB a notification and 1.5 attempts are assumptions in the Numbers table.' },
+      ],
+      tables: [
+        { title: "alerts: one row an alert, by month", lang: 'sql', code: `CREATE TABLE alerts (
+  alert_id     text NOT NULL,   -- hash(payment id, reason): A-91
+  created_at   timestamptz NOT NULL,  -- the event's own time
+  payment_id   text NOT NULL,
+  account_id   text NOT NULL,
+  category     text NOT NULL,   -- security .. marketing
+  severity     text NOT NULL,
+  status       text NOT NULL,   -- open, sent, delivered,
+                                -- answered, expired
+  plan         jsonb NOT NULL,  -- from Preferences, as it was
+  next_step    int,             -- 2 = owner by SMS
+  next_step_at timestamptz,     -- the timer; NULL = none due
+  answer       text,            -- not_me, yes
+  PRIMARY KEY (alert_id, created_at)
+) PARTITION BY RANGE (created_at);
+
+CREATE TABLE alerts_2026_11 PARTITION OF alerts
+  FOR VALUES FROM ('2026-11-01') TO ('2026-12-01');`,
+          note: "The same columns as \"alert, audit\". created_at is in the key because the table is partitioned by month; it is the event's own time, so a repeat collides." },
+        { title: "alerts: the two indexes that matter", lang: 'sql', code: `-- the timer poll and the sweeper: only alerts with a step due
+CREATE INDEX alerts_due ON alerts (next_step_at)
+  WHERE next_step_at IS NOT NULL;
+-- the app's inbox: newest first for one account
+CREATE INDEX alerts_inbox ON alerts (account_id, created_at DESC);`,
+          note: "The partial index stays small: only alerts whose ladder is still running, and every ladder ends within 30 minutes." },
+        { title: "alert_events: the audit trail", lang: 'sql', code: `CREATE TABLE alert_events (
+  alert_id         text NOT NULL,
+  alert_created_at timestamptz NOT NULL,  -- the alert's month
+  step             int NOT NULL,          -- ladder step
+  kind             text NOT NULL,  -- push_accepted, delivered,
+                                   -- answered, closed
+  at               timestamptz NOT NULL,
+  detail           jsonb NOT NULL DEFAULT '{}',
+  PRIMARY KEY (alert_id, alert_created_at, step, kind)
+) PARTITION BY RANGE (alert_created_at);
+
+CREATE TABLE alert_events_2026_11 PARTITION OF alert_events
+  FOR VALUES FROM ('2026-11-01') TO ('2026-12-01');`,
+          note: "The key includes kind: at step 2 the SMS receipt and the answer are both recorded. No foreign key, so old months detach cleanly." },
+      ],
+      queries: [
+        { title: "Timer poll, every second", lang: 'sql', code: `BEGIN;
+SELECT alert_id, created_at, next_step, plan
+  FROM alerts
+ WHERE next_step_at <= '2026-11-13 23:41:42+00'
+ ORDER BY next_step_at
+ LIMIT 100
+   FOR UPDATE SKIP LOCKED;
+-- A-91, step 2: queue A-91:per_1101:sms:2, then
+UPDATE alerts
+   SET next_step = 3,
+       next_step_at = '2026-11-13 23:45:12+00'  -- call at 5 min
+ WHERE alert_id = 'A-91'
+   AND created_at = '2026-11-13 23:40:12+00'
+   AND next_step = 2;
+COMMIT;`,
+          note: "Uses alerts_due. SKIP LOCKED lets several instances poll without taking the same alert. Simplified: the page does not say how instances share the poll." },
+        { title: "Record a receipt", lang: 'sql', code: `INSERT INTO alert_events
+  (alert_id, alert_created_at, step, kind, at, detail)
+VALUES ('A-91', '2026-11-13 23:40:12+00', 2, 'delivered',
+        '2026-11-13 23:41:46+00',
+        '{"channel": "sms", "provider": "sms-a"}')
+ON CONFLICT DO NOTHING;`,
+          note: "About 25,000 P0 sends a day, each with a receipt or two. A repeated receipt hits the key and changes nothing." },
+        { title: "The app's inbox", lang: 'sql', code: `SELECT alert_id, created_at, category, status, answer
+  FROM alerts
+ WHERE account_id = 'acc_51207'
+   AND created_at > now() - interval '90 days'
+ ORDER BY created_at DESC
+ LIMIT 50;`,
+          note: "Each time the app opens. Uses alerts_inbox; the date bound keeps it to the last few partitions." },
+        { title: "One alert's timeline", lang: 'sql', code: `SELECT e.step, e.kind, e.at, e.detail
+  FROM alert_events e
+ WHERE e.alert_id = 'A-91'
+   AND e.alert_created_at = '2026-11-13 23:40:12+00'
+ ORDER BY e.at, e.step;`,
+          note: "For the inbox detail, a complaint, an audit and each fraud case. One partition, by primary key." },
+        { title: "Archive a month", lang: 'sql', code: `ALTER TABLE alert_events DETACH PARTITION alert_events_2026_11;
+ALTER TABLE alerts DETACH PARTITION alerts_2026_11;
+-- copy both to the archive, then DROP TABLE each`,
+          note: "Monthly, past the retention period. Detaching is quick and does not rewrite rows." },
       ],
       fails: 'If it is down, the alert service still enqueues P0 sends (getting the owner\'s attention is more urgent than the record), and writes the record when the store returns, by reading the log again. Events are keyed by alert id and step, so a replay writes nothing twice.',
       alternatives: [
@@ -603,6 +978,24 @@ export const fraudAlerts: Design = {
       numbers: [
         { text: 'Target: P0 push handed to APNs or FCM within 1 second at the 99th percentile.', from: 'A target from the latency budget (Numbers table): log and consumer under 1 second + push handed over under 1 second = event to push under 2 seconds.' },
         { text: 'P0 retries (my choice): 3 tries at about 1, 2 and 4 seconds with jitter. P3 can wait minutes.', from: 'A choice. Waits that double, 1 + 2 + 4 = about 7 seconds of retrying, end far inside the 90 seconds before the SMS step. Jitter spreads retries so a provider coming back from an outage is not hit all at once.' },
+      ],
+      tables: [
+        { title: "Dedup keys", lang: 'text', code: `key     dedup:<alert>:<person>:<channel>:<step>
+        dedup:A-91:per_1101:push:1
+        dedup:A-91:per_1101:sms:2
+type    string; the value is the worker that sent it
+expiry  the end of the hold, 2026-11-19 23:59:59 UTC
+size    about 25,000 P0 sends a day, under 100 bytes each:
+        a few MB at most`,
+          note: "The page does not name the store; any key-value store with an atomic set-if-absent and an expiry will do. Redis is assumed here." },
+      ],
+      queries: [
+        { title: "Claim a send", lang: 'text', code: `# before the provider call; 1795132799 is the hold's end,
+# 2026-11-19 23:59:59 UTC, as Unix seconds
+SET dedup:A-91:per_1101:sms:2 w-sms-3 NX EXAT 1795132799
+# -> OK:  this worker sends
+# -> nil: a copy already sent or is sending; skip`,
+          note: "Once per job, just before the provider call. The sweeper's copy of a job hits the same key." },
       ],
       fails: 'A send that worked but whose reply was lost gets retried. The dedup key stops a second job, but not a second call inside one job, so a rare duplicate is the price. Push uses a collapse id, so a duplicate replaces the first on screen instead of stacking.',
       alternatives: [
@@ -890,6 +1283,56 @@ export const fraudAlerts: Design = {
       ],
       numbers: [
         { text: 'Reimbursement within 5 business days of a claim, or 35 at most when the bank stops the clock to investigate (PSR).', from: 'Quoted from the PSR sources, not derived: five business days, or up to 35 when the bank stops the clock.' },
+      ],
+      tables: [
+        { title: "cases and case_notes", lang: 'sql', code: `CREATE TABLE cases (
+  case_id     text PRIMARY KEY,   -- 'case-A-91'
+  alert_id    text NOT NULL UNIQUE,  -- one case per alert
+  payment_id  text NOT NULL,
+  account_id  text NOT NULL,
+  reason      text NOT NULL,   -- not_me, expired, vulnerable
+  status      text NOT NULL,   -- new, working, closed
+  assignee    text,            -- NULL until someone takes it
+  opened_at   timestamptz NOT NULL,
+  claim_due   date,            -- 5 business days, 35 at most
+  outcome     text             -- reimbursed, refused, recovered
+);
+CREATE INDEX cases_waiting ON cases (opened_at)
+  WHERE status <> 'closed';
+
+CREATE TABLE case_notes (
+  case_id text NOT NULL REFERENCES cases,
+  at      timestamptz NOT NULL,
+  author  text NOT NULL,
+  note    text NOT NULL,
+  PRIMARY KEY (case_id, at)
+);`,
+          note: "Assumed PostgreSQL inside the case tool; the page names none. claim_due is worked out by the case tool from business days." },
+      ],
+      queries: [
+        { title: "Open a case from the change feed", lang: 'sql', code: `INSERT INTO cases (case_id, alert_id, payment_id, account_id,
+                   reason, status, opened_at)
+VALUES ('case-A-91', 'A-91', 'pay_8KD3F2', 'acc_51207',
+        'not_me', 'new', '2026-11-13 23:43:06+00')
+ON CONFLICT (alert_id) DO NOTHING;`,
+          note: "For each qualifying change on alerts. A replay of the feed finds the alert id and opens nothing." },
+        { title: "Take the oldest new case", lang: 'sql', code: `UPDATE cases
+   SET assignee = 'analyst_17', status = 'working'
+ WHERE case_id = (
+         SELECT case_id
+           FROM cases
+          WHERE status = 'new'
+          ORDER BY opened_at
+          LIMIT 1
+            FOR UPDATE SKIP LOCKED)
+RETURNING case_id, alert_id;`,
+          note: "When an analyst asks for work. SKIP LOCKED gives two analysts two different cases." },
+        { title: "Alarm: cases waiting over an hour", lang: 'sql', code: `SELECT count(*) AS waiting, min(opened_at) AS oldest
+  FROM cases
+ WHERE status <> 'closed'
+   AND assignee IS NULL
+   AND opened_at < now() - interval '1 hour';`,
+          note: "Every minute. Uses cases_waiting." },
       ],
       fails: 'If case creation lags, nothing is lost: the change feed is replayed. Alarm on cases older than an hour.',
       alternatives: [
