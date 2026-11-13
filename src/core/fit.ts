@@ -12,6 +12,9 @@ import type { Scene } from './types';
  */
 export const MIN_SCALE = 0.75;
 export const MAX_SCALE = 1.25;
+/** On a canvas at least this wide (a large monitor), a scene may grow further. */
+export const WIDE_CANVAS = 1000;
+export const MAX_SCALE_WIDE = 1.7;
 /** Clear space around the scene inside the canvas, in CSS px. */
 export const FIT_PAD = 26;
 /** Room for a horizontal scrollbar when the scene overflows. */
@@ -109,7 +112,9 @@ export function sceneBounds(scene: Scene, drawnOnly = false, probeRoom = true): 
 
 /** Scale to use across the width alone: as large as fits, but never below MIN_SCALE. */
 export function widthScale(b: Bounds, canvasW: number): number {
-  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, (canvasW - FIT_PAD * 2) / b.bw));
+  // A canvas on a large monitor has room to draw the scene bigger than on a laptop.
+  const cap = canvasW >= WIDE_CANVAS ? MAX_SCALE_WIDE : MAX_SCALE;
+  return Math.min(cap, Math.max(MIN_SCALE, (canvasW - FIT_PAD * 2) / b.bw));
 }
 
 /**

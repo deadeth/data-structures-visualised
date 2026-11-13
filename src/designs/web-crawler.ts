@@ -115,6 +115,152 @@ export const webCrawler: Design = {
         { text: 'About three back queues for every fetch slot keeps fetchers busy.', from: 'A rule of thumb from the Manning, Raghavan and Schütze textbook named in the glossary. With 1,000 fetches in flight over 20 nodes, each node has about 50 fetch slots, so about 150 back queues.' },
         { text: 'Each hand-out is a lease with a deadline. If the worker dies, the URL goes back in the queue.', from: 'Not a sum: a rule of the design. The page sets no deadline; it only has to be well above the 1 second a fetch takes on average.' },
       ],
+      tables: [
+        {
+          title: 'Pending URLs, one key each (RocksDB)',
+          lang: 'text',
+          code: `# one RocksDB per node, on local SSD; keys sort as bytes
+key    queue/<slot>/<host>/<seq>
+value  <url> p=<priority>, and the validators on a recrawl
+
+queue/417/example.org/000918107
+  -> "https://example.org/news p=1"
+queue/417/example.org/000918273
+  -> "https://example.org/news/2026/11/rates p=2"
+
+# <seq> counts up per host, zero-padded, so a host's keys
+# sort oldest first. About 100 million keys a node.`,
+          note: 'The slot comes first, so one slot is one key range: that range is what a snapshot copies and a failover moves.',
+        },
+        {
+          title: 'Host state, one key per host',
+          lang: 'text',
+          code: `key    host/<slot>/<host>
+value  next_at, delay_ms, errors, budget_left
+
+host/417/example.org
+  -> next_at=2026-11-12T10:20:09.4Z delay_ms=8400
+     errors=0 budget_left=4812
+
+# next_at is the host's entry in the heap, kept on disk
+# so a restart does not forget a back-off. budget_left
+# is the page budget that stops traps; 4812 is made up.`,
+        },
+        {
+          title: 'URLs the recrawl scheduler queued',
+          lang: 'text',
+          code: `key    queued/<slot>/<fingerprint of the URL>
+value  the queue key it was written under
+
+queued/417/<fp of https://example.org/news>
+  -> "queue/417/example.org/000931552"
+
+# lets Enqueue answer already_queued to a retried call.
+# Links from the parser need no such key: the seen
+# check already stops them being queued twice.`,
+        },
+        {
+          title: 'In memory only',
+          lang: 'text',
+          code: `front queues  hosts with URLs waiting, by best priority
+back queues   about 150, one host each
+heap          (next_at, host), earliest first
+leases        lease_id -> (queue key, epoch, deadline)
+
+"L417-55120" -> ("queue/417/example.org/000918107",
+                 7, 2026-11-12T10:21:00Z)
+
+# The queue key stays on disk until complete, so a lease
+# that runs out needs no write: the URL is still queued.
+# A snapshot saves the heap and leases as heap.bin and
+# leases.bin, and the keys above as queues.sst.`,
+          note: 'Simplified: within one host, URLs leave in arrival order. Priority rides in the value and decides which hosts get a back queue.',
+        },
+      ],
+      queries: [
+        {
+          title: 'Lease: the oldest URL of a host that is due',
+          lang: 'text',
+          code: `# the heap's top is example.org, and its time has passed
+it = db.iterator()
+it.seek("queue/417/example.org/")
+it.key()    # "queue/417/example.org/000918107"
+it.value()  # "https://example.org/news p=1"
+
+leases["L417-55120"] = ("queue/417/example.org/000918107",
+                        epoch=7, deadline="10:21:00Z")
+# no write: the key stays until complete`,
+          note: 'About 50 a second a node. A seek to a prefix is one index lookup, usually from the block cache. Calls are in the style of RocksDB\'s Python bindings; Seek, WriteBatch, SstFileWriter, IngestExternalFile and DeleteRange are RocksDB\'s own operations.',
+        },
+        {
+          title: 'Complete: free the host, drop the URL',
+          lang: 'text',
+          code: `# complete("L417-55120", Fetched(status=200, ...), ...)
+batch = WriteBatch()
+batch.delete("queue/417/example.org/000918107")
+batch.put("host/417/example.org",
+          "next_at=2026-11-12T10:20:09.4Z delay_ms=8400"
+          " errors=0 budget_left=4811")
+# and queued/417/<fp>, had the recrawl queued it
+db.write(batch)
+del leases["L417-55120"]
+heap.push(("2026-11-12T10:20:09.4Z", "example.org"))
+# a second complete finds no lease and does nothing`,
+          note: 'The gap of 8.4 seconds is max(1 s, Crawl-delay 2 s, 10 x 0.84 s), as on the lease line.',
+        },
+        {
+          title: 'Enqueue a URL due again',
+          lang: 'text',
+          code: `# from the recrawl scheduler at 10:50
+k = "queued/417/" + fp("https://example.org/news")
+if db.get(k) is not None:
+    already_queued += 1      # a retried call: skip it
+else:
+    q = "queue/417/example.org/000931552"
+    batch = WriteBatch()
+    batch.put(q, 'https://example.org/news p=1'
+                 ' etag="6731-a91c"'
+                 ' lm="Thu, 12 Nov 2026 10:12:00 GMT"')
+    batch.put(k, q)
+    db.write(batch)`,
+          note: 'The ETag and date ride in the value, so the fetcher can send If-None-Match and If-Modified-Since.',
+        },
+        {
+          title: 'Snapshot one slot to a file',
+          lang: 'text',
+          code: `# every few minutes, for each of the node's 51 slots
+snap = db.snapshot()          # one consistent view
+w = SstFileWriter()
+w.open("queues.sst")
+for prefix in ["host/417/", "queue/417/", "queued/417/"]:
+    for k, v in db.iterator(snapshot=snap, prefix=prefix):
+        w.put(k, v)           # keys must arrive sorted
+w.finish()
+# then the PUTs on the snapshot line, manifest last`,
+          note: 'The three prefixes are in byte order, which SstFileWriter needs. Seen fingerprints are not in the file: see the URL-seen check.',
+        },
+        {
+          title: 'Restore on the new owner',
+          lang: 'text',
+          code: `# crawler-12, slot 417 at epoch 8, after the GETs
+db.ingest_external_file(["queues.sst"])
+heap = load("heap.bin")
+# leases.bin: URLs out at 10:55 are still queue keys,
+# so they are simply offered again
+# then replay discovered-urls 417 from 88214305`,
+          note: 'Ingesting adds the file to the store whole, with no key-by-key writes, so the restore takes about as long as the download.',
+        },
+        {
+          title: 'A paused old owner drops a slot it lost',
+          lang: 'text',
+          code: `# crawler-07 wakes and sees slot 417 at epoch 8, not 7
+db.delete_range("host/417/",   "host/4170")
+db.delete_range("queue/417/",  "queue/4170")
+db.delete_range("queued/417/", "queued/4170")
+# the end key is excluded, and "0" is the byte after "/",
+# so each range is exactly one slot's keys`,
+        },
+      ],
       fails: 'The node dies and its disk with it. Another node takes over its slots, restores the frontier from the last snapshot in the object store and replays the discovered-urls topic. The metadata store is the last resort.',
       alternatives: [
         {
@@ -206,6 +352,39 @@ export const webCrawler: Design = {
         { name: 'Caching resolvers', what: 'DNS servers that answer lookups and remember each answer for as long as it allows. Here one runs on each machine or rack beside the fetchers, with more than one outside provider upstream.', why: 'Without a cache every fetch pays a lookup of tens to hundreds of milliseconds, at most 400 a second; with one, each host is resolved about once per answer lifetime, tens a second. Running it locally keeps the round trip in the rack, merges duplicate lookups, and avoids the blocking standard library call that Mercator found took 87 per cent of each thread\'s time.' },
       ],
       numbers: [{ text: 'About 50 million hosts a month: at most 400 lookups a second before caching, tens a second after.', from: '50 million hosts is an assumption: an average of 20 pages a host across 1 billion pages. With no cache, one lookup per fetch = about 400 a second, the average rate in "Numbers to have ready". With a cache, each host once a month is 50 million ÷ 2.6 million seconds = about 19 a second; short DNS lifetimes make it a few times that, so tens.' }],
+      tables: [
+        {
+          title: 'What the resolver caches',
+          lang: 'text',
+          code: `key    (name, type)
+value  the records, and the time each has left
+
+(example.org., A)          203.0.113.27, 300 s when fetched
+(nosuch.example.org., A)   NXDOMAIN: a negative answer
+
+# in memory on the resolver. Each answer lives for its
+# own TTL; a negative answer lives as long as the zone's
+# SOA record allows (RFC 2308).`,
+        },
+      ],
+      queries: [
+        {
+          title: 'A hit',
+          lang: 'text',
+          code: `$ dig @10.4.0.53 example.org A +noall +answer
+example.org.        212     IN      A       203.0.113.27
+# from the cache: the TTL has counted down from 300`,
+          note: 'dig shows the query a fetcher makes from its event loop.',
+        },
+        {
+          title: 'A name that does not exist',
+          lang: 'text',
+          code: `$ dig @10.4.0.53 nosuch.example.org A
+;; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 4127
+# cached, so the next fetch for it fails fast; repeated
+# failures open the breaker and the host is skipped`,
+        },
+      ],
       fails: 'A resolver that stops answering stalls every fetch. Collapse duplicate lookups into one, use more than one upstream provider, and trip a circuit breaker so fetchers skip hosts they cannot resolve.',
       alternatives: [
         {
@@ -246,6 +425,58 @@ export const webCrawler: Design = {
         { text: 'A 4xx for robots.txt means no restrictions. A 5xx or no answer means assume everything is disallowed.', from: 'Not a sum: the error rules of RFC 9309, cited in Sources.' },
         { text: 'Crawl-delay is not in the standard. Honour it, with a cap on absurd values.', from: 'Not a sum. RFC 9309 (Sources) does not define Crawl-delay. The cap is this design\'s choice; the page sets no value for it.' },
       ],
+      tables: [
+        {
+          title: 'Parsed rules, one entry per host (memory)',
+          lang: 'text',
+          code: `key    host
+value  status, fetched_at, expires_at, rules, crawl_delay
+
+"example.org" ->
+  status       200
+  fetched_at   2026-11-12T09:41:00Z
+  expires_at   2026-11-13T09:41:00Z    24 h at most
+  rules        Allow    /news/drafts/public/
+               Disallow /news/drafts/
+               Disallow /search
+  crawl_delay  2 s
+
+# status 404: no rules kept, so everything is allowed
+# status 5xx or no answer: everything is disallowed`,
+          note: 'Only the group that names this crawler, or * if none does, is kept, longest path first and Allow before Disallow at equal length, so the first match is the answer. The map is lost on a restart or a move.',
+        },
+      ],
+      queries: [
+        {
+          title: 'May crawler-07 fetch /news/drafts/q4?',
+          lang: 'text',
+          code: `e = robots["example.org"]       # in-process read
+now < e.expires_at                # fresh: use it
+first rule whose path starts /news/drafts/q4:
+  Allow    /news/drafts/public/   no
+  Disallow /news/drafts/          yes -> Disallowed`,
+          note: 'About 400 checks a second across the crawl, none of them over the network.',
+        },
+        {
+          title: 'A miss, or an entry past 24 hours',
+          lang: 'text',
+          code: `# fetched through the same rate limit as any page
+GET https://example.org/robots.txt
+200 -> parse; keep the group for ExampleBot or *;
+       sort longest first; expires_at = now + 24 h
+404 -> an empty rule list: allow everything
+503 -> disallow everything, and ask again later`,
+          note: 'The error rules are RFC 9309\'s. How soon to ask again after a 5xx is not set on this page.',
+        },
+        {
+          title: 'Drop expired entries',
+          lang: 'text',
+          code: `# once a minute
+for host, e in list(robots.items()):
+    if e.expires_at < now:
+        del robots[host]`,
+        },
+      ],
       fails: 'A stale or wrongly parsed file means fetching what a site asked you not to. Log every fetch against the rule that allowed it and treat any violation as an incident.',
       alternatives: [
         {
@@ -282,6 +513,90 @@ export const webCrawler: Design = {
         { name: 'Registrable domain', what: 'The part of a host name that one owner registers, such as example.org for a.example.org. It is worked out with the Public Suffix List, which knows that co.uk is a suffix anyone can register under.', why: 'Many hosts under one owner can share one set of servers. A bucket per registrable domain limits them together, which per-host limits cannot.' },
       ],
       numbers: [{ text: 'Per host: one connection, and a gap of the largest of 1 second, Crawl-delay, and ten times the last response time.', from: 'Not a sum: a pacing rule. 1 second is the polite rate in "Numbers to have ready". Ten times the last response time is the heuristic from the Mercator line of work (Sources): a slow site is a busy one. A page that took 300 milliseconds gives a gap of 3 seconds.' }],
+      tables: [
+        {
+          title: 'Buckets: one Redis hash each',
+          lang: 'text',
+          code: `tb:ip:<address>       per resolved address
+tb:dom:<domain>       per registrable domain
+
+tb:ip:203.0.113.27    tokens 7   ts 1794478800120
+tb:dom:example.org    tokens 1   ts 1794478800121
+
+# tokens: what was left after the last take
+# ts: when that was, ms since 1970 (10:20:00.120)
+# each key expires 60 s after its last use; an idle
+# bucket would be full again by then, so nothing is lost`,
+        },
+        {
+          title: 'The busy list',
+          lang: 'text',
+          code: `busy:ips    a set: addresses that serve many hosts
+
+SADD busy:ips 203.0.113.27
+
+# filled from what the crawl sees: one address behind
+# many hosts. Only these addresses use the buckets.`,
+        },
+        {
+          title: 'take_token, the script (Lua)',
+          lang: 'text',
+          code: `-- KEYS[1] bucket; ARGV: rate a second, burst, now ms, cost
+local rate = tonumber(ARGV[1])
+local burst = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+local cost = tonumber(ARGV[4])
+local b = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+local tokens = tonumber(b[1]) or burst
+local ts = tonumber(b[2]) or now
+tokens = math.min(burst, tokens + (now - ts) * rate / 1000)
+local ok = 0
+if tokens >= cost then
+  tokens = tokens - cost
+  ok = 1
+end
+redis.call('HSET', KEYS[1], 'tokens', tokens, 'ts', now)
+redis.call('PEXPIRE', KEYS[1], 60000)
+return ok`,
+          note: 'Redis runs a script with nothing else in between, so two nodes cannot both take the last token. The caller passes the time, as the commands on the "shared IP?" line do.',
+        },
+      ],
+      queries: [
+        {
+          title: 'Each node keeps a copy of the busy list',
+          lang: 'text',
+          code: `# once a minute, so most fetches never call Redis
+SMEMBERS busy:ips
+-> 1) "203.0.113.27"  ...`,
+        },
+        {
+          title: 'Load the script once',
+          lang: 'text',
+          code: `SCRIPT LOAD "<the script above>"
+-> "<its SHA-1>"     # the name EVALSHA uses below`,
+        },
+        {
+          title: 'Take a token from both buckets',
+          lang: 'text',
+          code: `# args: rate a second, burst, now in ms, cost
+EVALSHA <take_token> 1 tb:ip:203.0.113.27 4 8 1794478800120 1
+-> 1
+EVALSHA <take_token> 1 tb:dom:example.org 1 2 1794478800121 1
+-> 1     # both taken: fetch now`,
+          note: 'One round trip each, only for addresses on the busy list. The rates are illustrations.',
+        },
+        {
+          title: 'An empty bucket, then a refill',
+          lang: 'text',
+          code: `# nine takes in the same millisecond, burst 8
+EVALSHA <take_token> 1 tb:ip:203.0.113.27 4 8 1794478800120 1
+-> 1, 1, 1, 1, 1, 1, 1, 1, then 0
+# 250 ms later, 4 a second has dripped back one token
+EVALSHA <take_token> 1 tb:ip:203.0.113.27 4 8 1794478800370 1
+-> 1`,
+          note: 'A 0 puts the host back on the heap to wait.',
+        },
+      ],
       fails: 'If the limiter is down, fetchers must slow down, not speed up. Fail safe: fall back to a conservative fixed rate for those addresses.',
       alternatives: [
         {
@@ -475,6 +790,64 @@ export const webCrawler: Design = {
         { text: 'Bloom filter at 1 per cent false positives: 9.6 bits each, about 12 GB.', from: 'The standard sizing: bits per item = −ln(0.01) ÷ (ln 2)² = 4.61 ÷ 0.48 = about 9.6. 10 billion × 9.6 bits = 96 billion bits = 12 GB.' },
         { text: 'Links to home pages and menus repeat constantly, so a small cache answers most checks.', from: 'Not a sum: an assumption. Of about 50 links a page, menus, footers and home-page links are the same on every page of a site, so a cache of popular URLs catches them.' },
       ],
+      tables: [
+        {
+          title: 'Fingerprints (RocksDB, the frontier\'s store)',
+          lang: 'text',
+          code: `key    seen/<64-bit fingerprint>
+value  empty: the key is the fact
+
+seen/9f3c51e07a2b4d18  -> ""   .../news/2026/11/rates
+seen/41d7a0c95e6b2f03  -> ""   https://example.org/about
+
+# shown in hex; stored as 8 raw bytes after the prefix.
+# About 500 million keys a node, 10 billion in all.
+# RocksDB adds some bytes of its own per key, so 4 GB
+# a node is a floor, not the size on disk.`,
+          note: 'Simplified as the page draws it: the key has no slot, so a failover cannot copy one slot\'s fingerprints. A real layout would be seen/<slot>/<fp>, copied into each slot\'s snapshot.',
+        },
+        {
+          title: 'In front of the disk',
+          lang: 'text',
+          code: `popular-URL cache  an LRU of fingerprints in memory,
+                   say 1 million (8 MB) a node
+RocksDB filters    a Bloom filter in each file, about
+                   10 bits a key: about 600 MB a node
+
+lookup: cache hit             -> seen, no read
+        filter says "absent"  -> new, no read
+        filter says "maybe"   -> read the file to be sure`,
+          note: 'This is the Bloom filter the page turns down as the answer, used here only to skip reads: its false positive costs one disk read, never a page.',
+        },
+      ],
+      queries: [
+        {
+          title: 'Check the links from one page',
+          lang: 'text',
+          code: `# from the filter: two links in slot 417
+# /about (41d7a0c95e6b2f03) is in the popular cache: seen
+db.multi_get(["seen/9f3c51e07a2b4d18"])
+-> [None]            # never met: new`,
+          note: 'About 1,000 checks a second a node; most end in the cache.',
+        },
+        {
+          title: 'Mark seen and enqueue, both or neither',
+          lang: 'text',
+          code: `batch = WriteBatch()
+batch.put("seen/9f3c51e07a2b4d18", "")
+batch.put("queue/417/example.org/000918273",
+          "https://example.org/news/2026/11/rates p=2")
+db.write(batch)   # both keys, or neither`,
+          note: 'The same batch as on the "new only" line.',
+        },
+        {
+          title: 'Forget a URL so it can be found again',
+          lang: 'text',
+          code: `db.delete("seen/9f3c51e07a2b4d18")
+# the next page that links to /rates queues it again.
+# A Bloom filter cannot do this: its bits are shared.`,
+        },
+      ],
       fails: 'A false "seen" is silent: the page is never crawled and nothing reports it. That is the case against a Bloom filter here, because the same URL hits the same bits every time. It is also why the fingerprint and the frontier entry go in one write batch: a fingerprint written alone, then a crash, would mark a URL seen that was never queued.',
       alternatives: [
         {
@@ -519,6 +892,61 @@ export const webCrawler: Design = {
       built: [
         { name: 'Kafka', what: 'Apache Kafka, a distributed log: producers append messages to topics split into partitions, a cluster of servers called brokers stores them durably, and each consumer reads from a position (offset) it chooses.', why: 'Traffic between nodes needs batching, buffering and replay, and a log gives all three. Replay from a saved offset is how a new owner rebuilds a frontier. A managed queue such as SQS deletes a message once it is read and has no keyed partitions, so it gives neither replay nor one owner per host.' },
         { name: 'Keyed by host', what: 'Each message\'s key is its host, and its partition is the host\'s slot: 1,024 partitions in all. Each node reads exactly the partitions of the slots it owns, assigned from the coordinator\'s map.', why: 'A host\'s links reach one node, in order, and when a slot moves its partition moves with it. Assigning partitions from the slot map, not through a consumer group, means the broker can never disagree with the coordinator about who owns a slot.' },
+      ],
+      tables: [
+        {
+          title: 'Topic discovered-urls',
+          lang: 'text',
+          code: `partitions  1,024: partition = slot = hash(host) mod 1,024
+key         host, "blog.example.net"
+value       url, host, slot, found_on, found_at, priority
+replicas    3, min.insync.replicas 2, producers acks=all
+retention   7 days by time; never compacted
+consumers   no group: each node assigns itself the
+            partitions of its slots, from the slot map`,
+          note: 'Retention must outlast the oldest snapshot a new owner might restore. The 7 days and the replica settings are illustrations; the page sets neither.',
+        },
+        {
+          title: 'Create it',
+          lang: 'text',
+          code: `kafka-topics.sh --bootstrap-server kafka:9092 \\
+  --create --topic discovered-urls \\
+  --partitions 1024 --replication-factor 3 \\
+  --config min.insync.replicas=2 \\
+  --config retention.ms=604800000      # 7 days`,
+        },
+      ],
+      queries: [
+        {
+          title: 'Produce a link for another node',
+          lang: 'text',
+          code: `# on crawler-07; the partition is set to the slot
+producer.send("discovered-urls", partition=88,
+              key=b"blog.example.net",
+              value=b'{"url": "https://blog.example.net/p/12",'
+                    b' "slot": 88, ...}')`,
+          note: 'Left to itself, Kafka would pick the partition from its own hash of the key, which is not the crawl\'s slot. Setting it keeps partition and slot the same number.',
+        },
+        {
+          title: 'Replay one partition from the manifest',
+          lang: 'text',
+          code: `kafka-console-consumer.sh --bootstrap-server kafka:9092 \\
+  --topic discovered-urls --partition 417 \\
+  --offset 88214305 \\
+  --property print.key=true --property print.offset=true
+# one line a message: offset, key, value`,
+          note: 'The console tool is for looking. crawler-12 does the same with assign and seek in its client, as the "from other nodes" line shows.',
+        },
+        {
+          title: 'How far behind is slot 417?',
+          lang: 'text',
+          code: `kafka-get-offsets.sh --bootstrap-server kafka:9092 \\
+  --topic discovered-urls --partitions 417
+discovered-urls:417:88219877
+# lag = 88219877 minus crawler-12's position in 417.
+# There is no consumer group, so each node reports its
+# own position as a metric.`,
+        },
       ],
       fails: 'If consumers fall behind, discovery lags but nothing is lost. If the topic itself is unavailable, nodes buffer to local disk and keep crawling what they already hold.',
       alternatives: [
@@ -566,6 +994,78 @@ export const webCrawler: Design = {
         { text: '1,024 slots across about 20 nodes.', from: '20 nodes is 1,000 pages a second ÷ 50 a node, from "Numbers to have ready". 1,024 ÷ 20 = about 51 slots a node. 1,024 is a choice: a power of two, far more slots than nodes, so losing one node moves about 51 small slots spread over 19 others, and the crawl can grow to hundreds of nodes without re-slotting.' },
         { text: 'A lease of about 30 seconds.', from: 'An assumption. With renewal "every few seconds" (say every 10), a node can miss two renewals before losing its slots, so a short network blip does not move them. The price: a dead node\'s hosts wait about 30 seconds, plus the margin for clock drift, before the new owner fetches.' },
       ],
+      tables: [
+        {
+          title: 'Keys in etcd',
+          lang: 'text',
+          code: `/crawl/nodes/<node>   "up", attached to the node's lease
+/crawl/slots/<slot>   "<owner> <epoch>", no lease
+
+/crawl/nodes/crawler-07   "up"   lease 1b81 (7041)
+/crawl/slots/0417         "crawler-07 7"
+
+# 20 node keys and 1,024 slot keys: a few kilobytes.
+# A node key vanishes when its lease runs out. Slot keys
+# stay, so the epoch is never lost.`,
+          note: 'etcdctl prints lease ids in hex: 1b81 is the page\'s lease 7041. Keeping liveness and ownership in separate keys is this panel\'s choice; with ZooKeeper each live node would be an ephemeral node.',
+        },
+      ],
+      queries: [
+        {
+          title: 'crawler-07 joins and keeps its lease',
+          lang: 'text',
+          code: `$ etcdctl lease grant 30
+lease 1b81 granted with TTL(30s)
+$ etcdctl put --lease=1b81 /crawl/nodes/crawler-07 up
+OK
+$ etcdctl lease keep-alive 1b81
+lease 1b81 keepalived with TTL(30)
+# sent again every 10 s, a third of the TTL`,
+        },
+        {
+          title: 'Read the slot map, then watch it',
+          lang: 'text',
+          code: `$ etcdctl get --prefix /crawl/slots/
+/crawl/slots/0000
+crawler-01 3
+...
+/crawl/slots/0417
+crawler-07 7
+$ etcdctl watch --prefix /crawl/slots/
+PUT
+/crawl/slots/0417
+crawler-12 8`,
+          note: 'Every node and the filter keep the map in memory and update it from the watch.',
+        },
+        {
+          title: 'The lease runs out at 10:57:00',
+          lang: 'text',
+          code: `$ etcdctl watch --prefix /crawl/nodes/
+DELETE
+/crawl/nodes/crawler-07
+# the coordinator now moves crawler-07's 51 slots`,
+        },
+        {
+          title: 'Move slot 417, only if nothing changed',
+          lang: 'text',
+          code: `$ etcdctl txn <<'EOF'
+value("/crawl/slots/0417") = "crawler-07 7"
+
+put /crawl/slots/0417 "crawler-12 8"
+
+EOF
+SUCCESS`,
+          note: 'A compare-and-set. If something else moved the slot first, the compare fails and nothing is written.',
+        },
+        {
+          title: 'crawler-07 wakes up',
+          lang: 'text',
+          code: `$ etcdctl lease keep-alive 1b81
+# refused: lease 1b81 has expired
+# crawler-07 stops leasing URLs at once, reads
+# /crawl/slots/0417, sees epoch 8 and drops the slot`,
+        },
+      ],
       fails: 'If the coordinator is unreachable, nodes pause. A pause costs minutes of crawling. Two owners for one host costs a site its patience and you your reputation.',
       alternatives: [
         {
@@ -608,6 +1108,117 @@ export const webCrawler: Design = {
         { name: 'ScyllaDB', what: 'A database that speaks Cassandra\'s query language (CQL) and uses its data model, reimplemented for more throughput per machine.', why: 'Named as an equal alternative: the same two tables and the same CQL work on either, so the choice is about running costs and operations, not about the design.' },
       ],
       numbers: [{ text: '10 billion URLs at about 300 bytes each is about 3 TB, or 9 TB with three replicas.', from: '10 billion known URLs from "Numbers to have ready". 300 bytes a row is an assumption: the URL itself, status, ETag, two hashes, times and the WARC file and byte range. 10 billion × 300 bytes = 3 TB; × 3 replicas, a common setting for this kind of store, = 9 TB.' }],
+      tables: [
+        {
+          title: 'Keyspace',
+          lang: 'sql',
+          code: `CREATE KEYSPACE crawl WITH replication = {
+  'class': 'NetworkTopologyStrategy',
+  'dc1': 3
+};`,
+          note: 'Three copies of every row, as in this box\'s figures. dc1 stands for the one data centre.',
+        },
+        {
+          title: 'crawl.urls: one row per URL',
+          lang: 'sql',
+          code: `CREATE TABLE crawl.urls (
+  url           text PRIMARY KEY,
+  status        int,
+  etag          text,
+  last_modified timestamp,
+  content_hash  text,
+  simhash       blob,
+  fetched_at    timestamp,
+  next_fetch_at timestamp,
+  warc_file     text,
+  warc_offset   bigint,
+  warc_length   int
+);`,
+          note: 'The URL is the partition key, so every read and write here touches one partition. About 10 billion rows, 3 TB before replicas.',
+        },
+        {
+          title: 'crawl.urls_due: what is due, by hour',
+          lang: 'sql',
+          code: `CREATE TABLE crawl.urls_due (
+  bucket        text,       -- the hour, '2026-11-12T10'
+  next_fetch_at timestamp,
+  url           text,
+  etag          text,
+  last_modified timestamp,
+  PRIMARY KEY ((bucket), next_fetch_at, url)
+);`,
+          note: 'One partition per hour, rows sorted by due time inside it. That makes a window one read, and a busy hour one hot partition.',
+        },
+      ],
+      queries: [
+        {
+          title: 'Record a fetch, both tables',
+          lang: 'sql',
+          code: `BEGIN BATCH USING TIMESTAMP 1794478801000000
+  UPDATE crawl.urls
+  SET status = 200,
+      etag = '"6731-a91c"',
+      last_modified = '2026-11-12 10:12:00+0000',
+      content_hash = 'sha256:4be1c0f29d7a5e3b',
+      simhash = 0x5d21c8a4f00e9b37,
+      fetched_at = '2026-11-12 10:20:01+0000',
+      next_fetch_at = '2026-11-12 10:50:01+0000'
+  WHERE url = 'https://example.org/news';
+  INSERT INTO crawl.urls_due
+    (bucket, next_fetch_at, url, etag, last_modified)
+  VALUES ('2026-11-12T10', '2026-11-12 10:50:01+0000',
+    'https://example.org/news', '"6731-a91c"',
+    '2026-11-12 10:12:00+0000');
+APPLY BATCH;`,
+          note: 'About 400 a second. Both are upserts by key, and the write time is the fetch time (10:20:01), so a late retry of an older outcome loses.',
+        },
+        {
+          title: 'Store the byte range after the upload',
+          lang: 'sql',
+          code: `UPDATE crawl.urls
+SET warc_file = 'warc/2026/11/12/crawler-07/000183.warc.gz',
+    warc_offset = 4812330,
+    warc_length = 20517
+WHERE url = 'https://example.org/news';`,
+          note: 'Written once the batch\'s PUT has succeeded, about 400 a second.',
+        },
+        {
+          title: 'Find a stored page to reprocess',
+          lang: 'sql',
+          code: `SELECT warc_file, warc_offset, warc_length
+FROM crawl.urls
+WHERE url = 'https://example.org/news';`,
+          note: 'One partition read by its key. The ranged GET on the object store follows.',
+        },
+        {
+          title: 'What is due between 10:50 and 11:00',
+          lang: 'sql',
+          code: `SELECT url, etag, last_modified, next_fetch_at
+FROM crawl.urls_due
+WHERE bucket = '2026-11-12T10'
+  AND next_fetch_at >= '2026-11-12 10:50:00+0000'
+  AND next_fetch_at <  '2026-11-12 11:00:00+0000';`,
+          note: 'A slice of one partition, in due-time order. The scheduler groups the rows by owning node and calls Enqueue.',
+        },
+        {
+          title: 'Drop an hour once it is handed out',
+          lang: 'sql',
+          code: `DELETE FROM crawl.urls_due
+WHERE bucket = '2026-11-12T09';`,
+          note: 'One tombstone for the whole partition. A URL\'s old due row is never overwritten when its time moves, so without this the table only grows. Run it only after every URL in the hour has reached its owner.',
+        },
+        {
+          title: 'Last resort: rebuild a lost frontier',
+          lang: 'sql',
+          code: `-- one of 256 token ranges, run in parallel
+SELECT url, next_fetch_at, etag, last_modified
+FROM crawl.urls
+WHERE token(url) >  -9223372036854775808
+  AND token(url) <= -9151314442816847872;
+-- the reader keeps rows whose host hashes to a lost slot`,
+          note: 'crawl.urls is keyed by URL, not by slot, so this reads all 10 billion rows to find one node\'s share. That is why it is the slow last resort.',
+        },
+      ],
       fails: 'If it is unavailable, nodes buffer results locally and then stop fetching. Crawling pages whose outcome you cannot record is wasted politeness budget.',
       alternatives: [
         {
@@ -653,6 +1264,109 @@ export const webCrawler: Design = {
         { name: 'WARC batches', what: 'WARC (ISO 28500) is the standard archive format for web responses. About 500 pages, each record its own gzip member, go into one file of about 10 MB.', why: 'Batching cuts uploads from about 400 a second to under one. Separate gzip members mean one page can be read back by byte range, and using the standard format lets other archive tools read the files.' },
       ],
       numbers: [{ text: 'About 100 TB a month raw, about 20 TB compressed.', from: '1 billion pages a month × about 100 KB a page = 100 TB, both from "Numbers to have ready". HTML is mostly text and markup; gzip or zstd usually gets about 5 to 1 on it, so 100 TB becomes about 20 TB. The ratio is an assumption. Batches of 500 pages are about 50 MB raw and 10 MB compressed, and 400 pages a second ÷ 500 is under one upload a second.' }],
+      tables: [
+        {
+          title: 'Bucket crawl-raw: pages in WARC batches',
+          lang: 'text',
+          code: `crawl-raw/warc/<yyyy>/<mm>/<dd>/<writer>/<seq>.warc.gz
+
+warc/2026/11/12/crawler-07/000183.warc.gz   fetched
+warc/2026/11/12/render-02/000041.warc.gz    rendered
+
+# about 500 records and 10 MB a file, each record its
+# own gzip member. Written once, never changed.
+# About 20 TB a month; under one PUT a second.`,
+          note: 'The writer is in the path, so two nodes never write the same key.',
+        },
+        {
+          title: 'Bucket crawl-frontier: snapshots',
+          lang: 'text',
+          code: `crawl-frontier/slot-<nnnn>/<taken_at>/queues.sst
+                                      heap.bin
+                                      leases.bin
+                                      manifest.json
+
+slot-0417/20261112T105500Z/manifest.json
+
+# one set per slot every few minutes; the manifest is
+# written last, so a set without one is incomplete.
+# taken_at sorts as text in time order.`,
+        },
+        {
+          title: 'One manifest',
+          lang: 'json',
+          code: `{
+  "slot": 417,
+  "node": "crawler-07",
+  "epoch": 7,
+  "taken_at": "2026-11-12T10:55:00Z",
+  "discovered_urls": {
+    "partition": 417,
+    "next_offset": 88214305
+  },
+  "files": ["queues.sst", "heap.bin", "leases.bin"]
+}`,
+        },
+        {
+          title: 'Old snapshots expire (lifecycle rule)',
+          lang: 'json',
+          code: `{
+  "Rules": [
+    {
+      "ID": "old-snapshots",
+      "Filter": { "Prefix": "slot-" },
+      "Status": "Enabled",
+      "Expiration": { "Days": 2 }
+    }
+  ]
+}`,
+          note: 'Set on crawl-frontier with put-bucket-lifecycle-configuration. Two days is an illustration; the page sets no retention. Raw pages in crawl-raw are kept.',
+        },
+      ],
+      queries: [
+        {
+          title: 'Upload one batch',
+          lang: 'http',
+          code: `PUT /crawl-raw/warc/2026/11/12/crawler-07/000183.warc.gz HTTP/1.1
+Content-Length: 10391522
+Content-MD5: <base64 MD5 of the body>
+
+HTTP/1.1 200 OK`,
+          note: 'Under one a second across the crawl. Content-MD5 makes the store refuse a body damaged on the way.',
+        },
+        {
+          title: 'Read one page back',
+          lang: 'http',
+          code: `GET /crawl-raw/warc/2026/11/12/crawler-07/000183.warc.gz HTTP/1.1
+Range: bytes=4812330-4832846
+
+HTTP/1.1 206 Partial Content
+Content-Length: 20517`,
+          note: 'The range comes from crawl.urls: offset 4,812,330, length 20,517.',
+        },
+        {
+          title: 'Find the newest snapshot of slot 417',
+          lang: 'http',
+          code: `GET /crawl-frontier?list-type=2&prefix=slot-0417/&delimiter=/
+
+-> CommonPrefixes, in byte order:
+   slot-0417/20261112T105000Z/
+   slot-0417/20261112T105500Z/      the newest
+# then GET its manifest.json; none: take the set before`,
+          note: 'The delimiter returns one entry per set, not per file. At one set every 5 minutes for 2 days that is 576, inside one page of a listing (1,000).',
+        },
+        {
+          title: 'List a day of pages to reprocess',
+          lang: 'http',
+          code: `GET /crawl-raw?list-type=2&prefix=warc/2026/11/12/
+-> up to 1,000 keys, and a NextContinuationToken
+
+GET /crawl-raw?list-type=2&prefix=warc/2026/11/12/
+    &continuation-token=<token>
+# about 69,000 files a day, so about 70 pages`,
+          note: '400 pages a second x 86,400 seconds / 500 pages a file = 69,120 files a day.',
+        },
+      ],
       fails: 'An outage here is the one that stops the crawl: buffer to local disk, then stop fetching when the buffer is full. Never drop a page you have already cost a site to serve.',
       alternatives: [
         {
@@ -693,6 +1407,91 @@ export const webCrawler: Design = {
       built: [
         { name: 'Parquet', what: 'Apache Parquet, a columnar file format: values are stored and compressed column by column, so a job reads only the columns it needs.', why: 'The link table (from_url, to_url, anchor_text, found_at) is read by analysis jobs such as ranking that want a few columns over billions of rows. Files also keep consumers off the crawler\'s own tables.' },
         { name: 'Event topic (crawl.pages)', what: 'A Kafka topic with one event per crawled page, about 400 a second, keyed by URL, carrying status, hashes, the number of links and the next fetch time.', why: 'Consumers such as an indexer read at their own pace and can replay, and a slow one builds lag that never slows the crawl. Pushing into each consumer directly would make the crawler wait on them.' },
+      ],
+      tables: [
+        {
+          title: 'Topic crawl.pages',
+          lang: 'text',
+          code: `key         URL, "https://example.org/news"
+value       url, fetched_at, status, content_hash,
+            simhash, changed, links_out, next_fetch_at
+rate        about 400 events a second
+partitions  64
+retention   7 days by time`,
+          note: 'The partition count and retention are illustrations; the page sets neither. Keying by URL keeps every event for a URL in order on one partition.',
+        },
+        {
+          title: 'Link files (Parquet)',
+          lang: 'text',
+          code: `<bucket>/links/date=<yyyy-mm-dd>/<node>-<seq>.parquet
+links/date=2026-11-12/crawler-07-0031.parquet
+
+column       type
+from_url     string
+to_url       string
+anchor_text  string
+found_at     timestamp (UTC)
+
+# one folder per day, so a job reads one prefix.
+# About 1.7 billion rows a day: 400 pages a second
+# x 50 links x 86,400 seconds.`,
+        },
+        {
+          title: 'The same files as a table (Spark SQL)',
+          lang: 'sql',
+          code: `CREATE TABLE links (
+  from_url    STRING,
+  to_url      STRING,
+  anchor_text STRING,
+  found_at    TIMESTAMP,
+  date        STRING
+)
+USING parquet
+PARTITIONED BY (date)
+LOCATION 's3://<bucket>/links/';`,
+          note: 'date comes from the folder name, not from the file, so a filter on it skips every other day\'s files.',
+        },
+      ],
+      queries: [
+        {
+          title: 'A new consumer reads from the start',
+          lang: 'text',
+          code: `kafka-console-consumer.sh --bootstrap-server kafka:9092 \\
+  --topic crawl.pages --group indexer \\
+  --from-beginning --property print.key=true`,
+          note: 'From the start of retention. --from-beginning counts only while the group has no saved position.',
+        },
+        {
+          title: 'Drop repeats, in the consumer',
+          lang: 'text',
+          code: `# events are at-least-once; one URL, one partition
+last = seen_hash.get(event["url"])
+if last == event["content_hash"]:
+    skip()                     # a repeat, or no change
+else:
+    index(event)
+    seen_hash[event["url"]] = event["content_hash"]`,
+        },
+        {
+          title: 'Which pages link to /rates?',
+          lang: 'sql',
+          code: `SELECT DISTINCT from_url, anchor_text
+FROM links
+WHERE date = '2026-11-12'
+  AND to_url = 'https://example.org/news/2026/11/rates';`,
+          note: 'DISTINCT because a page parsed twice writes its links twice.',
+        },
+        {
+          title: 'In-links per page for one day',
+          lang: 'sql',
+          code: `SELECT to_url, count(DISTINCT from_url) AS inlinks
+FROM links
+WHERE date = '2026-11-12'
+GROUP BY to_url
+ORDER BY inlinks DESC
+LIMIT 100;`,
+          note: 'The raw input to a ranking job. Reads two columns of one day\'s files.',
+        },
       ],
       fails: 'A slow consumer must not slow the crawl. Events go to a log it reads at its own pace.',
       alternatives: [

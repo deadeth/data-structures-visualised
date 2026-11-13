@@ -224,6 +224,119 @@ export const ledger: Design = {
         { text: "About 50 to 100 ms for an authorisation inside the bank, the owner's target.", from: "Not a sum: the owner's figure for the synchronous path (write INITIATED, PlaceHold, write APPROVED). Not measured here." },
         { text: 'Assume 300 card authorisations a second, each held about 2 days before clearing: about 52 million ACTIVE card holds.', from: "An assumption, not from a source: 300 × 172,800 seconds = about 52 million. Used for the size of the partial index on ACTIVE holds." },
       ],
+      tables: [
+        {
+          title: "card_authorisations: the owner's table",
+          lang: 'sql',
+          code: `CREATE TABLE card_authorisations (
+    auth_id UUID PRIMARY KEY,
+    hold_id UUID,               -- once the Core Ledger confirms
+    card_id UUID NOT NULL,
+    account_id UUID NOT NULL,
+    network_lifecycle_id VARCHAR(64) NOT NULL,
+    merchant_name VARCHAR(255),
+    merchant_category_code CHAR(4),
+    original_amount BIGINT NOT NULL,
+    original_currency CHAR(3) NOT NULL,
+    billing_amount BIGINT NOT NULL,
+    billing_currency CHAR(3) NOT NULL,
+    quoted_fx_rate NUMERIC(18, 8),
+    status VARCHAR(20) NOT NULL,  -- INITIATED, APPROVED, DECLINED,
+      -- CLEARING_SUBMITTED, CLEARED, EXPIRED
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);`,
+          note: "In the Card service's own database. account_id has no foreign key: accounts lives in the Core Ledger's database. auth_id is also the ledger's idempotency key for the hold.",
+        },
+        {
+          title: 'Its indexes and its outbox',
+          lang: 'sql',
+          code: `CREATE UNIQUE INDEX uq_auth_hold ON card_authorisations
+    (hold_id) WHERE hold_id IS NOT NULL;      -- CLEARED by hold
+CREATE INDEX idx_auth_lifecycle ON card_authorisations
+    (network_lifecycle_id);                   -- clearing match
+CREATE INDEX idx_auth_initiated ON card_authorisations
+    (created_at) WHERE status = 'INITIATED';  -- stuck rows
+
+CREATE TABLE card_outbox (
+    event_id BIGSERIAL PRIMARY KEY,
+    event_type VARCHAR(40) NOT NULL,  -- SettleCardTransaction
+    account_id UUID NOT NULL,         -- the Kafka key
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());`,
+          note: "This panel's additions: the owner gave no indexes, and these are the ones the queries below need. card_outbox is named on the page; its columns copy outbox_events.",
+        },
+      ],
+      queries: [
+        {
+          title: 'Authorise: record, PlaceHold, then the answer',
+          lang: 'sql',
+          code: `INSERT INTO card_authorisations (auth_id, card_id, account_id,
+  network_lifecycle_id, merchant_name, merchant_category_code,
+  original_amount, original_currency, billing_amount,
+  billing_currency, status)
+VALUES ('a17c0de5-...0610', 'c4d0e8f1-...0144',
+  '5f0c2a9e-...081444', 'MCC8K2QX1114', 'NORTHERN OVENS LTD',
+  '5046', 64900, 'GBP', 64900, 'GBP', 'INITIATED');
+
+-- PlaceHold(idempotency_key = a17c0de5-...0610), synchronous
+
+UPDATE card_authorisations
+   SET status = 'APPROVED', hold_id = 'b61c9a3e-...0610'
+ WHERE auth_id = 'a17c0de5-...0610' AND status = 'INITIATED';
+-- or SET status = 'DECLINED' when PlaceHold declines`,
+          note: 'Per authorisation, about 300 a second assumed, inside the 50 to 100 ms target. Each statement is its own local transaction. The UPDATE names the status it expects, so a repeat changes nothing.',
+        },
+        {
+          title: 'Clearing: match the line, submit through the outbox',
+          lang: 'sql',
+          code: `SELECT auth_id, hold_id, account_id FROM card_authorisations
+ WHERE network_lifecycle_id = 'MCC8K2QX1114'
+   AND status = 'APPROVED';
+
+BEGIN;
+UPDATE card_authorisations SET status = 'CLEARING_SUBMITTED'
+ WHERE auth_id = 'a17c0de5-...0610' AND status = 'APPROVED';
+INSERT INTO card_outbox (event_type, account_id, payload)
+VALUES ('SettleCardTransaction', '5f0c2a9e-...081444',
+        '{"auth_id": "a17c0de5-...0610", ...}');
+COMMIT;`,
+          note: 'Once per clearing line, using idx_auth_lifecycle. Simplified: an incremental authorisation shares the network_lifecycle_id, so a real match also compares amounts. A line with no APPROVED row (a stand-in approval) settles with no hold.',
+        },
+        {
+          title: 'TransactionPosted or HoldExpired comes back',
+          lang: 'sql',
+          code: `UPDATE card_authorisations SET status = 'CLEARED'
+ WHERE hold_id = 'b61c9a3e-...0610'
+   AND status = 'CLEARING_SUBMITTED';
+
+-- on HoldExpired for a hold still APPROVED
+UPDATE card_authorisations SET status = 'EXPIRED'
+ WHERE hold_id = 'b61c9a3e-...0610' AND status = 'APPROVED';`,
+          note: 'Read from ledger-events; uq_auth_hold finds the row. A redelivered event finds the status already moved on and changes nothing.',
+        },
+        {
+          title: 'Stuck INITIATED rows',
+          lang: 'sql',
+          code: `SELECT auth_id, account_id, billing_amount, billing_currency
+  FROM card_authorisations
+ WHERE status = 'INITIATED'
+   AND created_at < now() - interval '5 seconds'
+ ORDER BY created_at
+ LIMIT 100;
+-- each: PlaceHold again with the same auth_id, which returns the
+-- hold if one exists; then APPROVED, or VoidHold if the network
+-- was already told no`,
+          note: 'A sweep every few seconds, on idx_auth_initiated, which stays tiny. 5 seconds is illustrative; the page says "a few seconds".',
+        },
+        {
+          title: 'Nightly parity export: the Card service side',
+          lang: 'sql',
+          code: `SELECT auth_id, hold_id, status FROM card_authorisations
+ WHERE status IN ('APPROVED', 'CLEARED')
+   AND created_at < '2026-11-14 00:00+00';`,
+          note: "On the Card service's replica, after the cut-off. Reconciliation compares it with the Core Ledger's holds and headers.",
+        },
+      ],
       fails: "It crashes after PlaceHold committed but before APPROVED was written. On restart the INITIATED row is retried with the same auth_id: PlaceHold places nothing new, and the service reads back the same hold. If the network was meanwhile told no, the service voids the hold with VoidHold keyed by the auth_id. The nightly parity job finds anything still out of step.",
       alternatives: [
         {
@@ -263,6 +376,125 @@ export const ledger: Design = {
       ],
       numbers: [
         { text: '32,005,479 micros a day on 64900p at an illustrative 18% APR.', from: "64900 × 0.18 ÷ 365 = 32.005479 pence = 32,005,479 micros. The rate is illustrative, not the bank's." },
+      ],
+      tables: [
+        {
+          title: 'credit_balance_buckets, and where billing has read to',
+          lang: 'sql',
+          code: `CREATE TABLE credit_balance_buckets (
+    card_account_id UUID NOT NULL,  -- the Core Ledger's card account
+    bucket VARCHAR(20) NOT NULL,    -- PURCHASE, CASH, PROMO
+    apr_bps INT NOT NULL,           -- 1800 = 18%
+    grace_eligible BOOLEAN NOT NULL,
+    balance BIGINT NOT NULL DEFAULT 0,          -- pence owed
+    accrued_unbilled_interest_micros BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (card_account_id, bucket, apr_bps, grace_eligible)
+);
+
+CREATE TABLE billing_applied (
+    account_id UUID PRIMARY KEY,    -- the card account
+    last_event_id BIGINT NOT NULL   -- from ledger-events
+);`,
+          note: "A sketch, not the owner's DDL. The bucket's columns and key are the ones the page's sketch uses. billing_applied is this panel's addition: the page says billing drops any event_id it has already applied for that account, and this is where it remembers.",
+        },
+        {
+          title: 'credit_statements',
+          lang: 'sql',
+          code: `CREATE TABLE credit_statements (
+    statement_id UUID PRIMARY KEY,
+    card_account_id UUID NOT NULL,
+    period_end DATE NOT NULL,
+    statement_balance BIGINT NOT NULL,  -- pence owed at the close
+    due_date DATE NOT NULL,             -- end of the grace period
+    interest_charged BIGINT NOT NULL,   -- whole pence, 0 if none
+    interest_carried_micros BIGINT NOT NULL,  -- the remainder
+    interest_txn_id UUID,  -- the INTEREST_CHARGE header, if posted
+    UNIQUE (card_account_id, period_end)
+);`,
+          note: "This panel's sketch: the page names the table but not its columns. UNIQUE (card_account_id, period_end) means a rerun of statement day writes nothing new, as the ledger key interest:<card>:<date> posts nothing new.",
+        },
+      ],
+      queries: [
+        {
+          title: 'Apply a TransactionPosted once',
+          lang: 'sql',
+          code: `BEGIN;
+INSERT INTO billing_applied AS a (account_id, last_event_id)
+VALUES ('5f0c2a9e-...081444', 5530611)
+ON CONFLICT (account_id) DO UPDATE
+   SET last_event_id = EXCLUDED.last_event_id
+ WHERE a.last_event_id < EXCLUDED.last_event_id;
+-- 0 rows: already applied; ROLLBACK and skip
+
+INSERT INTO credit_balance_buckets AS b (card_account_id,
+  bucket, apr_bps, grace_eligible, balance)
+VALUES ('5f0c2a9e-...081444', 'PURCHASE', 1800, true, 64900)
+ON CONFLICT (card_account_id, bucket, apr_bps, grace_eligible)
+DO UPDATE SET balance = b.balance + EXCLUDED.balance;
+COMMIT;`,
+          note: 'Per card event read from ledger-events. event_id rises per account in commit order, so one number per account is enough to drop repeats.',
+        },
+        {
+          title: "Tonight's accrual, in millionths of a penny",
+          lang: 'sql',
+          code: `UPDATE credit_balance_buckets
+   SET accrued_unbilled_interest_micros =
+       accrued_unbilled_interest_micros
+       + balance * apr_bps * 1000000 / 10000 / 365
+ WHERE balance > 0;
+-- 64900 x 1800 x 1000000 / 10000 / 365 = 32005479 (about 32p)`,
+          note: 'Nightly, over every bucket with a balance, in batches of cards in practice. Nothing here touches the ledger.',
+        },
+        {
+          title: 'Statement day: sum, record, then post once',
+          lang: 'sql',
+          code: `SELECT sum(accrued_unbilled_interest_micros) AS micros
+  FROM credit_balance_buckets
+ WHERE card_account_id = '5f0c2a9e-...081444';
+-- 812219160 micros: charge 812p, carry 219160
+
+BEGIN;
+INSERT INTO credit_statements (statement_id, card_account_id,
+  period_end, statement_balance, due_date, interest_charged,
+  interest_carried_micros, interest_txn_id)
+VALUES ('5a7e0c11-...1231', '5f0c2a9e-...081444', '2026-12-31',
+  35712, '2027-01-25', 812, 219160, '7d1f0a52-...900612')
+ON CONFLICT (card_account_id, period_end) DO NOTHING;
+UPDATE credit_balance_buckets
+   SET accrued_unbilled_interest_micros = 0
+ WHERE card_account_id = '5f0c2a9e-...081444';
+COMMIT;
+-- then Post INTEREST_CHARGE through the Ledger API, key
+-- interest:5f0c2a9e-...081444:2026-12-31, id ...900612`,
+          note: 'Once a cycle per card. The transaction id and key are fixed before the call, so a retry after a crash posts once. Paid in full in the grace period: interest_charged 0 and no Post. 35712 is 34900 owed plus 812; the due date is illustrative. Simplified: the carried micros are added back next cycle, and billed interest would get its own bucket.',
+        },
+        {
+          title: 'A repayment: highest APR first',
+          lang: 'sql',
+          code: `WITH r AS (
+  SELECT bucket, apr_bps, grace_eligible, balance,
+         sum(balance) OVER (ORDER BY apr_bps DESC, bucket,
+                            grace_eligible) AS upto
+    FROM credit_balance_buckets
+   WHERE card_account_id = '5f0c2a9e-...081444' AND balance > 0)
+SELECT bucket, apr_bps,
+       least(balance, greatest(0, 30000 - (upto - balance))) AS pay
+  FROM r ORDER BY apr_bps DESC;
+-- PURCHASE 1800: 30000; each bucket is then reduced by its pay`,
+          note: 'Once per repayment. The ledger saw one credit of 30000 to the card; billing splits it. Simplified: fees and billed interest, which come first in the owner\'s order, are left out.',
+        },
+        {
+          title: 'Nightly: buckets against the ledger',
+          lang: 'sql',
+          code: `-- billing's replica: what billing says each card owes
+SELECT card_account_id, sum(balance) AS owed
+  FROM credit_balance_buckets GROUP BY card_account_id;
+-- the Core Ledger replica: the same, from the card rows
+SELECT account_id, -posted_balance AS owed
+  FROM accounts WHERE account_type = 'CREDIT_CARD';
+-- e.g. 5f0c...081444: 34900 both sides; any difference is a break`,
+          note: 'Two databases, so the rows are compared outside both, as the parity job does. A card is a debit balance in the ledger, so its posted_balance is negative.',
+        },
       ],
       fails: "It falls behind or stops. Nothing in the ledger is affected; statements and interest wait. It replays ledger-events from its position, dropping any event_id it has applied for that account. A bug that charges interest twice is refused by the header's UNIQUE (idempotency_key).",
       alternatives: [
@@ -361,6 +593,234 @@ export const ledger: Design = {
         { text: 'Five trigger UPDATEs per bank payment: about 5,000 a second on average, 50,000 at peak, 12,500 a cluster.', from: "Per payment: 1 when the hold is placed (held_balance up), 1 when it is captured (held_balance down), 3 for the three entries (posted_balance). 5 × 1,000 = 5,000 a second; 5 × 10,000 = 50,000 at peak; ÷ 4 clusters = 12,500. Each is on a row the transaction already holds locked, and is HOT when the page has room. The balance check adds one query per transaction at commit, not per entry." },
         { text: 'The partial index on ACTIVE holds stays small: about 2 GB, against a table that gains 86 million rows a day.', from: "Bank payment holds last seconds. Assume 300 card authorisations a second held about 2 days before capture: 300 × 172,800 = about 52 million ACTIVE holds. × about 40 bytes an index entry for (account_id, expires_at) (assumption) = about 2.1 GB." },
       ],
+      tables: [
+        {
+          title: 'accounts: the balance cache',
+          lang: 'sql',
+          code: `CREATE TABLE accounts (
+    account_id UUID PRIMARY KEY,
+    logical_account VARCHAR(50),       -- NULL for customer accounts
+    shard_id INT NOT NULL DEFAULT 0,
+    account_type VARCHAR(20) NOT NULL, -- USER_WALLET, CREDIT_CARD,
+      -- RECEIVABLE, CLEARING, NOSTRO, FX_POOL, REVENUE
+    owner_account_id UUID REFERENCES accounts(account_id),
+    allow_negative BOOLEAN NOT NULL DEFAULT FALSE,
+    posted_balance BIGINT NOT NULL DEFAULT 0,
+    held_balance   BIGINT NOT NULL DEFAULT 0,
+    credit_limit   BIGINT NOT NULL DEFAULT 0 CHECK (credit_limit >= 0),
+    hard_limit     BIGINT NOT NULL DEFAULT 0,
+    currency CHAR(3) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'OPEN'
+        CHECK (status IN ('OPEN', 'NO_NEW_SPEND', 'CLOSED')),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT valid_available_funds CHECK (allow_negative
+        OR (posted_balance - held_balance) >= -hard_limit),
+    CONSTRAINT hard_limit_covers_credit_limit
+        CHECK (hard_limit >= credit_limit),
+    CONSTRAINT valid_held_balance CHECK (held_balance >= 0),
+    CONSTRAINT closed_means_empty CHECK (status <> 'CLOSED'
+        OR (posted_balance = 0 AND held_balance = 0)),
+    CONSTRAINT uq_logical_shard UNIQUE (logical_account, shard_id)
+) WITH (fillfactor = 80);`,
+          note: 'One row per account and currency; a funds check reads one row by its primary key. posted_balance and held_balance change only through the triggers (on the "one call" line). The hard floor is the CHECK; credit_limit is tested by the hold\'s conditional insert.',
+        },
+        {
+          title: 'pending_holds: money promised, not yet settled',
+          lang: 'sql',
+          code: `CREATE TABLE pending_holds (
+    hold_id UUID PRIMARY KEY,
+    account_id UUID NOT NULL REFERENCES accounts(account_id),
+    source_type VARCHAR(25) NOT NULL, -- CARD_AUTH, OUTBOUND_PAYMENT,
+                                      -- PAYROLL_BATCH, FX_SPOT
+    source_id UUID NOT NULL,  -- card_authorisations.auth_id,
+                              -- or the payment's id
+    amount BIGINT NOT NULL CHECK (amount > 0),
+    currency CHAR(3) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+      -- ACTIVE, CAPTURED, VOIDED, EXPIRED
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (source_type, source_id)
+);
+CREATE INDEX idx_holds_active_account ON pending_holds
+    (account_id, expires_at) WHERE status = 'ACTIVE';`,
+          note: 'Unpartitioned, so UNIQUE (source_type, source_id) stays a real guard: a retried PlaceHold finds its row. The partial index holds only ACTIVE holds, about 2 GB; the expiry job and the pending list use it.',
+        },
+        {
+          title: 'transactions: the header, never partitioned',
+          lang: 'sql',
+          code: `CREATE TABLE transactions (
+    transaction_id UUID PRIMARY KEY,
+    idempotency_key VARCHAR(100) NOT NULL UNIQUE,
+    transaction_type VARCHAR(30) NOT NULL, -- CARD_PURCHASE,
+      -- CASH_ADVANCE, CARD_REPAYMENT, FX_CONVERSION,
+      -- INTEREST_CHARGE, PAYROLL (and FPS_OUT, REVERSAL, ...)
+    status VARCHAR(20) NOT NULL DEFAULT 'POSTED',
+      -- POSTED, REVERSED
+    merchant_name VARCHAR(255),
+    merchant_category_code CHAR(4),
+    source_currency CHAR(3),
+    target_currency CHAR(3),
+    fx_rate NUMERIC(18, 8),
+    reference_id UUID,  -- the hold_id, or the original transaction
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);`,
+          note: 'UNIQUE (idempotency_key) is the lasting duplicate guard, which is why this table is never partitioned or deleted. Its one allowed change, POSTED to REVERSED, is made by a trigger when a REVERSAL posts.',
+        },
+        {
+          title: 'ledger_entries: append-only, one partition a month',
+          lang: 'sql',
+          code: `CREATE TABLE ledger_entries (
+    entry_id BIGSERIAL,
+    transaction_id UUID NOT NULL
+        REFERENCES transactions(transaction_id),
+    account_id UUID NOT NULL REFERENCES accounts(account_id),
+    amount BIGINT NOT NULL CHECK (amount <> 0), -- + credit, - debit
+    currency CHAR(3) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (entry_id, created_at),
+    UNIQUE (transaction_id, account_id, created_at)
+) PARTITION BY RANGE (created_at);
+CREATE TABLE ledger_entries_2026_11 PARTITION OF ledger_entries
+  FOR VALUES FROM ('2026-11-01') TO ('2026-12-01');
+
+CREATE INDEX idx_ledger_account_entry
+    ON ledger_entries (account_id, entry_id DESC);  -- statements
+CREATE INDEX idx_ledger_account_created
+    ON ledger_entries (account_id, created_at DESC); -- date ranges`,
+          note: "The owner's table, partitioned as this page does it: the keys must carry created_at, so the UNIQUE here guards nothing and the header's key does the work. Row triggers refuse UPDATE and DELETE; a statement trigger refuses TRUNCATE. An old month is detached, not deleted.",
+        },
+        {
+          title: 'outbox_events: the event, in the same transaction',
+          lang: 'sql',
+          code: `CREATE TABLE outbox_events (
+    event_id BIGSERIAL PRIMARY KEY,
+    event_type VARCHAR(40) NOT NULL,  -- HoldPlaced, HoldVoided,
+      -- HoldExpired, TransactionPosted
+    aggregate_id UUID NOT NULL,       -- hold_id or transaction_id
+    account_id UUID NOT NULL,  -- the Kafka key; one row per
+                               -- customer account touched
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());`,
+          note: 'Read by Debezium from the log, not polled. A cleanup job deletes rows once they are a day old, so it holds about a day: some 170 GB at the stress load.',
+        },
+        {
+          title: 'Beside them: daily balances, period totals, old holds',
+          lang: 'sql',
+          code: `CREATE UNIQUE INDEX uq_receivable_owner ON accounts
+    (owner_account_id) WHERE account_type = 'RECEIVABLE';
+
+CREATE TABLE account_balances_daily (       -- end of day
+    account_id UUID NOT NULL, business_date DATE NOT NULL,
+    posted BIGINT NOT NULL, held BIGINT NOT NULL,
+    last_entry_id BIGINT NOT NULL,
+    PRIMARY KEY (account_id, business_date));
+
+CREATE TABLE account_period_totals (        -- before a detach
+    account_id UUID NOT NULL,
+    period CHAR(7) NOT NULL,                -- '2025-09'
+    total BIGINT NOT NULL,
+    PRIMARY KEY (account_id, period));
+
+CREATE TABLE pending_holds_history (LIKE pending_holds)
+  PARTITION BY RANGE (created_at);     -- no uniqueness needed`,
+          note: "account_balances_daily is as on the sweep line. account_period_totals has the page's three columns; its types and key are this panel's choice. Not shown: the logical_accounts registry and the business-to-cluster directory, whose columns the page does not give.",
+        },
+      ],
+      queries: [
+        {
+          title: 'PlaceHold: lock, test the money, insert the hold',
+          lang: 'sql',
+          code: `-- PlaceHold(OUTBOUND_PAYMENT, key = payment e1f0c3a2-...3318)
+BEGIN;
+SELECT 1 FROM accounts
+ WHERE account_id = '5f0c2a9e-...081442' FOR NO KEY UPDATE;
+WITH funded AS (
+  SELECT 1 FROM accounts
+   WHERE account_id = '5f0c2a9e-...081442' AND status = 'OPEN'
+     AND posted_balance - held_balance - 120020 >= -credit_limit),
+placed AS (
+  INSERT INTO pending_holds (hold_id, account_id, source_type,
+    source_id, amount, currency, expires_at)
+  SELECT 'b61c9a3e-...0417', '5f0c2a9e-...081442',
+    'OUTBOUND_PAYMENT', 'e1f0c3a2-...3318', 120020, 'GBP',
+    now() + interval '7 days' FROM funded
+  ON CONFLICT (source_type, source_id) DO NOTHING
+  RETURNING hold_id)
+INSERT INTO outbox_events
+  (event_type, aggregate_id, account_id, payload)
+SELECT 'HoldPlaced', hold_id, '5f0c2a9e-...081442', '{...}'
+  FROM placed;
+COMMIT;  -- once a synchronous standby has the log record
+-- posted 842000, held 120020, available 721980`,
+          note: 'On the primary, once per payment and per card authorisation. Primary key of accounts for the lock, UNIQUE (source_type, source_id) for the retry. Locks held about 1 to 2 ms. If nothing was placed, look the source up: a row means a retry, no row means a decline.',
+        },
+        {
+          title: 'Capture and post: end the hold, header, entries',
+          lang: 'sql',
+          code: `BEGIN;   -- account rows first, in account_id order
+SELECT 1 FROM accounts
+ WHERE account_id IN ('5f0c2a9e-...081442', '1c9d4e2a-...000007',
+                      'c2e85b71-...000007')
+ ORDER BY account_id FOR NO KEY UPDATE;
+WITH done AS (
+  UPDATE pending_holds SET status = 'CAPTURED'
+   WHERE hold_id = 'b61c9a3e-...0417' AND status = 'ACTIVE'
+  RETURNING hold_id),
+hdr AS (
+  INSERT INTO transactions (transaction_id, idempotency_key,
+    transaction_type, reference_id)
+  SELECT '7d1f0a52-...900418', 'fps:out:pay_3fK9', 'FPS_OUT',
+         hold_id FROM done
+  ON CONFLICT (idempotency_key) DO NOTHING
+  RETURNING transaction_id)
+INSERT INTO ledger_entries
+  (transaction_id, account_id, amount, currency)
+SELECT hdr.transaction_id, v.acct::uuid, v.amt, 'GBP'
+  FROM hdr, (VALUES ('5f0c2a9e-...081442', -120020::bigint),
+                    ('1c9d4e2a-...000007',  120000::bigint),
+                    ('c2e85b71-...000007',      20::bigint))
+       AS v(acct, amt);
+-- then TransactionPosted into outbox_events, and COMMIT`,
+          note: 'Wallet, FPS_CLEARING_GBP shard 7 and FEE_REVENUE_GBP shard 7. 3 rows, or 0 if the hold was not ACTIVE or the key was taken. The sum-to-zero check runs once at COMMIT. After: posted 721980, held 0.',
+        },
+        {
+          title: 'Balance read: posted, held, available',
+          lang: 'sql',
+          code: `-- GetBalance, always on the primary: one row, no lock
+SELECT posted_balance, held_balance, credit_limit, status,
+       posted_balance - held_balance + credit_limit AS available
+  FROM accounts
+ WHERE account_id = '5f0c2a9e-3d41-4b7e-8c12-000000081442';
+--  before:        842000        0   842000
+--  after hold:    842000   120020   721980
+--  after capture: 721980        0   721980`,
+          note: 'Primary key lookup on a table of under 300 MB, always in memory. A plain SELECT never waits for a row lock. Never on a replica: one that trails could show money already spent.',
+        },
+        {
+          title: 'Hold expiry: due holds, one account at a time',
+          lang: 'sql',
+          code: `SELECT DISTINCT account_id FROM pending_holds
+ WHERE status = 'ACTIVE' AND expires_at < now();
+
+BEGIN;
+SELECT 1 FROM accounts
+ WHERE account_id = '5f0c2a9e-...081442' FOR NO KEY UPDATE;
+WITH ended AS (
+  UPDATE pending_holds SET status = 'EXPIRED'
+   WHERE hold_id IN (SELECT hold_id FROM pending_holds
+                      WHERE account_id = '5f0c2a9e-...081442'
+                        AND status = 'ACTIVE' AND expires_at < now()
+                      LIMIT 50)
+  RETURNING hold_id, account_id)
+INSERT INTO outbox_events
+  (event_type, aggregate_id, account_id, payload)
+SELECT 'HoldExpired', hold_id, account_id, '{...}' FROM ended;
+COMMIT;`,
+          note: 'Every minute, by the workers. Both statements use idx_holds_active_account. The hold trigger takes each amount off held_balance. Statement pages and the cache check run on the replicas: see that panel.',
+        },
+      ],
       fails: 'The primary dies. A synchronous standby already holds every committed transaction, so it is promoted with nothing lost, provided the old primary is fenced first. Writes to that cluster pause for the failover, and callers retry with the same keys: the table guards make the retries harmless.',
       alternatives: [
         {
@@ -438,6 +898,97 @@ export const ledger: Design = {
       numbers: [
         { text: 'Postgres: synchronous_standby_names = ANY 1 (s1, s2), a quorum of one in two.', from: 'Not a sum. The setting is from the PostgreSQL replication docs, cited on the page: ANY 1 (s1, s2) waits for at least one of the two listed standbys.' },
         { text: 'Read replicas lag by milliseconds to seconds: fine for a statement, never for a funds check.', from: 'An assumption, not a measurement: asynchronous replicas usually trail by milliseconds and fall seconds behind under heavy writes or long queries. The rule that funds checks read the primary does not depend on the exact figure.' },
+      ],
+      tables: [
+        {
+          title: 'The same tables, by reference',
+          lang: 'text',
+          code: `Every copy holds the Ledger DB's tables, row for row, from its
+write-ahead log: accounts, pending_holds, transactions,
+ledger_entries (by month), outbox_events, account_balances_daily,
+account_period_totals, pending_holds_history.
+The DDL is on the Ledger DB panel; nothing is defined here.
+
+s1, s2          synchronous standbys in other zones.
+                ANY 1 (s1, s2): each commit waits for one.
+                Kept for failover, not for reads.
+read replicas   asynchronous, milliseconds to seconds behind.
+                Read-only. Statements, pending items,
+                reconciliation, the parity export and the
+                monthly archive export run here.
+
+Never here: a funds check or a balance used to approve money.`,
+          note: 'A replica cannot have its own indexes: any index a replica query needs, such as idx_ledger_account_entry, is created on the primary.',
+        },
+      ],
+      queries: [
+        {
+          title: 'Statement page: newest 50 entries, then the next 50',
+          lang: 'sql',
+          code: `SELECT e.entry_id, e.amount, e.currency, t.transaction_type,
+       t.merchant_name, t.reference_id, e.created_at
+  FROM ledger_entries e
+  JOIN transactions t USING (transaction_id)
+ WHERE e.account_id = '5f0c2a9e-3d41-4b7e-8c12-000000081442'
+ ORDER BY e.entry_id DESC
+ LIMIT 50;
+
+-- next page: the same, plus
+--   AND e.entry_id < 7730512   (the last entry_id seen)`,
+          note: 'idx_ledger_account_entry (account_id, entry_id DESC) serves it, one index range per monthly partition. The cursor is entry_id, not created_at, so pages stay stable as new entries arrive.',
+        },
+        {
+          title: 'Pending items, shown above the first page',
+          lang: 'sql',
+          code: `SELECT hold_id, source_type, source_id, amount, currency,
+       created_at, expires_at
+  FROM pending_holds
+ WHERE account_id = '5f0c2a9e-3d41-4b7e-8c12-000000081442'
+   AND status = 'ACTIVE'
+ ORDER BY created_at DESC;
+-- e.g. b61c...0520  CARD_AUTH  8240 GBP`,
+          note: 'The partial index idx_holds_active_account finds them. The app asks the Card service for the merchant name.',
+        },
+        {
+          title: 'Cache check: balances equal journal and holds',
+          lang: 'sql',
+          code: `SELECT a.account_id, a.posted_balance, a.held_balance
+  FROM accounts a
+  LEFT JOIN account_balances_daily d
+    ON d.account_id = a.account_id
+   AND d.business_date = '2026-11-12'
+ WHERE a.account_id IN (SELECT account_id FROM ledger_entries
+                         WHERE entry_id > 7730000)  -- watermark
+   AND (a.posted_balance <> coalesce(d.posted, 0) +
+        (SELECT coalesce(sum(e.amount), 0) FROM ledger_entries e
+          WHERE e.account_id = a.account_id
+            AND e.entry_id > coalesce(d.last_entry_id, 0))
+     OR a.held_balance <> (SELECT coalesce(sum(h.amount), 0)
+          FROM pending_holds h
+         WHERE h.account_id = a.account_id
+           AND h.status = 'ACTIVE'));
+-- any row is a broken cache; expect none`,
+          note: 'Every few minutes, by reconciliation, for accounts touched since the last watermark. One MVCC snapshot sees a balance, its entries and its holds together. A full re-sum runs weekly.',
+        },
+        {
+          title: 'Nightly parity export: the Core Ledger side',
+          lang: 'sql',
+          code: `SELECT hold_id, source_id, status FROM pending_holds
+ WHERE source_type = 'CARD_AUTH'
+   AND created_at < '2026-11-14 00:00+00';
+SELECT transaction_id, reference_id, status FROM transactions
+ WHERE transaction_type = 'CARD_PURCHASE'
+   AND created_at < '2026-11-14 00:00+00';`,
+          note: "On a replica of each cluster after the cut-off; reconciliation loads the rows beside the Card service's export. Neither table has an index on these filters: it is a nightly scan, kept off the primary.",
+        },
+        {
+          title: 'Before an export: what the month must add up to',
+          lang: 'sql',
+          code: `SELECT currency, count(*) AS entries, sum(amount) AS net
+  FROM ledger_entries_2025_09 GROUP BY currency;
+-- net is 0 in each currency; the files' manifest must match`,
+          note: 'Monthly, on a replica, for the month passing 13 months old. Reads one whole partition, about 490 GB a cluster, which is why it is kept off the primary.',
+        },
       ],
       fails: 'If both synchronous standbys are lost, commits wait, and each waiting commit keeps its row locks, so every touched row queues behind it. Decide in advance: stop writes on that cluster (our choice) rather than quietly fall back to asynchronous replication. Never cancel the waiting backends, because a cancelled commit reports success with only a warning; fence the primary and restore a standby.',
       alternatives: [
@@ -654,6 +1205,109 @@ export const ledger: Design = {
         { text: "Monzo's example: two £5 payments in the ledger, £15 arrived in settlement, a £5 break.", from: "Monzo's worked example from 'Processing payments safely at scale', cited on the page: £5 + £5 = £10 in the ledger; £15 in settlement less £10 = £5 that nothing explains." },
         { text: 'Stripe reports more than 99.9999 per cent of money movement explained, with clearing accounts expected to sit at zero.', from: "Not a sum. Stripe's own figure, from its ledger post cited on the page; it has not been checked here." },
       ],
+      tables: [
+        {
+          title: 'Running totals, files and breaks',
+          lang: 'sql',
+          code: `CREATE TABLE seen_txns (                  -- dedupe for events
+    transaction_id UUID PRIMARY KEY,
+    seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE TABLE clearing_totals (
+    account VARCHAR(50) NOT NULL,   -- logical: FPS_CLEARING_GBP
+    currency CHAR(3) NOT NULL,
+    day DATE NOT NULL,
+    total BIGINT NOT NULL DEFAULT 0,
+    txns BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (account, currency, day));
+CREATE TABLE loaded_files (
+    sha256 CHAR(64) PRIMARY KEY,    -- a file is loaded once
+    path TEXT NOT NULL,
+    loaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE TABLE breaks (
+    break_id VARCHAR(20) PRIMARY KEY,  -- brk_1127
+    business_date DATE NOT NULL,
+    account VARCHAR(50) NOT NULL,
+    currency CHAR(3) NOT NULL,
+    amount BIGINT NOT NULL,            -- -500
+    owner VARCHAR(100),
+    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
+    correction_txn_id UUID);  -- posted with key break:<break_id>`,
+          note: "Reconciliation's own database, not the ledger's. seen_txns and clearing_totals are the tables on the ledger totals line; the other two are this panel's sketch of what the page describes. seen_txns would be trimmed after some days (not shown).",
+        },
+        {
+          title: 'The parity job: both sides, loaded nightly',
+          lang: 'sql',
+          code: `CREATE TABLE card_auths (           -- from the Card service
+    auth_id UUID PRIMARY KEY,
+    hold_id UUID,
+    status VARCHAR(20) NOT NULL);
+CREATE TABLE ledger_holds (         -- from every ledger cluster
+    hold_id UUID PRIMARY KEY,
+    source_id UUID NOT NULL,
+    status VARCHAR(20) NOT NULL);
+CREATE TABLE ledger_txns (
+    transaction_id UUID PRIMARY KEY,
+    reference_id UUID,              -- the hold, for a card
+    status VARCHAR(20) NOT NULL);
+CREATE INDEX ON ledger_txns (reference_id);`,
+          note: 'Emptied and reloaded each night from the replicas\' exports up to one cut-off. The names are the page\'s; the columns are what the exports select.',
+        },
+      ],
+      queries: [
+        {
+          title: 'An event: count it once, add it to the day',
+          lang: 'sql',
+          code: `BEGIN;
+INSERT INTO seen_txns (transaction_id)
+VALUES ('7d1f0a52-6c3e-4f8b-9e21-000000900418')
+ON CONFLICT (transaction_id) DO NOTHING;
+-- 0 rows: a repeat; ROLLBACK and skip
+INSERT INTO clearing_totals AS c
+  (account, currency, day, total, txns)
+VALUES ('FPS_CLEARING_GBP', 'GBP', '2026-11-12', 120000, 1)
+ON CONFLICT (account, currency, day) DO UPDATE
+   SET total = c.total + EXCLUDED.total, txns = c.txns + 1;
+COMMIT;`,
+          note: "Per TransactionPosted that touches a clearing account, about 1,000 a second at the stress load. The same as the line's UPDATE, written as an upsert so the day's first event makes the row.",
+        },
+        {
+          title: 'A file: load it once',
+          lang: 'sql',
+          code: `INSERT INTO loaded_files (sha256, path)
+VALUES ('3b7d...91fe',
+        '/outbound/2026-11-12/fps-settlement.csv')
+ON CONFLICT (sha256) DO NOTHING;
+-- 0 rows: already loaded; skip the file`,
+          note: 'Daily, per file. The hash shown is shortened.',
+        },
+        {
+          title: 'At the cut-off: compare, and raise a break',
+          lang: 'sql',
+          code: `-- the scheme says it settled 41380750p for 2026-11-12
+INSERT INTO breaks (break_id, business_date, account,
+  currency, amount)
+SELECT 'brk_1127', day, account, currency, total - 41380750
+  FROM clearing_totals
+ WHERE account = 'FPS_CLEARING_GBP' AND currency = 'GBP'
+   AND day = '2026-11-12' AND total <> 41380750;
+-- ledger 41380250 - scheme 41380750 = -500: one break`,
+          note: "Once per account per business date, by primary key. clearing_totals here counts the day's captures only. The break is closed by a correcting transaction posted with the key break:brk_1127.",
+        },
+        {
+          title: 'Parity: approved with no hold, cleared with no post',
+          lang: 'sql',
+          code: `SELECT a.auth_id FROM card_auths a
+  LEFT JOIN ledger_holds h ON h.hold_id = a.hold_id
+                          AND h.status = 'ACTIVE'
+ WHERE a.status = 'APPROVED' AND h.hold_id IS NULL;
+SELECT a.auth_id FROM card_auths a
+  LEFT JOIN ledger_txns t ON t.reference_id = a.hold_id
+                         AND t.status = 'POSTED'
+ WHERE a.status = 'CLEARED' AND t.transaction_id IS NULL;
+-- and both ways round; each row is a break, aged before raising`,
+          note: 'Nightly. Primary key of ledger_holds and the reference_id index. A hold expired an hour ago whose HoldExpired is still in flight heals by itself, so breaks are aged first.',
+        },
+      ],
       fails: 'A break is found. It is raised with an owner, an amount and evidence. The fix is a new correcting transaction through the ledger API, reviewed by a second person, never an edit to an entry.',
       alternatives: [
         {
@@ -726,6 +1380,88 @@ export const ledger: Design = {
         { name: "Hold archive job", what: "Daily, in batches: copy holds that are no longer ACTIVE and were placed more than 90 days ago (no hold lives that long) into pending_holds_history (month-partitioned, no uniqueness needed), then delete them. The hold trigger allows DELETE only for a hold that is not ACTIVE (checked), and only the archive role has the DELETE grant.", why: "pending_holds keeps its PRIMARY KEY and UNIQUE (source_type, source_id), so both stay real guards. The cost: each delete leaves a dead row for vacuum, about 86 million a day at the stress load." },
         { name: "Headers", what: "transactions is never deleted and never partitioned. When a month of entries is detached, its headers stay on the cluster as the index of what was ever posted and the lasting duplicate guard.", why: "The header is immutable, and entries and reversals point at it, so deleting it would fight its own guards. The cost: about 200 bytes a row with its unique indexes (an estimate), 86 million rows a day at the stress load, about 17 GB a day or 6.3 TB a year that never shrinks; at the reasoned baseline, about 0.6 to 1.6 TB a year." },
         { name: "account_period_totals", what: "One row per account per archived month of entries: account_id, period, total. Written from the partition before it is detached.", why: "This design's choice. It lets reconciliation check a posted balance as archived totals plus hot entries once old rows have left the database." },
+      ],
+      tables: [
+        {
+          title: 'Bucket and object layout',
+          lang: 'text',
+          code: `bucket    ledger-archive
+path      cluster-<n>/entries/<yyyy-mm>/
+            part-0000.parquet
+            part-0001.parquet ...   one month of one cluster
+            manifest.json           written last
+columns   entry_id, transaction_id, account_id, amount,
+          currency, created_at: the partition's own columns
+sort      by account_id, then entry_id, inside each file, so a
+          reader skips row groups by their min and max account_id
+
+not here  headers: transactions stays on the cluster for good
+          ended holds: pending_holds_history, in the database
+          per-account month totals: account_period_totals, too`,
+          note: "The path and the manifest are the page's. The sort order is this panel's assumption; without it, reading one account means reading the whole month.",
+        },
+        {
+          title: 'manifest.json for one month',
+          lang: 'json',
+          code: `{
+  "partition": "ledger_entries_2025_09",
+  "entries": 2015331050,
+  "net": { "GBP": 0, "EUR": 0, "USD": 0 },
+  "files": [
+    { "name": "part-0000.parquet", "sha256": "9c1e...e04a" }
+  ]
+}`,
+          note: 'The row count, the net per currency and a checksum per file: enough to check the archive later without the database.',
+        },
+      ],
+      queries: [
+        {
+          title: 'Write a month, manifest last',
+          lang: 'text',
+          code: `aws s3 cp part-0000.parquet \\
+  s3://ledger-archive/cluster-2/entries/2025-09/part-0000.parquet
+  ... one per file ...
+aws s3 cp manifest.json \\
+  s3://ledger-archive/cluster-2/entries/2025-09/manifest.json
+
+then, only if the files' count and net match the partition:
+  ALTER TABLE ledger_entries
+    DETACH PARTITION ledger_entries_2025_09 CONCURRENTLY;`,
+          note: 'Monthly, per cluster. A month with no manifest is unfinished: a reader treats it as missing. The detach is on the old months line.',
+        },
+        {
+          title: "Read one account's month back",
+          lang: 'sql',
+          code: `-- DuckDB, reading the files where they lie
+SELECT entry_id, transaction_id, amount, currency, created_at
+  FROM read_parquet(
+    's3://ledger-archive/cluster-2/entries/2025-09/*.parquet')
+ WHERE account_id = '5f0c2a9e-3d41-4b7e-8c12-000000081442'
+ ORDER BY entry_id DESC;
+
+-- then the headers, still on the cluster (a replica)
+SELECT transaction_id, transaction_type, merchant_name,
+       reference_id
+  FROM transactions
+ WHERE transaction_id = ANY ($1);   -- the ids from above`,
+          note: 'Rare: an old statement, an audit or a dispute. The account filter skips row groups whose account_id range cannot match. DuckDB is one choice of reader; any Parquet engine works.',
+        },
+        {
+          title: 'Prove a month without the database',
+          lang: 'sql',
+          code: `-- DuckDB: the month against its manifest
+SELECT currency, count(*) AS entries, sum(amount) AS net
+  FROM read_parquet(
+    's3://ledger-archive/cluster-2/entries/2025-09/*.parquet')
+ GROUP BY currency;            -- net 0; counts add to 2015331050
+
+-- and per account against account_period_totals for '2025-09'
+SELECT account_id, sum(amount) AS total
+  FROM read_parquet(
+    's3://ledger-archive/cluster-2/entries/2025-09/*.parquet')
+ GROUP BY account_id;`,
+          note: 'Run before the detach and again on audit. A balance rebuilt from the start is the archived period totals plus the hot entries.',
+        },
       ],
       fails: "An export is incomplete. The partition is detached only after the file's row count and sums match the partition's. The hold archive job copies before it deletes in the same transaction, and the trigger refuses to delete an ACTIVE hold.",
       alternatives: [

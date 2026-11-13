@@ -270,6 +270,68 @@ export const cardProcessing: Design = {
           from: 'Design target: the vault\'s 5 ms share of the 106 ms latency budget in "Numbers to have ready". Most lookups hit the gateway\'s own cache and take far less.',
         },
       ],
+      tables: [
+        {
+          title: 'vault: card number to token',
+          lang: 'sql',
+          code: `-- Inside the PCI zone. Shown in PostgreSQL syntax; the page
+-- names no product. Replicated to both sites.
+CREATE TABLE vault (
+  card_token text  PRIMARY KEY,     -- 'tok_8f3a91e2', random
+  pan_hmac   bytea NOT NULL UNIQUE, -- keyed hash: the lookup key
+  pan_enc    bytea NOT NULL,        -- the card number, encrypted
+  key_ref    text  NOT NULL,        -- which HSM key encrypted it
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+-- Key rotation walks the rows still under an old key.
+CREATE INDEX vault_by_key ON vault (key_ref, card_token);`,
+          note: 'Encryption is randomised, so pan_enc cannot be searched. The lookup key is a hash keyed with an HSM key: unlike the plain hash the page passed over, trying every card number gets nowhere without that key.',
+        },
+        {
+          title: "Each gateway's cache",
+          lang: 'text',
+          code: `In each gateway's memory, inside the PCI zone:
+  card number -> card_token     up to about 1.2 million entries
+A token never changes, so an entry is never cleared. A miss
+reads the vault and adds the entry.`,
+          note: 'The cache holds card numbers, so it is protected like the vault.',
+        },
+      ],
+      queries: [
+        {
+          title: 'Tokenise on a cache miss',
+          lang: 'sql',
+          code: `-- The HSM makes the keyed hash of 5xxx ... 1234 (shortened).
+SELECT card_token FROM vault
+ WHERE pan_hmac = '\\x9c41e07b';
+-- -> tok_8f3a91e2`,
+          note: 'On a gateway cache miss, and for each card number in a clearing file. One row by the unique index, well inside 5 ms.',
+        },
+        {
+          title: 'A new card is issued',
+          lang: 'sql',
+          code: `INSERT INTO vault (card_token, pan_hmac, pan_enc, key_ref)
+VALUES ('tok_8f3a91e2', '\\x9c41e07b', '\\x5e11a0c3',
+        'pan-key-2026')
+ON CONFLICT (pan_hmac) DO NOTHING
+RETURNING card_token;
+-- No row: the number is already here. Read its token instead.`,
+          note: 'The UNIQUE on pan_hmac means one card number never gets two tokens. Byte values are shortened.',
+        },
+        {
+          title: 'Key rotation, a batch at a time',
+          lang: 'sql',
+          code: `SELECT card_token, pan_enc FROM vault
+ WHERE key_ref = 'pan-key-2025'
+ ORDER BY card_token LIMIT 1000;
+-- The HSM decrypts and re-encrypts each under the new key.
+UPDATE vault SET pan_enc = '\\x77b2c9d1',
+       key_ref = 'pan-key-2026'
+ WHERE card_token = 'tok_8f3a91e2'
+   AND key_ref = 'pan-key-2025';`,
+          note: 'A background job on vault_by_key. Card numbers stay inside the HSM in the clear; the job sees only ciphertext.',
+        },
+      ],
       fails: 'It is read on every authorisation, so it is replicated to both sites and cached on each gateway. If it cannot be read the card cannot be found: decline, and let stand-in carry the load if it lasts.',
       alternatives: [
         {
@@ -492,6 +554,68 @@ export const cardProcessing: Design = {
           from: 'Design target: the card read\'s 5 ms share of the 106 ms latency budget in "Numbers to have ready".',
         },
       ],
+      tables: [
+        {
+          title: 'cards: state and controls by token',
+          lang: 'sql',
+          code: `CREATE TABLE cards (
+  card_token     text PRIMARY KEY,     -- 'tok_8f3a91e2'
+  account_id     text NOT NULL,        -- 'acc_7731'
+  status         text NOT NULL
+    CHECK (status IN ('active', 'frozen', 'lost')),
+  expires        char(7) NOT NULL,     -- '2029-08'
+  blocked_mccs   text[] NOT NULL DEFAULT '{}',  -- {7995}
+  contactless_on boolean NOT NULL DEFAULT true,
+  foreign_on     boolean NOT NULL DEFAULT true,
+  per_purchase_limit_pence bigint,     -- 50000 = £500
+  updated_at     timestamptz NOT NULL DEFAULT now()
+);
+-- The app lists a business's cards.
+CREATE INDEX cards_by_account ON cards (account_id);`,
+          note: 'One row per card, about 1.2 million, about 600 MB: it fits in memory. The primary has a synchronous replica in the other site.',
+        },
+      ],
+      queries: [
+        {
+          title: 'Read on every authorisation',
+          lang: 'sql',
+          code: `SELECT status, expires, account_id, blocked_mccs,
+       contactless_on, foreign_on, per_purchase_limit_pence
+  FROM cards
+ WHERE card_token = 'tok_8f3a91e2';`,
+          note: 'About 135 a second at the yearly peak, by primary key, from the primary or a cache cleared on write: 5 ms target.',
+        },
+        {
+          title: 'Freeze, from the app',
+          lang: 'sql',
+          code: `UPDATE cards SET status = 'frozen', updated_at = now()
+ WHERE card_token = 'tok_8f3a91e2' AND status = 'active';
+-- COMMIT returns once the other site has the row.
+-- Then delete the cache entry for tok_8f3a91e2, and only then
+-- tell the app "frozen".`,
+          note: 'Rare, so the cross-site round trip costs nothing that matters. The next tap reads frozen and is declined.',
+        },
+        {
+          title: 'Block a merchant category',
+          lang: 'sql',
+          code: `UPDATE cards
+   SET blocked_mccs = array_append(blocked_mccs, '7995'),
+       updated_at = now()
+ WHERE card_token = 'tok_8f3a91e2'
+   AND NOT ('7995' = ANY (blocked_mccs));
+-- and clear the cache entry, as for a freeze`,
+          note: 'Controls are data, so the owner\'s change needs no deploy.',
+        },
+        {
+          title: "A business's cards, for the app",
+          lang: 'sql',
+          code: `SELECT card_token, status, expires
+  FROM cards
+ WHERE account_id = 'acc_7731'
+ ORDER BY card_token;`,
+          note: 'Uses cards_by_account. Off the authorisation path.',
+        },
+      ],
       fails: 'The primary fails over to its replica in the other site. A freeze is acknowledged only once it is on both, so a failover cannot lose it.',
       alternatives: [
         {
@@ -561,6 +685,54 @@ export const cardProcessing: Design = {
         {
           text: 'Features are kept up to date from the event stream, so scoring is a lookup and a model call.',
           from: 'A design choice, not a sum. A consumer of the card events log keeps each card\'s recent counts and amounts, so nothing is computed from history at scoring time. The 12 ms answer in the tour is an example.',
+        },
+      ],
+      tables: [
+        {
+          title: 'Feature store: key layout',
+          lang: 'text',
+          code: `Shown as Redis; the page names no product. Keyed by card.
+
+f:tok_8f3a91e2:buys       sorted set
+  member  event id, e.g. evt_01JC9W3K2T
+  score   time of the purchase, Unix ms
+  -> purchases_last_hour
+
+f:tok_8f3a91e2:countries  set of country codes: GB, FR
+  -> new_country, used_abroad_before
+
+f:tok_8f3a91e2:profile    hash
+  median_pence  3310      (illustrative, from a nightly job)
+  -> amount_vs_card_median = 3640 / 3310 = 1.1`,
+          note: 'Written by a reader of the card events log; read by fraud scoring. Members are event ids, so a repeated event changes nothing.',
+        },
+      ],
+      queries: [
+        {
+          title: 'Read features while scoring',
+          lang: 'text',
+          code: `# One pipelined round trip. 12:41:07 less one hour:
+ZCOUNT    f:tok_8f3a91e2:buys 1794483667000 +inf
+SISMEMBER f:tok_8f3a91e2:countries IE
+SCARD     f:tok_8f3a91e2:countries
+HGET      f:tok_8f3a91e2:profile median_pence`,
+          note: 'Inside the 50 ms budget: a few key lookups, then the model call. IE not in the set gives new_country true; GB and FR give used_abroad_before.',
+        },
+        {
+          title: 'Update from a card event',
+          lang: 'text',
+          code: `# On "authorised" evt_01JC9W3K2T, 2026-11-12T12:41:07Z
+ZADD  f:tok_8f3a91e2:buys 1794487267000 evt_01JC9W3K2T
+SADD  f:tok_8f3a91e2:countries IE
+# keep one day of purchases
+ZREMRANGEBYSCORE f:tok_8f3a91e2:buys -inf 1794400867000`,
+          note: 'At-least-once delivery is safe: ZADD and SADD of a member already there change nothing.',
+        },
+        {
+          title: 'Nightly profile',
+          lang: 'text',
+          code: `HSET f:tok_8f3a91e2:profile median_pence 3310`,
+          note: 'A batch job works out each card\'s median from history; nothing is computed from history while a purchase waits.',
         },
       ],
       fails: 'Slow or down: the authoriser stops waiting at 50 ms and decides on rules alone (velocity, amount, country), and records that it did. The model never blocks the authorisation path.',
@@ -648,6 +820,181 @@ export const cardProcessing: Design = {
         {
           text: 'Credit cards: a statement closes each month, and the minimum payment and interest are worked out from posted entries, never from holds.',
           from: 'Not a sum: how a credit account works. A hold can still be reversed, lapse or clear at another amount, so only posted entries are final enough to charge interest on.',
+        },
+      ],
+      tables: [
+        {
+          title: 'accounts: balance and holds on one row',
+          lang: 'sql',
+          code: `-- PostgreSQL. Amounts in pence. One partition shown: accounts
+-- are split across databases by account_id, and a card's account
+-- picks the database, so a retry reaches the same one.
+CREATE TABLE accounts (
+  account_id        text PRIMARY KEY,  -- 'acc_7731'
+  balance_pence     bigint NOT NULL,   -- posted
+  held_pence        bigint NOT NULL DEFAULT 0,  -- open holds
+  spent_today_pence bigint NOT NULL DEFAULT 0,
+  daily_limit_pence bigint             -- NULL: no daily limit
+);
+-- Available = balance_pence - held_pence.`,
+          note: 'The row every hold and posting locks. mastercard_settlement is an account too, but nothing locks it: its total is summed from postings, so it is never a hot row.',
+        },
+        {
+          title: 'holds: one per authorisation',
+          lang: 'sql',
+          code: `CREATE TABLE holds (
+  hold_id          text PRIMARY KEY,     -- 'hold_5521907'
+  auth_key         text NOT NULL UNIQUE, -- token|date|STAN|RRN
+  account_id       text NOT NULL,        -- 'acc_7731'
+  card_token       text NOT NULL,
+  amount_pence     bigint NOT NULL,      -- 3640
+  txn_amount_minor bigint NOT NULL,      -- 4200
+  txn_currency     char(3) NOT NULL,     -- 'EUR'
+  auth_code        text NOT NULL,        -- 'K7Q2M9'
+  merchant_id      text NOT NULL,        -- 'M-IE-30417'
+  status           text NOT NULL DEFAULT 'open' CHECK (status IN
+                     ('open', 'released', 'reversed', 'lapsed')),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  -- the network's window: 2 days, card present on Mastercard
+  expires_at       timestamptz NOT NULL
+                     DEFAULT now() + interval '2 days'
+);`,
+          note: 'UNIQUE (auth_key) is what makes a retry or a repeated advice write nothing.',
+        },
+        {
+          title: 'holds: the indexes the queries use',
+          lang: 'sql',
+          code: `-- Clearing's match: auth code and card, then the rest.
+CREATE INDEX holds_match ON holds (auth_code, card_token)
+  WHERE status = 'open';
+-- The app's pending list.
+CREATE INDEX holds_pending ON holds (account_id, created_at)
+  WHERE status = 'open';
+-- The lapse sweep.
+CREATE INDEX holds_expiry ON holds (expires_at)
+  WHERE status = 'open';`,
+          note: 'Partial indexes cover open holds only, so they stay small however many old holds the table keeps.',
+        },
+        {
+          title: 'postings: one per clearing record',
+          lang: 'sql',
+          code: `CREATE TABLE postings (
+  posting_id      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  file_id         text NOT NULL,      -- 'clr-2026-11-13-02'
+  record_no       integer NOT NULL,   -- 118442
+  hold_id         text,               -- NULL: no hold matched
+  debit_account   text NOT NULL,      -- 'acc_7731'
+  credit_account  text NOT NULL,      -- 'mastercard_settlement'
+  amount_pence    bigint NOT NULL CHECK (amount_pence > 0),
+  currency        char(3) NOT NULL,   -- 'GBP'
+  settlement_date date NOT NULL,      -- '2026-11-13'
+  UNIQUE (file_id, record_no)         -- a rerun posts nothing
+);
+CREATE INDEX postings_by_debit
+  ON postings (debit_account, posting_id);
+CREATE INDEX postings_by_credit
+  ON postings (credit_account, posting_id);
+CREATE INDEX postings_by_day ON postings (settlement_date);`,
+          note: 'Double entry in one row: a debit account, a credit account and one positive amount, so every row sums to zero. A refund swaps the two accounts.',
+        },
+        {
+          title: 'outbox: events waiting for the relay',
+          lang: 'sql',
+          code: `CREATE TABLE outbox (
+  seq        bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  event_id   text NOT NULL UNIQUE,  -- 'evt_01JC9W3K2T'
+  card_token text NOT NULL,         -- the log's key
+  type       text NOT NULL,         -- 'authorised', 'cleared'
+  payload    jsonb NOT NULL,
+  sent_at    timestamptz            -- NULL until the log acks
+);
+CREATE INDEX outbox_unsent ON outbox (seq)
+  WHERE sent_at IS NULL;`,
+          note: 'Written in the same transaction as each hold and posting. The relay reads it through outbox_unsent.',
+        },
+      ],
+      queries: [
+        {
+          title: 'The two writes that matter most',
+          lang: 'text',
+          code: `The hold:  one transaction, on the "hold" connection.
+  lock accounts row, look up auth_key, check funds and the
+  daily limit, insert holds and outbox, update accounts.
+Clearing:  one transaction per record, on "post, release".
+  lock accounts row, insert postings ON CONFLICT (file_id,
+  record_no) DO NOTHING, release the hold, insert outbox.`,
+          note: 'Both lock the account row first, so they queue on it rather than deadlock. Hold target 20 ms, near 100 a second at the yearly peak.',
+        },
+        {
+          title: 'Reversal (0400): release the hold once',
+          lang: 'sql',
+          code: `BEGIN;
+SELECT held_pence FROM accounts
+ WHERE account_id = 'acc_7731' FOR UPDATE;
+UPDATE holds SET status = 'reversed'
+ WHERE auth_key = 'tok_8f3a91e2|2026-11-12|004217|631612004217'
+   AND status = 'open'
+RETURNING hold_id, amount_pence;
+-- No row: already reversed, cleared or lapsed. COMMIT, done.
+UPDATE accounts SET held_pence = held_pence - 3640
+ WHERE account_id = 'acc_7731';
+INSERT INTO outbox (event_id, card_token, type, payload)
+VALUES ('evt_01JCA2M8RX', 'tok_8f3a91e2', 'reversed',
+  '{"hold_id": "hold_5521907", "amount_pence": 3640}');
+COMMIT;`,
+          note: 'Illustrative: the tour\'s lunch was not reversed. AND status = \'open\' makes a repeated 0400 write nothing. Giving back spent_today_pence is left out.',
+        },
+        {
+          title: 'Stand-in advice (0120): apply it once',
+          lang: 'sql',
+          code: `BEGIN;
+SELECT held_pence FROM accounts
+ WHERE account_id = 'acc_7731' FOR UPDATE;
+-- No funds check: the network has decided, we apply it.
+INSERT INTO holds (hold_id, auth_key, account_id, card_token,
+  amount_pence, txn_amount_minor, txn_currency, auth_code,
+  merchant_id)
+VALUES ('hold_5523310',
+  'tok_8f3a91e2|2026-11-12|004391|631613004391', 'acc_7731',
+  'tok_8f3a91e2', 1250, 1250, 'GBP', 'S41X7P', 'M-GB-20118')
+ON CONFLICT (auth_key) DO NOTHING
+RETURNING hold_id;
+-- No row: already applied. COMMIT, done.
+UPDATE accounts SET held_pence = held_pence + 1250,
+       spent_today_pence = spent_today_pence + 1250
+ WHERE account_id = 'acc_7731';
+-- and an outbox row, as for any hold
+COMMIT;`,
+          note: 'STAN, RRN and amount from the page\'s advice; hold id, auth code and merchant are illustrative. If our own late approval already holds under this key, the insert does nothing and that hold stays.',
+        },
+        {
+          title: 'Lapse sweep',
+          lang: 'sql',
+          code: `SELECT hold_id, account_id, amount_pence
+  FROM holds
+ WHERE status = 'open' AND expires_at < now()
+ ORDER BY expires_at
+ LIMIT 1000;
+-- Each is released like a reversal, in its own transaction,
+-- with status 'lapsed' and the same AND status = 'open'.`,
+          note: 'Every few minutes, on holds_expiry. A clearing record that comes after the lapse finds no open hold and is posted anyway, as unmatched.',
+        },
+        {
+          title: 'The app opens',
+          lang: 'sql',
+          code: `SELECT balance_pence - held_pence AS available_pence
+  FROM accounts WHERE account_id = 'acc_7731';
+
+SELECT hold_id, amount_pence, merchant_id, created_at
+  FROM holds
+ WHERE account_id = 'acc_7731' AND status = 'open'
+ ORDER BY created_at DESC LIMIT 50;      -- holds_pending
+
+SELECT posting_id, amount_pence, settlement_date
+  FROM postings
+ WHERE debit_account = 'acc_7731'
+ ORDER BY posting_id DESC LIMIT 50;      -- postings_by_debit`,
+          note: 'Pending from holds, final from postings. Refunds credit the account, so the feed also reads postings_by_credit and merges the two.',
         },
       ],
       fails: 'The one dependency the authoriser cannot do without. If it cannot answer, decline and let stand-in carry the load, because an approval with no hold breaks the balance. The primary replicates synchronously to the other site.',
@@ -743,6 +1090,89 @@ export const cardProcessing: Design = {
           from: 'One record per purchase: 1.2 million purchases a day from "Numbers to have ready", leaving out refunds and offline taps. Mastercard runs six cycles a day and issuers usually take four or five (Paymentology), so four to six files. 1.2 million ÷ 6 = 200,000 and ÷ 4 = 300,000 records a file.',
         },
       ],
+      tables: [
+        {
+          title: 'clearing_files: one row per file',
+          lang: 'sql',
+          code: `CREATE TABLE clearing_files (
+  file_id         text PRIMARY KEY,   -- 'clr-2026-11-13-02'
+  settlement_date date NOT NULL,      -- '2026-11-13'
+  record_count    integer NOT NULL,   -- 241806, from the header
+  net_pence       bigint,             -- the file's own total
+  status          text NOT NULL DEFAULT 'received'
+    CHECK (status IN ('received', 'checked', 'posted',
+                      'set_aside')),
+  received_at     timestamptz NOT NULL DEFAULT now()
+);`,
+          note: 'Clearing\'s own tables, read by reconciliation. Shown in PostgreSQL syntax.',
+        },
+        {
+          title: 'clearing_records: one row per record',
+          lang: 'sql',
+          code: `CREATE TABLE clearing_records (
+  file_id          text NOT NULL REFERENCES clearing_files,
+  record_no        integer NOT NULL,   -- 118442
+  settlement_date  date NOT NULL,
+  type             text NOT NULL,      -- 'purchase', 'refund'
+  auth_code        text,               -- 'K7Q2M9'; NULL offline
+  card_token       text NOT NULL,      -- from the vault
+  merchant_id      text NOT NULL,      -- 'M-IE-30417'
+  txn_amount_minor bigint NOT NULL,    -- 4200
+  txn_currency     char(3) NOT NULL,   -- 'EUR'
+  billing_pence    bigint NOT NULL,    -- 3655
+  status           text NOT NULL DEFAULT 'new'
+    CHECK (status IN ('new', 'posted', 'unmatched')),
+  hold_id          text,               -- 'hold_5521907'
+  reason           text,               -- why unmatched
+  PRIMARY KEY (file_id, record_no)
+);
+CREATE INDEX records_unmatched ON clearing_records
+  (settlement_date) WHERE status = 'unmatched';`,
+          note: 'unmatched means posted with no hold and waiting for a person. The card number in the file is swapped for its token at the vault as each record is parsed.',
+        },
+      ],
+      queries: [
+        {
+          title: 'A file arrives, perhaps twice',
+          lang: 'sql',
+          code: `INSERT INTO clearing_files
+  (file_id, settlement_date, record_count)
+VALUES ('clr-2026-11-13-02', '2026-11-13', 241806)
+ON CONFLICT (file_id) DO NOTHING
+RETURNING file_id;
+-- No row: seen before. Carry on from records not yet posted.`,
+          note: 'Four to six files a day, 200,000 to 300,000 records each.',
+        },
+        {
+          title: 'Check the file against its header',
+          lang: 'sql',
+          code: `SELECT f.record_count, COUNT(r.record_no) AS parsed
+  FROM clearing_files f
+  LEFT JOIN clearing_records r USING (file_id)
+ WHERE f.file_id = 'clr-2026-11-13-02'
+ GROUP BY f.record_count;
+-- 241806 and 241806, or the file is set aside and run again.`,
+          note: 'Once per file, after parsing and before any posting.',
+        },
+        {
+          title: 'Next records to post',
+          lang: 'sql',
+          code: `SELECT record_no, auth_code, card_token, merchant_id,
+       txn_amount_minor, txn_currency, billing_pence
+  FROM clearing_records
+ WHERE file_id = 'clr-2026-11-13-02' AND status = 'new'
+ ORDER BY record_no LIMIT 500;`,
+          note: 'Each is matched to its hold and posted on the "post, release" connection, then marked below. A rerun picks up where it stopped.',
+        },
+        {
+          title: 'Mark a record posted',
+          lang: 'sql',
+          code: `UPDATE clearing_records
+   SET status = 'posted', hold_id = 'hold_5521907'
+ WHERE file_id = 'clr-2026-11-13-02' AND record_no = 118442;`,
+          note: 'After the ledger commits. If this is lost in a crash, the rerun meets the ledger\'s UNIQUE (file_id, record_no) and posts nothing twice.',
+        },
+      ],
       fails: 'A file processed twice must post nothing twice: every record is keyed by file and record number. A bad file is set aside and run again. Unmatched records go to a queue for people, and holds that are never cleared lapse when their window ends.',
       alternatives: [
         {
@@ -806,6 +1236,85 @@ export const cardProcessing: Design = {
         {
           text: 'Monzo compares ledger and settlement account daily; each break alerts an engineer, who must record evidence to close it.',
           from: 'Not a sum. Taken from a source cited on the page: Monzo\'s 2022 blog, Processing payments safely at scale. Quoted as one bank\'s practice, not a rule.',
+        },
+      ],
+      tables: [
+        {
+          title: 'statement_lines: what the bank says moved',
+          lang: 'sql',
+          code: `CREATE TABLE statement_lines (
+  sequence    integer PRIMARY KEY,  -- 318; 317 came before
+  line_date   date NOT NULL,        -- '2026-11-13'
+  debit_pence bigint NOT NULL,      -- 2983893474
+  reference   text NOT NULL         -- 'Mastercard settlement ...'
+);`,
+          note: 'Loaded from the settlement bank\'s daily statement. Simplified to one line per statement.',
+        },
+        {
+          title: 'recon_days and breaks',
+          lang: 'sql',
+          code: `CREATE TABLE recon_days (
+  day           date NOT NULL,
+  currency      char(3) NOT NULL,
+  ledger_pence  bigint NOT NULL,      -- 2983892974
+  files_pence   bigint NOT NULL,      -- 2983892974
+  settled_pence bigint NOT NULL,      -- 2983893474
+  PRIMARY KEY (day, currency)
+);
+CREATE TABLE breaks (
+  break_id     bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  day          date NOT NULL,
+  currency     char(3) NOT NULL,
+  between_what text NOT NULL,  -- 'files v settlement account'
+  amount_pence bigint NOT NULL,       -- 500
+  owner        text,
+  evidence     text,
+  closed_at    timestamptz,
+  CHECK (closed_at IS NULL OR evidence IS NOT NULL),
+  FOREIGN KEY (day, currency) REFERENCES recon_days
+);`,
+          note: 'The CHECK means a break cannot be closed without evidence.',
+        },
+      ],
+      queries: [
+        {
+          title: 'A gap in the statement sequence',
+          lang: 'sql',
+          code: `SELECT s.sequence + 1 AS missing
+  FROM statement_lines s
+ WHERE NOT EXISTS (SELECT 1 FROM statement_lines n
+                    WHERE n.sequence = s.sequence + 1)
+   AND s.sequence < (SELECT max(sequence)
+                       FROM statement_lines);`,
+          note: 'Each day, after loading. Any row is a missing statement.',
+        },
+        {
+          title: 'Record the day and open a break',
+          lang: 'sql',
+          code: `INSERT INTO recon_days (day, currency, ledger_pence,
+  files_pence, settled_pence)
+VALUES ('2026-11-13', 'GBP', 2983892974, 2983892974,
+        2983893474);
+INSERT INTO breaks (day, currency, between_what, amount_pence)
+VALUES ('2026-11-13', 'GBP', 'files v settlement account', 500);`,
+          note: 'The page\'s drill: £5 too much settled. The three totals come from the ledger replica, clearing\'s tables and the statement.',
+        },
+        {
+          title: 'Alert: not reconciled by the cut-off',
+          lang: 'sql',
+          code: `SELECT NOT EXISTS (SELECT 1 FROM recon_days
+                    WHERE day = '2026-11-13'
+                      AND currency = 'GBP') AS alert;`,
+          note: 'Run at a fixed hour each working day, so a stopped job is noticed.',
+        },
+        {
+          title: 'Close a break, with evidence',
+          lang: 'sql',
+          code: `UPDATE breaks
+   SET evidence = 'bank fee taken with the debit; ref 0318',
+       closed_at = now()
+ WHERE break_id = 1 AND closed_at IS NULL;`,
+          note: 'Illustrative evidence. Without it the CHECK rejects the update.',
         },
       ],
       fails: 'If it stops running nothing fails at once, and errors build up unseen. Alert when a day is not reconciled by a fixed hour.',
@@ -936,6 +1445,48 @@ export const cardProcessing: Design = {
           from: 'Four is an assumption: authorised and cleared on every purchase, plus reversals, advices, refunds and disputes on some, rounded up. 1.2 million purchases a day ("Numbers to have ready") × 4 = 4.8 million, about 5 million.',
         },
       ],
+      tables: [
+        {
+          title: 'Topic card-events',
+          lang: 'text',
+          code: `topic       card-events
+key         card_token, e.g. tok_8f3a91e2
+value       one event as JSON (see the outbox connection)
+partitions  12 (assumption): under 60 events a second needs
+            few; more lets more consumers in a group share it
+retention   7 days, Kafka's default (assumption): the window
+            in which a consumer can replay after a bug
+source      the ledger's outbox table is the record; the log
+            is the copy that readers read`,
+          note: 'About 5 million events a day. Order holds per card, because one key always goes to one partition.',
+        },
+      ],
+      queries: [
+        {
+          title: 'Lag per consumer group',
+          lang: 'text',
+          code: `kafka-consumer-groups.sh --bootstrap-server kafka:9092 \\
+  --describe --group notifications`,
+          note: 'What to alert on: a group that falls behind sends late notifications.',
+        },
+        {
+          title: 'Replay a group from a time',
+          lang: 'text',
+          code: `# Stop the group's consumers first.
+kafka-consumer-groups.sh --bootstrap-server kafka:9092 \\
+  --group rewards --topic card-events --reset-offsets \\
+  --to-datetime 2026-11-12T00:00:00.000 --execute`,
+          note: 'After fixing a bug in rewards. Only works inside the retention window.',
+        },
+        {
+          title: 'Read the topic by hand',
+          lang: 'text',
+          code: `kafka-console-consumer.sh --bootstrap-server kafka:9092 \\
+  --topic card-events --from-beginning \\
+  --property print.key=true`,
+          note: 'For debugging. With no --group it joins a throwaway group, so no real group\'s offset moves.',
+        },
+      ],
       fails: 'If the log is down, events wait in the outbox and the authorisation path carries on. Consumers drop repeats by event id.',
       alternatives: [
         {
@@ -1016,6 +1567,35 @@ export const cardProcessing: Design = {
         {
           text: 'Monzo (then Mondo) showed a notification in under 3 seconds in 2015.',
           from: 'Not a sum. Taken from a source cited on the page: Monzo\'s 2015 blog, 3 Second Sandwich. An example of what is possible, not a target this page sets.',
+        },
+      ],
+      tables: [
+        {
+          title: 'seen_events, in each consumer\'s database',
+          lang: 'sql',
+          code: `CREATE TABLE seen_events (
+  event_id text PRIMARY KEY,         -- 'evt_01JC9W3K2T'
+  seen_at  timestamptz NOT NULL DEFAULT now()
+);`,
+          note: 'Each consumer also keeps its own data (rewards balances, notification history); not shown.',
+        },
+      ],
+      queries: [
+        {
+          title: 'Drop a repeat',
+          lang: 'sql',
+          code: `INSERT INTO seen_events (event_id)
+VALUES ('evt_01JC9W3K2T')
+ON CONFLICT (event_id) DO NOTHING;
+-- 0 rows: a repeat. Skip it and commit the offset.`,
+          note: 'In the same transaction as the consumer\'s own work, for every event: under 60 a second on average.',
+        },
+        {
+          title: 'Trim old ids',
+          lang: 'sql',
+          code: `DELETE FROM seen_events
+ WHERE seen_at < now() - interval '8 days';`,
+          note: 'Kept a day longer than the log\'s 7-day retention (assumed). A replay meant to redo work must first delete the ids it covers, or each event is skipped as a repeat.',
         },
       ],
       fails: 'A consumer that falls behind sends late notifications. It never touches money.',
