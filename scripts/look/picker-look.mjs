@@ -1,0 +1,31 @@
+import { createServer } from 'vite';
+import puppeteer from 'puppeteer-core';
+const server = await createServer({ server: { port: 0, host: '127.0.0.1', hmr: false, watch: null }, logLevel: 'error' });
+await server.listen();
+const base = server.resolvedUrls.local[0];
+const browser = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox', '--disable-gpu'] });
+const errors = [];
+for (const [w, h] of [[1440, 900], [390, 844]]) {
+  const page = await browser.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.setViewport({ width: w, height: h, deviceScaleFactor: 1 });
+  await page.goto(`${base}#/d/ledger`, { waitUntil: 'networkidle0' });
+  await new Promise((x) => setTimeout(x, 1200));
+  await page.screenshot({ path: `.shots/picker-${w}.png` });
+  const st = () => page.evaluate(() => ({ hash: location.hash, current: document.querySelector('.hld-stories a[aria-current]')?.textContent, counter: document.querySelector('.hld-transport')?.textContent?.match(/\d+ (?:of|\/) ?\d+|Step \d+ of \d+|\d+\/\d+/)?.[0], title: document.querySelector('.hld-readout h2, .hld-readout strong, .hld-readout')?.textContent?.slice(0, 50) }));
+  console.log(w, 'main', JSON.stringify(await st()));
+  await page.evaluate(() => [...document.querySelectorAll('.hld-stories a')].find((a) => a.textContent.includes('Credit')).click());
+  await new Promise((x) => setTimeout(x, 1500));
+  console.log(w, 'after picking credit', JSON.stringify(await st()));
+  await page.keyboard.press('ArrowRight'); await new Promise((x) => setTimeout(x, 1500));
+  console.log(w, 'next', JSON.stringify(await st()));
+  await page.reload({ waitUntil: 'networkidle0' }); await new Promise((x) => setTimeout(x, 1500));
+  console.log(w, 'reloaded', JSON.stringify(await st()));
+  await page.goto(`${base}#/d/ledger/s/nope`, { waitUntil: 'networkidle0' }); await new Promise((x) => setTimeout(x, 800));
+  console.log(w, 'bad story', JSON.stringify(await page.evaluate(() => ({ hash: location.hash, note: document.querySelector('.hld-notfound')?.textContent }))));
+  await page.goto(`${base}#/d/web-crawler`, { waitUntil: 'networkidle0' }); await new Promise((x) => setTimeout(x, 800));
+  console.log(w, 'crawler has picker?', await page.evaluate(() => !!document.querySelector('.hld-stories')));
+  await page.close();
+}
+console.log('errors', errors.length, errors.slice(0, 3));
+await browser.close(); await server.close();

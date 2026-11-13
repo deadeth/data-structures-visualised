@@ -1,0 +1,29 @@
+# Addendum: the owner sent a third specification one minute after you started
+
+/tmp/alts/ledger3-owner-spec.txt replaces /tmp/alts/ledger2-owner-spec.txt. Read it in full. It is the same design plus credit: everything in the brief (/tmp/alts/ledger2-spec.md) still holds except as changed here. Use /tmp/alts/ledger3-schema.sql in place of ledger2-schema.sql (same triggers; `accounts` changed) and see /tmp/alts/ledger3-test.mjs.
+
+## What is new
+- `accounts.credit_limit BIGINT NOT NULL DEFAULT 0 CHECK (credit_limit >= 0)`. The overdraft rule is now `CONSTRAINT valid_available_funds CHECK (allow_negative OR (posted_balance - held_balance) >= -credit_limit)` (the name `valid_available_balance` is gone). Available funds or credit is always `posted_balance - held_balance + credit_limit`.
+- One schema serves debit wallets (credit_limit 0, floor 0), arranged overdrafts (a wallet with a limit) and credit cards (`account_type = 'CREDIT_CARD'`, credit_limit > 0, floor -credit_limit). Customer wallets and credit cards are unsharded (shard_id 0, allow_negative FALSE).
+- The title is "unified debit/credit". Show his three tables from the new file, character for character (the accounts comments changed too).
+- System accounts by rail and currency now include `MASTERCARD_DEBIT_CLEARING_GBP`, `MASTERCARD_CREDIT_CLEARING_GBP`, `INTEREST_INCOME_GBP` alongside `STRIPE_CLEARING_GBP`, `FX_POOL_GBP`, `FEE_REVENUE_GBP`.
+- The hold's funds test is `posted_balance - held_balance - quoted_amount_with_fx_buffer >= -credit_limit`.
+- Force-posts may exceed the hold or the credit limit.
+- Credit card lifecycle: repayments are a plain two-leg transfer (debit `USER_CURRENT_GBP`, i.e. the customer's GBP wallet, or `FASTER_PAYMENTS_IN_GBP`; credit the card account), restoring credit at once. A separate billing/statements service owns statement cut-offs, grace periods and the payment allocation waterfall (fees, then interest, then principal) and posts nightly accrued interest as pairs: debit the card account, credit sharded `INTEREST_INCOME_GBP`. The ledger knows none of that; it only posts what billing sends.
+- Phase 3 keeps PostgreSQL for user metadata, KYC, billing statements, search and reporting.
+
+## Verified on PostgreSQL 18 (ledger3-test.mjs)
+- A credit card account with posted 0 and limit 500000 accepts a hold of 64900 (available 435100); a hold of 435101 more inserts 0 rows; exactly 435100 inserts.
+- Capture posts card -64900, MASTERCARD_CREDIT_CLEARING_GBP +64900: posted -64900, available 435100.
+- Nightly interest 32: card -32, INTEREST_INCOME_GBP +32.
+- Repayment 30000 from the wallet: wallet -30000, card +30000; available credit rises at once. An overpayment leaves the card with a positive posted balance, which is fine.
+- A wallet with limit 0 still cannot go below zero. A plain debit past the credit limit is refused (23514).
+- A negative credit_limit is refused. credit_limit is not covered by the balance guard: it is set by the credit or account service with an ordinary UPDATE. Lowering a limit below what is already used is refused by the CHECK, so a limit cut on an over-used card needs a decision (coordinator's note: say this on the page; in practice lower it to the used amount, or leave it and block new holds through is_active or a card control outside the ledger).
+
+## Coordinator's decisions for the new parts
+1. Sign convention on a credit card account: same as everywhere. Spending is a debit (negative); a posted balance of -64932 means the customer owes £649.32. Repayments are credits.
+2. Force-post past funds or past the limit: the CHECK refuses the plain debit for both wallets and cards (allow_negative FALSE). Same answer as the brief: take what is available (down to the floor, -credit_limit) from the customer account and book the rest to `CUSTOMER_RECEIVABLE_GBP`, which collections then chases; say it is this design's choice and name the alternative (a dedicated over-limit allowance: a second, larger hard limit column) with its trade-off.
+3. Interest and fees are just entries; the ledger cannot tell principal from interest inside one card balance. The waterfall therefore lives in billing, which keeps its own per-statement breakdown and reconciles its totals to the card account's posted balance. Name the alternative (sub-accounts per customer for principal, interest and fees, which makes the ledger answer the question but triples rows and locks) and its trade-off.
+4. Canonical example D (credit card), use these values: Bright Bakery's GBP credit card account `5f0c2a9e-3d41-4b7e-8c12-000000081444`, CREDIT_CARD, credit_limit 500000, posted 0. A £649.00 purchase: hold `b61c9a3e-0f47-4d2a-8c55-000000000610` of 64900; capture transaction `7d1f0a52-6c3e-4f8b-9e21-000000900611` (card -64900, MASTERCARD_CREDIT_CLEARING_GBP shard 7 `d41e7c90-6a2b-4f17-8e05-000000000207` +64900). Nightly interest transaction `...900612`: card -32, INTEREST_INCOME_GBP shard 7 `c2e85b71-90aa-4d3f-a6e4-000000000207` +32 (the 32p is illustrative; do not derive an APR from it). Repayment transaction `...900613`: wallet -30000, card +30000; card posted -34932, available credit 465068.
+   Example B (the USD purchase on the debit card) now clears through `MASTERCARD_DEBIT_CLEARING_USD` (same id as before, renamed).
+5. The tour still follows the bank payment (example A). Credit is covered in the components' text, the flow examples (credit hold, capture, interest, repayment, available-credit read), decisions (one schema with credit_limit versus separate credit ledger; where the waterfall lives; over-limit handling), drills (force-post past the limit; limit cut below used; interest posted twice, which the idempotency key `interest:<account>:<date>` and the transaction id stop) and glossary (credit limit, available credit, statement, grace period, allocation waterfall, accrued interest).
