@@ -3055,3 +3055,47 @@ main:has(> .design) {
   /* --fade-end (design-page.ts) is the foot of the last whole line in view: the fade ends there, never across a line. */
   mask-image: linear-gradient(to bottom, #000 calc(var(--fade-end, 100%) - 48px), transparent var(--fade-end, 100%));
 }
+
+/* Which story the tour follows: a row of links above the diagram. */
+.hld-stories {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 0 12px;
+}
+
+.hld-stories-label {
+  font-weight: 700;
+}
+
+.hld-stories ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hld-stories a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1.5px solid var(--ink);
+  border-radius: 8px;
+  color: var(--ink);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.hld-stories a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.hld-stories a[aria-current] {
+  background: var(--ink);
+  color: #fff;
+}
