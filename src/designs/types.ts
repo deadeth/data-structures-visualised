@@ -74,6 +74,10 @@ export interface Component {
   say: string;
   /** Structure pages on this site that show the data structure inside this component. */
   see?: { id: string; label: string }[];
+  /** For a box that stores data: what it would hold, as CREATE TABLE statements, key layouts or object paths. Shown in its panel. */
+  tables?: Example[];
+  /** For a box that stores data: the few reads and writes that matter most, each as it would be run. */
+  queries?: Example[];
 }
 
 /** How two components talk. Each mode has its own line style and chip, explained in the legend. */
