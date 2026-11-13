@@ -327,6 +327,13 @@ export const CATALOG: CatalogEntry[] = [
     cheat: { lookup: 'O(log n)', insert: 'O(log n)', remove: 'O(log n)', ordered: 'Yes', pick: 'In-memory ordered maps with guaranteed lookups.' },
   },
   {
+    id: 'red-black-tree',
+    name: 'Red-black tree',
+    group: 'Foundations',
+    blurb: 'A binary search tree kept roughly balanced by colouring nodes red or black and fixing the colours after each change.',
+    cheat: { lookup: 'O(log n)', insert: 'O(log n), at most 2 rotations', remove: 'O(log n), at most 3 rotations', ordered: 'Yes', pick: 'In-memory ordered maps and sets with many updates.' },
+  },
+  {
     id: 'graph',
     name: 'Graph traversal',
     group: 'Foundations',

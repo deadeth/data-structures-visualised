@@ -1160,6 +1160,9 @@ svg.scene {
 .ink-red .cell { fill: #c1272d; }
 .ink-black .cell.tone-idle { stroke: #101b2d; }
 .ink-red .cell.tone-idle { stroke: #8f1a1f; }
+/* The colour word under an inked node sits on its child's edge; a halo keeps it readable. */
+.ink-black .cell-sub,
+.ink-red .cell-sub { paint-order: stroke; stroke: #fff; stroke-width: 4px; stroke-linejoin: round; }
 .ink-black .cell-text,
 .ink-red .cell-text { fill: #fff; }
 .ink-black .cell.tone-bad,
