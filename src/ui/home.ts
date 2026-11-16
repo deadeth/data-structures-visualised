@@ -5,6 +5,7 @@ import type { OpDef } from '../core/types';
 import { DESIGNS } from '../designs';
 import { CONCEPTS, WALKTHROUGHS } from '../reading';
 import { Stage } from './stage';
+import { courseCard } from './course-card';
 import { legend } from './structure-page';
 
 /** Home: a live demo, then the cheat sheet. */
@@ -81,6 +82,9 @@ export async function mountHome(host: HTMLElement): Promise<() => void> {
     }
     table.append(body);
   }
+  // The course, with the reader's progress: filled in once the course has loaded.
+  const course = courseCard();
+  page.append(course.el);
   // Reading pages, when any are written: concept pages first, then design walkthroughs.
   const reads = [
     ...CONCEPTS.map((c) => ({ kind: c.group, title: c.title, summary: c.summary, minutes: c.minutes, href: `#/c/${c.id}` })),
@@ -112,6 +116,7 @@ export async function mountHome(host: HTMLElement): Promise<() => void> {
   );
 
   return () => {
+    course.off();
     alive = false;
     stage?.destroy();
     page.remove();

@@ -5,9 +5,10 @@ import { MODES } from '../designs/types';
 import { slug } from './design-page';
 import { READING_FILES, plain } from '../reading';
 import type { Block, Reading } from '../reading/types';
+import { loadCourse } from '../course';
 
 interface Doc {
-  kind: 'Term' | 'Component' | 'Connection' | 'Tour step' | 'Decision' | 'Interview question' | 'Structure' | 'Reading' | 'Walkthrough' | 'Section';
+  kind: 'Term' | 'Component' | 'Connection' | 'Tour step' | 'Decision' | 'Interview question' | 'Structure' | 'Reading' | 'Walkthrough' | 'Section' | 'Course' | 'Course module';
   title: string;
   /** Other names that should find this entry. */
   also: string[];
@@ -114,6 +115,15 @@ function build(): Promise<Doc[]> {
       const name = plain(p.title);
       docs.push({ kind: r.kind === 'concept' ? 'Reading' : 'Walkthrough', title: name, also: p.sections.map((s) => plain(s.title)), text: [plain(p.summary), ...p.sections.flatMap((s) => s.blocks.map(blockText))].join(' '), href: base, where: r.kind === 'concept' ? `Reading: ${(p as Reading & { group?: string }).group ?? 'system design'}` : 'Reading: design walkthrough' });
       for (const s of p.sections) docs.push({ kind: 'Section', title: plain(s.title), also: [name], text: s.blocks.map(blockText).join(' '), href: `${base}/${encodeURIComponent(s.id)}`, where: `${name}: section`, from: name });
+    }
+    // The course and its modules, once the course is written. A module is found by its items' titles too.
+    const course = await loadCourse().catch(() => null);
+    if (course) {
+      const title = plain(course.title);
+      docs.push({ kind: 'Course', title, also: ['course', 'study plan'], text: [course.summary, ...course.howTo].map(plain).join(' '), href: '#/course', where: 'Course: overview and progress' });
+      course.modules.forEach((m, i) =>
+        docs.push({ kind: 'Course module', title: plain(m.title), also: m.items.map((it) => plain(it.title)), text: [m.why, ...m.items.map((it) => it.note), ...m.checkpoint].map(plain).join(' '), href: `#/course/${m.id}`, where: `Course: module ${i + 1}`, from: title }),
+      );
     }
     return docs;
   })();
@@ -320,14 +330,14 @@ export async function mountSearch(host: HTMLElement, query: string, returning = 
       .filter((x) => x.s > 0)
       .sort((a, b) => b.s - a.s || a.d.title.localeCompare(b.d.title))
       .slice(0, 40);
-    summary.textContent = hits.length ? `${hits.length === 40 ? 'The best 40 matches' : hits.length === 1 ? '1 match' : `${hits.length} matches`} across the glossary, the system design, the reading pages and the data structures.` : `Nothing matches "${q}". Check the spelling, or try a shorter word.`;
+    summary.textContent = hits.length ? `${hits.length === 40 ? 'The best 40 matches' : hits.length === 1 ? '1 match' : `${hits.length} matches`} across the glossary, the system design, the reading pages, the course and the data structures.` : `Nothing matches "${q}". Check the spelling, or try a shorter word.`;
     announce(summary.textContent);
     // The heading and the window's title echo the query as it was typed: the reader's words, not the site's spelling of them.
     document.title = `Search: ${q} | Data structures, visualised`;
     // Results are grouped by where they live, best match first within each group, and the groups in the order of their best match.
     // An entry whose title is exactly the search comes first, whatever kind it is: the SimHash page above MinHash and near-duplicates.
     const exact = (d: Doc) => fold(d.title) === words.join(' ');
-    const groupOf = (d: Doc) => (exact(d) ? 'Exact matches' : d.kind === 'Term' ? 'Glossary' : d.kind === 'Structure' ? 'Data structures' : d.kind === 'Reading' || d.kind === 'Walkthrough' || d.kind === 'Section' ? 'Reading' : 'System design');
+    const groupOf = (d: Doc) => (exact(d) ? 'Exact matches' : d.kind === 'Term' ? 'Glossary' : d.kind === 'Structure' ? 'Data structures' : d.kind === 'Reading' || d.kind === 'Walkthrough' || d.kind === 'Section' ? 'Reading' : d.kind === 'Course' || d.kind === 'Course module' ? 'Course' : 'System design');
     const groups = new Map<string, Doc[]>();
     if (hits.some((x) => exact(x.d))) groups.set('Exact matches', []);
     for (const { d } of hits) {

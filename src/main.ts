@@ -9,6 +9,7 @@ import { mountCompare } from './ui/compare';
 import { mountHome } from './ui/home';
 import { mountStructure } from './ui/structure-page';
 import './ui/reading.css';
+import './ui/course.css';
 import { CONCEPTS, CONCEPT_GROUPS } from './reading';
 import { LOCKED, lockedEntry } from './locked/manifest';
 import { isOpen, mountLock, onUnlock, unlockSaved } from './locked/unlock';
@@ -31,6 +32,11 @@ const navGroup = (label: string, items: HTMLElement[]) => {
   const id = `nav-${label.toLowerCase().replace(/[^a-z]+/g, '-')}`;
   return h('div.nav-group', null, h('p.nav-label', { id }, label), h('ul', { 'aria-labelledby': id }, items));
 };
+// The course has its own link above the menu; where the sidebar folds into a bar (design pages) it moves into the menu instead (course.css).
+const courseLink = h('a.side-course', { href: '#/course' }, h('span.side-course-name', null, 'Course'), h('span.side-course-sub', null, 'A study plan, with your progress'));
+const navCourse = navGroup('Course', [h('li', null, h('a', { href: '#/course' }, 'Study plan and progress'))]);
+navCourse.classList.add('nav-course');
+nav.append(navCourse);
 for (const group of GROUPS) {
   const items = CATALOG.filter((c) => c.group === group).map((c) =>
     h('li', null, isReady(c.id) ? link(`/s/${c.id}`, c.name, c.blurb) : h('span.soon', { title: 'Not built yet' }, c.name)),
@@ -169,6 +175,7 @@ app.append(
       'aside.sidebar', null,
       h('a.brand', { href: '#/' }, h('span.brand-mark', { 'aria-hidden': 'true' }), h('span', null, 'Data structures, visualised')),
       search,
+      courseLink,
       menu,
       h('p.side-foot', null, h('a', { href: REPO }, 'Source on GitHub')),
     ),
@@ -229,6 +236,11 @@ async function route(typing = false): Promise<void> {
     if (p === path || path.startsWith(`${p}/`)) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   }
+  const onCourse = path === '/course' || path.startsWith('/course/');
+  for (const a of [courseLink, navCourse.querySelector('a')!]) {
+    if (onCourse) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  }
   if (!wide.matches) menu.open = false;
   if (!typing) window.scrollTo(0, 0);
 
@@ -239,12 +251,20 @@ async function route(typing = false): Promise<void> {
   // The part id is matched loosely and lower-cased, so a mistyped or capitalised deep link reaches the design page's own "no such part" note.
   const dm = /^\/d\/([a-z0-9-]+)(?:\/([cfgtqxs])\/([^/]+)|\/(rehearse|crib))?$/.exec(path);
   const chosen = dm ? designEntry(dm[1]) : undefined;
+  // The course (`/course`), one module (`/course/<module>`), or a module at one item (`/course/<module>/<item>`).
+  const cm = /^\/course(?:\/([a-z0-9-]+)(?:\/([a-z0-9-]+))?)?$/.exec(path);
   if (path === '/') {
     document.title = 'Data structures, visualised';
     mount = mountHome(main);
   } else if (path === '/compare') {
     document.title = 'Head to head | Data structures, visualised';
     mount = mountCompare(main);
+  } else if (cm) {
+    document.title = 'Course | Data structures, visualised';
+    mount = import('./ui/course-page').then(async (cp) => {
+      document.title = `${await cp.courseTitle(cm[1])} | Data structures, visualised`;
+      return cp.mountCourse(main, cm[1], cm[2]);
+    });
   } else if (found) {
     document.title = 'Search | Data structures, visualised';
     const q = decodeURIComponent(found[1]);

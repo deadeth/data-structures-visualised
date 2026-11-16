@@ -1,0 +1,697 @@
+/*
+ * The course (#/course) and its link in the sidebar and on the home page.
+ * Green is "done" here, as it is "written or committed" elsewhere; everything else is ink and grey.
+ */
+
+/* ---- sidebar link: loaded with the shell, so it lives here and main.ts imports this file ---- */
+
+.side-course {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 9px 12px 10px;
+  margin-left: -10px;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  text-decoration: none;
+  line-height: 1.25;
+}
+
+.side-course-name {
+  font-weight: 750;
+  font-size: 1.02rem;
+}
+
+.side-course-sub {
+  font-size: 0.86rem;
+  color: var(--ink-2);
+}
+
+.side-course:hover {
+  background: #e9edf3;
+}
+
+.side-course[aria-current='page'] {
+  background: var(--ink);
+  color: #fff;
+}
+
+.side-course[aria-current='page'] .side-course-sub {
+  color: #dfe5ee;
+}
+
+/* Where the sidebar folds into a bar (design pages below 1300px), the link moves into the menu. */
+.nav-course {
+  display: none;
+}
+
+.fold-side .side-course {
+  display: none;
+}
+
+.fold-side .nav-course {
+  display: block;
+}
+
+/* ---- shared pieces ------------------------------------------------------------------- */
+
+.course {
+  max-width: 920px;
+}
+
+.course .page-head {
+  margin-bottom: 18px;
+}
+
+.course h2 {
+  font-size: 1.45rem;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  margin-bottom: 8px;
+}
+
+.cs-bar {
+  position: relative;
+  height: 12px;
+  border-radius: 6px;
+  background: #e2e7ee;
+  box-shadow: inset 0 0 0 1px var(--rule-strong);
+  overflow: hidden;
+}
+
+.cs-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--ink);
+  border-radius: 6px;
+}
+
+.cs-bar.full .cs-bar-fill {
+  background: var(--ok);
+}
+
+.cs-figs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 22px;
+  margin-bottom: 10px;
+  color: var(--ink-2);
+}
+
+.cs-figs strong {
+  color: var(--ink);
+  font-weight: 750;
+  font-family: var(--sans-data);
+}
+
+.cs-state {
+  display: inline-block;
+  padding: 1px 9px;
+  border-radius: 11px;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  font-size: 0.84rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.cs-state-done {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+  color: #075c40;
+}
+
+.cs-state-checkpoint {
+  border-color: var(--ink);
+}
+
+.cs-state-new {
+  color: var(--ink-2);
+}
+
+.cs-unsaved {
+  margin-top: 10px;
+  font-size: 0.92rem;
+  color: var(--ink-2);
+}
+
+.cs-hint {
+  color: var(--ink-2);
+  max-width: 68ch;
+  margin-bottom: 12px;
+}
+
+.course details > summary {
+  cursor: pointer;
+  font-weight: 650;
+  min-height: 32px;
+  display: list-item;
+}
+
+/* ---- overview -------------------------------------------------------------------------- */
+
+.cs-progress {
+  padding: 18px 20px 20px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin-bottom: 18px;
+}
+
+.cs-progress-h {
+  font-size: 1.1rem !important;
+  margin-bottom: 6px !important;
+}
+
+.cs-last {
+  margin-top: 8px;
+  font-size: 0.92rem;
+  color: var(--ink-2);
+}
+
+.cs-continue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 14px;
+}
+
+.cs-continue-btn {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  height: 44px;
+  padding: 0 20px;
+}
+
+.cs-continue-what {
+  font-weight: 600;
+}
+
+.cs-continue-where {
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+.cs-howto {
+  margin-bottom: 26px;
+  padding: 10px 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+.cs-howto-body {
+  padding: 6px 0 6px;
+  max-width: 68ch;
+}
+
+.cs-howto-body p + p {
+  margin-top: 10px;
+}
+
+.cs-mod-list {
+  display: grid;
+  gap: 10px;
+}
+
+.cs-mod {
+  padding: 14px 18px 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+.cs-mod[data-state='done'] {
+  border-color: var(--ok);
+}
+
+.cs-mod-num {
+  font-size: 0.84rem;
+  font-weight: 650;
+  color: var(--ink-3);
+}
+
+.cs-mod h3 {
+  font-size: 1.2rem;
+  line-height: 1.25;
+  margin: 1px 0 4px;
+}
+
+.cs-mod-why {
+  color: var(--ink-2);
+  max-width: 72ch;
+}
+
+.cs-mod-foot {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.cs-mod-foot .cs-bar {
+  height: 8px;
+}
+
+.cs-mod-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: 0.92rem;
+  color: var(--ink-2);
+}
+
+.cs-mod-meta {
+  font-family: var(--sans-data);
+}
+
+/* ---- tools ------------------------------------------------------------------------------- */
+
+.cs-tools {
+  margin-top: 40px;
+  padding-top: 22px;
+  border-top: 1px solid var(--rule);
+}
+
+.cs-tools > p {
+  color: var(--ink-2);
+  max-width: 68ch;
+}
+
+.cs-tools-row,
+.cs-confirm-row,
+.cs-import-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px !important;
+}
+
+.cs-confirm {
+  margin-top: 12px;
+  padding: 12px 16px;
+  border: 1.5px solid var(--bad);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--ink) !important;
+}
+
+.cs-confirm .cs-confirm-row {
+  margin-top: 10px !important;
+}
+
+.cs-import {
+  margin-top: 16px;
+}
+
+.cs-import-body {
+  display: grid;
+  gap: 6px;
+  padding: 8px 0 4px;
+  max-width: 560px;
+}
+
+.cs-import-body label {
+  font-weight: 600;
+}
+
+.cs-import-file {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.cs-import-file input {
+  max-width: 100%;
+}
+
+.cs-textarea {
+  width: 100%;
+  font: 0.86rem/1.4 var(--mono);
+  padding: 8px 10px;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.cs-textarea[aria-invalid='true'] {
+  border-color: var(--bad);
+}
+
+.cs-shown {
+  margin-top: 12px;
+  max-width: 560px;
+}
+
+.cs-tools-status {
+  margin-top: 12px;
+  min-height: 1.5em;
+  font-weight: 600;
+  color: var(--ink) !important;
+}
+
+/* ---- one module ---------------------------------------------------------------------------- */
+
+.cs-crumb {
+  margin-bottom: 10px;
+  font-size: 0.95rem;
+  color: var(--ink-2);
+}
+
+.cs-crumb a {
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.cs-progress .cs-mod-status {
+  margin-top: 10px;
+}
+
+.cs-items,
+.cs-checkpoint {
+  margin-top: 28px;
+}
+
+.cs-item-list,
+.cs-cp-list {
+  display: grid;
+  gap: 8px;
+}
+
+.cs-item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 0 6px;
+  padding: 10px 16px 12px 6px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  scroll-margin: 80px 0;
+}
+
+.cs-item.done {
+  border-color: var(--ok);
+}
+
+/* The item "Continue" went to: marked until the reader moves on. */
+.cs-item.cs-target {
+  box-shadow: 0 0 0 2px var(--ink);
+}
+
+.cs-check {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 2px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.cs-check input,
+.cs-cp-check input {
+  width: 22px;
+  height: 22px;
+  margin: 2px 0 0;
+  accent-color: var(--ok);
+  cursor: pointer;
+  flex: none;
+}
+
+.cs-item-head {
+  font-size: 1.08rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.cs-kind {
+  display: inline-block;
+  vertical-align: 0.12em;
+  padding: 0 7px;
+  margin-right: 4px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 5px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  background: var(--paper);
+}
+
+.cs-kind-practise {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.cs-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin-top: 2px;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+  font-family: var(--sans-data);
+}
+
+.cs-nopage {
+  font-family: var(--sans);
+  font-style: italic;
+}
+
+.cs-when {
+  color: #075c40;
+  font-weight: 650;
+}
+
+.cs-when:empty {
+  display: none;
+}
+
+.cs-note {
+  margin-top: 5px;
+  max-width: 70ch;
+}
+
+.cs-covers {
+  margin-top: 8px;
+}
+
+.cs-covers summary {
+  font-size: 0.95rem;
+}
+
+.cs-covers ul {
+  margin: 4px 0 2px;
+  padding-left: 1.2em;
+  list-style: disc;
+}
+
+.cs-covers li + li {
+  margin-top: 3px;
+}
+
+.cs-cp {
+  padding: 12px 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+.cs-cp-list {
+  counter-reset: cp;
+}
+
+.cs-cp-q {
+  font-weight: 600;
+  max-width: 72ch;
+}
+
+.cs-cp-q::before {
+  counter-increment: cp;
+  content: counter(cp) '. ';
+  color: var(--ink-3);
+}
+
+.cs-cp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin-top: 2px;
+  cursor: pointer;
+  color: var(--ink-2);
+}
+
+.cs-cp-check input {
+  margin: 0;
+}
+
+.cs-confidence {
+  margin: 22px 0 0;
+  padding: 12px 16px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.cs-confidence legend {
+  float: left;
+  width: 100%;
+  font-weight: 700;
+  padding: 0;
+}
+
+.cs-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cs-level {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.cs-level:has(input:checked) {
+  border-color: var(--ink);
+  background: #e9edf3;
+}
+
+.cs-level:has(input:focus-visible) {
+  outline: 3px solid var(--path);
+  outline-offset: 2px;
+}
+
+.cs-level input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--ink);
+}
+
+.cs-level input:focus-visible {
+  outline: none;
+}
+
+.cs-pager {
+  margin-top: 36px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.cs-pager a {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  text-decoration: none;
+  font-weight: 650;
+}
+
+.cs-pager a:hover {
+  border-color: var(--ink);
+}
+
+.cs-next {
+  text-align: right;
+}
+
+.cs-pager-dir {
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+/* ---- home page card ---------------------------------------------------------------------------- */
+
+.home-course {
+  margin: 30px 0 34px;
+  padding: 18px 20px 20px;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--surface);
+  max-width: 760px;
+}
+
+.home-course h2 {
+  font-size: 1.5rem;
+  line-height: 1.2;
+  margin-bottom: 4px;
+}
+
+.home-course > p {
+  color: var(--ink-2);
+  max-width: 64ch;
+}
+
+.home-course .cs-figs {
+  margin: 12px 0 8px;
+}
+
+.home-course .cs-continue {
+  margin-top: 14px;
+}
+
+@media (max-width: 599px) {
+  .cs-progress,
+  .home-course {
+    padding: 14px 14px 16px;
+  }
+
+  .cs-mod {
+    padding: 12px 14px 14px;
+  }
+
+  .cs-item {
+    grid-template-columns: 38px minmax(0, 1fr);
+    padding-right: 12px;
+  }
+
+  .cs-pager {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cs-next {
+    text-align: left;
+  }
+}
+
+/* The menu's first group is hidden unless the sidebar is folded: the next one keeps no gap above it. */
+.nav-course + .nav-group {
+  margin-top: 0;
+}
+
+.fold-side .nav-course + .nav-group {
+  margin-top: 18px;
+}
+
+/* On a phone the sidebar is a bar on top: the link lines up with the search box. */
+@media (max-width: 899px) {
+  .side-course {
+    margin-left: 0;
+    padding: 7px 12px 8px;
+  }
+}
