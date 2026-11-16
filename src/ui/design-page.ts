@@ -3,6 +3,7 @@ import { h, tableRoles } from '../core/dom';
 import type { Extras } from '../designs/extras/types';
 import { extrasParts } from './design-extras';
 import { MODES, type Component, type Design, type Example, type Flow } from '../designs/types';
+import { walkthrough } from '../reading';
 
 const NS = 'http://www.w3.org/2000/svg';
 const SPEEDS = [0.5, 1, 2] as const;
@@ -817,7 +818,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
         ),
       )
     : null;
-  const page = h('article.design', null, h('header.page-head', null, h('h1', null, design.name), h('p.lede', null, design.blurb), ex?.links), storyNav, notFound, stage, status, explainBox, detail, notes);
+  // A written walkthrough of this design, when one exists: linked beside the rehearsal and crib links, or on its own.
+  const readLink = walkthrough(design.id) ? h('a.dx-action', { href: `${base}/read` }, 'Read the walkthrough') : null;
+  if (readLink && ex?.links) ex.links.append(readLink);
+  const headLinks = ex?.links ?? (readLink ? h('p.dx-actions', null, readLink) : null);
+  const page = h('article.design', null, h('header.page-head', null, h('h1', null, design.name), h('p.lede', null, design.blurb), headLinks), storyNav, notFound, stage, status, explainBox, detail, notes);
   host.append(page);
 
   // ---- state ---------------------------------------------------------------------

@@ -3,9 +3,11 @@ import { CATALOG, isReady, loadStructure } from '../catalog';
 import { h } from '../core/dom';
 import { MODES } from '../designs/types';
 import { slug } from './design-page';
+import { READING_FILES, plain } from '../reading';
+import type { Block, Reading } from '../reading/types';
 
 interface Doc {
-  kind: 'Term' | 'Component' | 'Connection' | 'Tour step' | 'Decision' | 'Interview question' | 'Structure';
+  kind: 'Term' | 'Component' | 'Connection' | 'Tour step' | 'Decision' | 'Interview question' | 'Structure' | 'Reading' | 'Walkthrough' | 'Section';
   title: string;
   /** Other names that should find this entry. */
   also: string[];
@@ -18,6 +20,21 @@ interface Doc {
 }
 
 let index: Promise<Doc[]> | null = null;
+
+/** The words of a reading page's block, for search: its text, captions and labels, without markup. */
+function blockText(b: Block): string {
+  if ('p' in b) return plain(b.p);
+  if ('h' in b) return plain(b.h);
+  if ('list' in b) return b.list.map(plain).join(' ');
+  if ('callout' in b) return plain(`${b.title ?? ''} ${b.callout}`);
+  if ('table' in b) return plain([b.caption ?? '', ...b.table.head, ...b.table.rows.flat()].join(' '));
+  if ('code' in b) return b.title ?? '';
+  if ('diagram' in b) return plain([b.caption, ...b.diagram.nodes.map((n) => `${n.label} ${n.sub ?? ''}`), ...b.diagram.edges.map((e) => e.label ?? '')].join(' '));
+  if ('sequence' in b) return plain([b.caption, ...b.sequence.messages.map((m) => `${m.label} ${m.note ?? ''}`)].join(' '));
+  if ('design' in b) return plain(b.caption);
+  if ('see' in b) return b.see.map((s) => `${s.label} ${plain(s.why)}`).join(' ');
+  return '';
+}
 
 /** Everything on the site that can be looked up, built the first time someone searches. */
 function build(): Promise<Doc[]> {
@@ -87,6 +104,13 @@ function build(): Promise<Doc[]> {
         });
       }),
     );
+    for (const r of READING_FILES) {
+      const p = r.page;
+      const base = r.kind === 'concept' ? `#/c/${p.id}` : `#/d/${r.file.replace(/^.*\//, '').replace(/\.ts$/, '')}/read`;
+      const name = plain(p.title);
+      docs.push({ kind: r.kind === 'concept' ? 'Reading' : 'Walkthrough', title: name, also: p.sections.map((s) => plain(s.title)), text: [plain(p.summary), ...p.sections.flatMap((s) => s.blocks.map(blockText))].join(' '), href: base, where: r.kind === 'concept' ? `Reading: ${(p as Reading & { group?: string }).group ?? 'system design'}` : 'Reading: design walkthrough' });
+      for (const s of p.sections) docs.push({ kind: 'Section', title: plain(s.title), also: [name], text: s.blocks.map(blockText).join(' '), href: `${base}/${encodeURIComponent(s.id)}`, where: `${name}: section`, from: name });
+    }
     return docs;
   })();
   return index;
@@ -292,14 +316,14 @@ export async function mountSearch(host: HTMLElement, query: string, returning = 
       .filter((x) => x.s > 0)
       .sort((a, b) => b.s - a.s || a.d.title.localeCompare(b.d.title))
       .slice(0, 40);
-    summary.textContent = hits.length ? `${hits.length === 40 ? 'The best 40 matches' : hits.length === 1 ? '1 match' : `${hits.length} matches`} across the glossary, the system design and the data structures.` : `Nothing matches "${q}". Check the spelling, or try a shorter word.`;
+    summary.textContent = hits.length ? `${hits.length === 40 ? 'The best 40 matches' : hits.length === 1 ? '1 match' : `${hits.length} matches`} across the glossary, the system design, the reading pages and the data structures.` : `Nothing matches "${q}". Check the spelling, or try a shorter word.`;
     announce(summary.textContent);
     // The heading and the window's title echo the query as it was typed: the reader's words, not the site's spelling of them.
     document.title = `Search: ${q} | Data structures, visualised`;
     // Results are grouped by where they live, best match first within each group, and the groups in the order of their best match.
     // An entry whose title is exactly the search comes first, whatever kind it is: the SimHash page above MinHash and near-duplicates.
     const exact = (d: Doc) => fold(d.title) === words.join(' ');
-    const groupOf = (d: Doc) => (exact(d) ? 'Exact matches' : d.kind === 'Term' ? 'Glossary' : d.kind === 'Structure' ? 'Data structures' : 'System design');
+    const groupOf = (d: Doc) => (exact(d) ? 'Exact matches' : d.kind === 'Term' ? 'Glossary' : d.kind === 'Structure' ? 'Data structures' : d.kind === 'Reading' || d.kind === 'Walkthrough' || d.kind === 'Section' ? 'Reading' : 'System design');
     const groups = new Map<string, Doc[]>();
     if (hits.some((x) => exact(x.d))) groups.set('Exact matches', []);
     for (const { d } of hits) {

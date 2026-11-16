@@ -1,0 +1,1016 @@
+/* Reading pages: prose with diagrams. Uses the site's tokens; each tone keeps its one meaning (ADR 0003). */
+
+.rd {
+  --rd-quiet: #75849a;
+  --rd-col: 46rem;
+}
+
+.rd-head {
+  max-width: var(--rd-col);
+  margin-bottom: 22px;
+}
+
+.rd-kicker {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink-3);
+  margin-bottom: 8px;
+}
+
+.rd-meta {
+  margin-top: 10px;
+  font-size: 0.92rem;
+  color: var(--ink-3);
+}
+
+.rd-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.rd-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 6px 14px;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  background: var(--surface);
+  font-weight: 650;
+  font-size: 0.95rem;
+  text-decoration: none;
+}
+
+.rd-action:hover {
+  background: #e4e9f0;
+}
+
+/* Contents beside the text on a wide screen, folded above it on anything narrower. */
+.rd-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+
+.rd-toc-box {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  max-width: var(--rd-col);
+}
+
+.rd-toc-box > summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 4px 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.rd-toc-count {
+  font-weight: 400;
+  color: var(--ink-3);
+  white-space: pre;
+}
+
+.rd-toc ol {
+  padding: 0 8px 10px;
+  counter-reset: rd-toc;
+}
+
+.rd-toc li {
+  counter-increment: rd-toc;
+}
+
+.rd-toc a {
+  display: flex;
+  gap: 8px;
+  min-height: 36px;
+  align-items: baseline;
+  padding: 7px 8px;
+  border-radius: 7px;
+  text-decoration: none;
+  font-size: 0.95rem;
+  line-height: 1.35;
+  color: var(--ink-2);
+}
+
+.rd-toc a::before {
+  content: counter(rd-toc);
+  flex: none;
+  min-width: 1.2em;
+  color: var(--ink-3);
+  font-family: var(--sans-data);
+  font-size: 0.85rem;
+}
+
+.rd-toc a:hover {
+  background: #e4e9f0;
+  color: var(--ink);
+}
+
+.rd-toc a[aria-current] {
+  color: var(--ink);
+  font-weight: 650;
+  background: #e4e9f0;
+}
+
+@media (min-width: 1360px) {
+  .rd:not(.wide-figs) .rd-layout {
+    grid-template-columns: minmax(0, var(--rd-col)) 15rem;
+    column-gap: 48px;
+    align-items: start;
+  }
+
+  .rd:not(.wide-figs) .rd-toc {
+    order: 2;
+    position: sticky;
+    top: 24px;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+  }
+
+  .rd:not(.wide-figs) .rd-toc-box {
+    border: 0;
+    background: none;
+  }
+
+  .rd:not(.wide-figs) .rd-toc-box > summary {
+    pointer-events: none;
+    list-style: none;
+    padding: 0 8px;
+    min-height: 32px;
+    font-size: 0.85rem;
+    color: var(--ink-3);
+  }
+
+  .rd:not(.wide-figs) .rd-toc-box > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .rd:not(.wide-figs) .rd-toc-count {
+    display: none;
+  }
+
+  .rd:not(.wide-figs) .rd-body {
+    order: 1;
+  }
+}
+
+@media (min-width: 1700px) {
+  .rd.wide-figs .rd-layout {
+    grid-template-columns: minmax(0, 64rem) 15rem;
+    column-gap: 48px;
+    align-items: start;
+  }
+
+  .rd.wide-figs .rd-toc {
+    order: 2;
+    position: sticky;
+    top: 24px;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+  }
+
+  .rd.wide-figs .rd-toc-box {
+    border: 0;
+    background: none;
+  }
+
+  .rd.wide-figs .rd-toc-box > summary {
+    pointer-events: none;
+    list-style: none;
+    padding: 0 8px;
+    min-height: 32px;
+    font-size: 0.85rem;
+    color: var(--ink-3);
+  }
+
+  .rd.wide-figs .rd-toc-box > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .rd.wide-figs .rd-toc-count {
+    display: none;
+  }
+
+  .rd.wide-figs .rd-body {
+    order: 1;
+  }
+}
+
+/* ---- the text ---------------------------------------------------------- */
+
+.rd-body {
+  min-width: 0;
+  max-width: var(--rd-col);
+}
+
+/* With design snapshots the column is wider, for them alone: the text keeps its reading width. */
+.rd.wide-figs .rd-body {
+  max-width: 64rem;
+}
+
+.rd.wide-figs .rd-section > :not(.rd-design) {
+  max-width: var(--rd-col);
+}
+
+.rd-section {
+  scroll-margin-top: 16px;
+  padding-top: 18px;
+}
+
+.rd-section + .rd-section {
+  margin-top: 22px;
+  border-top: 1px solid var(--rule);
+}
+
+.rd-section > h2 {
+  font-size: 1.55rem;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  margin: 6px 0 12px;
+  scroll-margin-top: 16px;
+}
+
+.rd-section > h2:focus {
+  outline: none;
+}
+
+.rd-section > h2:focus-visible {
+  outline: 3px solid var(--path);
+}
+
+.rd-body p,
+.rd-list {
+  margin: 0 0 14px;
+  line-height: 1.62;
+}
+
+.rd-h {
+  font-size: 1.12rem;
+  margin: 22px 0 8px;
+}
+
+.rd-body code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: #e8ecf2;
+  padding: 0.08em 0.32em;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+
+.rd-body a {
+  text-decoration-color: var(--ink-3);
+}
+
+.rd-list {
+  padding-left: 1.4em;
+  list-style: disc;
+}
+
+.rd-list.ordered {
+  list-style: decimal;
+}
+
+.rd-list li + li {
+  margin-top: 6px;
+}
+
+.rd-list li::marker {
+  color: var(--ink-3);
+}
+
+/* ---- callouts: four kinds told apart by their label and their edge, all calm ---- */
+
+.rd-callout {
+  margin: 18px 0;
+  padding: 12px 16px 2px;
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--ink);
+}
+
+.rd-callout-kind {
+  font-size: 0.78rem !important;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin-bottom: 4px !important;
+}
+
+.rd-callout-title {
+  font-weight: 700;
+  margin-bottom: 6px !important;
+}
+
+.rd-callout.pitfall {
+  border-left-color: var(--bad);
+  background: #fff8f8;
+}
+
+.rd-callout.pitfall .rd-callout-kind {
+  color: var(--bad);
+}
+
+.rd-callout.rule {
+  border-left-color: var(--rule-strong);
+  background: #f7f9fb;
+}
+
+.rd-callout.example {
+  border: 1px dashed var(--rule-strong);
+  border-left: 4px solid var(--ink-2);
+}
+
+/* ---- tables and code ---------------------------------------------------- */
+
+.rd-table-box {
+  margin: 18px 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.rd-table-wrap {
+  overflow-x: auto;
+}
+
+.rd-body .rd-table-cap {
+  margin: 0;
+  padding: 10px 12px 8px;
+  font-size: 0.93rem;
+  line-height: 1.45;
+  font-weight: 650;
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--rule);
+}
+
+.rd-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.93rem;
+  line-height: 1.45;
+}
+
+.rd-table caption {
+  caption-side: top;
+  text-align: left;
+  padding: 10px 12px 8px;
+  font-weight: 650;
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--rule);
+}
+
+.rd-table th,
+.rd-table td {
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+  border-top: 0;
+  border-bottom: 1px solid var(--rule);
+  min-width: 8em;
+  white-space: normal;
+}
+
+.rd-table thead th {
+  background: #f0f3f7;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.rd-table tbody th {
+  font-weight: 650;
+  min-width: 10em;
+}
+
+.rd-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.rd-code {
+  margin: 18px 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.rd-code figcaption {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--rule);
+  background: #f0f3f7;
+  font-size: 0.85rem;
+}
+
+.rd-code-lang {
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.rd-code-title {
+  color: var(--ink-2);
+}
+
+.rd-pre {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.rd-body .rd-pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+  overflow-wrap: normal;
+}
+
+/* ---- see it animated ---------------------------------------------------- */
+
+.rd-see {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13.5rem, 1fr));
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.rd-see-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  height: 100%;
+  padding: 11px 14px 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  text-decoration: none;
+}
+
+.rd-see-card:hover {
+  border-color: var(--ink);
+}
+
+.rd-see-kind {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.rd-see-label {
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 0.18em;
+}
+
+.rd-see-why {
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+/* ---- figures ----------------------------------------------------------- */
+
+.rd-figure {
+  margin: 20px 0;
+  padding: 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.rd-figure-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.rd-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-inline: auto;
+  font-family: var(--sans-data);
+}
+
+.rd-figure figcaption {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+  font-size: 0.93rem;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.rd-scroll-hint {
+  display: none;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.rd-figure:has(.rd-figure-scroll[role='region']) .rd-scroll-hint {
+  display: inline;
+}
+
+.rd-figure-more {
+  display: block;
+  margin-top: 4px;
+}
+
+.rd-figure-link {
+  font-weight: 650;
+  color: var(--ink);
+}
+
+@media (max-width: 599px) {
+  .rd-figure {
+    padding: 10px;
+    margin-inline: -4px;
+  }
+}
+
+/* Tones: --tc is the line and outline, --ts the soft fill. */
+.rd-svg .tone-plain {
+  --tc: var(--ink);
+  --ts: var(--surface);
+}
+
+.rd-svg .tone-follow {
+  --tc: var(--key);
+  --ts: var(--key-soft);
+}
+
+.rd-svg .tone-compare {
+  --tc: var(--compare);
+  --ts: var(--compare-soft);
+}
+
+.rd-svg .tone-visited {
+  --tc: var(--path);
+  --ts: var(--path-soft);
+}
+
+.rd-svg .tone-ok {
+  --tc: var(--ok);
+  --ts: var(--ok-soft);
+}
+
+.rd-svg .tone-bad {
+  --tc: var(--bad);
+  --ts: var(--bad-soft);
+}
+
+.rd-svg .tone-muted {
+  --tc: var(--rd-quiet);
+  --ts: #f6f8fb;
+}
+
+.rd-tip {
+  fill: var(--tc);
+}
+
+.rd-tip.tone-plain {
+  fill: var(--ink-2);
+}
+
+/* Boxes and arrows. */
+.rd-group {
+  fill: #f6f8fb;
+  stroke: var(--rd-quiet);
+  stroke-width: 1.4;
+  stroke-dasharray: 6 5;
+}
+
+.rd-group:not(.tone-plain) {
+  stroke: var(--tc);
+  fill: color-mix(in srgb, var(--ts) 45%, white);
+}
+
+.rd-group-label {
+  font-size: 13px;
+  font-weight: 700;
+  fill: var(--ink-2);
+}
+
+.rd-group-label:not(.tone-plain) {
+  fill: var(--tc);
+}
+
+.rd-group-label.tone-compare {
+  fill: #7a4d00;
+}
+
+.rd-edge {
+  stroke: var(--ink-2);
+  stroke-width: 1.8;
+}
+
+.rd-edge:not(.tone-plain) {
+  stroke: var(--tc);
+  stroke-width: 2.6;
+}
+
+.rd-edge.tone-muted {
+  stroke-width: 1.6;
+}
+
+.rd-edge.dashed,
+.rd-edge.tone-bad {
+  stroke-dasharray: 7 5;
+}
+
+.rd-shape {
+  fill: var(--ts);
+  stroke: var(--tc);
+  stroke-width: 1.6;
+}
+
+.rd-node:not(.tone-plain) .rd-shape {
+  stroke-width: 2.6;
+}
+
+.rd-node.tone-muted .rd-shape {
+  stroke-width: 1.6;
+}
+
+.rd-node.tone-bad .rd-shape {
+  stroke-dasharray: 7 5;
+}
+
+.rd-node.kind-client.tone-plain .rd-shape {
+  fill: #eef1f6;
+}
+
+.rd-cap {
+  fill: none;
+  stroke: var(--tc);
+  stroke-width: 1.6;
+}
+
+.rd-bar {
+  fill: var(--ink-2);
+}
+
+.rd-node:not(.tone-plain) .rd-bar {
+  fill: var(--tc);
+}
+
+.rd-label {
+  font-weight: 700;
+  fill: var(--ink);
+}
+
+.rd-node.tone-muted .rd-label,
+.rd-node.tone-muted .rd-sub {
+  fill: var(--ink-3);
+}
+
+.rd-sub {
+  font-size: 13px;
+  fill: var(--ink-2);
+}
+
+.rd-note {
+  font-weight: 650;
+  fill: var(--ink-2);
+}
+
+.rd-group-plate {
+  fill: #f6f8fb;
+}
+
+.rd-group-plate:not(.tone-plain) {
+  fill: color-mix(in srgb, var(--ts) 45%, white);
+}
+
+.rd-chip rect {
+  fill: var(--surface);
+  stroke: var(--rule-strong);
+  stroke-width: 1.1;
+}
+
+.rd-chip:not(.tone-plain) rect {
+  stroke: var(--tc);
+  stroke-width: 1.6;
+}
+
+.rd-chip text {
+  font-size: 12.5px;
+  font-weight: 600;
+  fill: var(--ink);
+}
+
+/* Sequence charts. */
+.rd-actor {
+  fill: #eef1f6;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+
+.rd-lifeline {
+  stroke: var(--rd-quiet);
+  stroke-width: 1.3;
+  stroke-dasharray: 4 5;
+}
+
+.rd-msg {
+  fill: none;
+  stroke: var(--ink-2);
+  stroke-width: 1.8;
+}
+
+.rd-msg:not(.tone-plain) {
+  stroke: var(--tc);
+  stroke-width: 2.6;
+}
+
+.rd-msg.dashed,
+.rd-msg.tone-bad {
+  stroke-dasharray: 7 5;
+}
+
+.rd-msg-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  fill: var(--ink);
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 5px;
+  stroke-linejoin: round;
+}
+
+.rd-note-leader {
+  stroke: var(--rule-strong);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.rd-seq-note {
+  fill: #fbf7e8;
+  stroke: #d8cfa8;
+  stroke-width: 1;
+}
+
+.rd-seq-note:not(.tone-plain) {
+  fill: var(--ts);
+  stroke: var(--tc);
+}
+
+.rd-note-text {
+  font-size: 13px;
+  fill: var(--ink);
+}
+
+/*
+ * Design snapshots: the design page's visual language, still. Lit parts take the tour's blue; the rest step back
+ * to the tour's quiet slate in solid colours (lines and outlines 3:1 or better, words 4.5:1 or better), never opacity.
+ */
+.rd-dframe {
+  fill: #f6f8fb;
+  stroke: var(--rd-quiet);
+  stroke-width: 1.5;
+  stroke-dasharray: 7 6;
+}
+
+.rd-dframe-label {
+  font-size: 16.5px;
+  font-weight: 600;
+  fill: var(--ink-2);
+}
+
+.rd-dframe-label.note {
+  font-weight: 400;
+  font-style: italic;
+}
+
+.rd-dtip.quiet {
+  fill: var(--rd-quiet);
+}
+
+.rd-dtip.lit {
+  fill: var(--path);
+}
+
+.rd-dflow {
+  fill: none;
+  stroke: var(--rd-quiet);
+  stroke-width: 1.6;
+}
+
+.rd-dflow.mode-async {
+  stroke-width: 2;
+  stroke-dasharray: 9 5;
+}
+
+.rd-dflow.mode-write {
+  stroke-dasharray: 16 3 2.5 3;
+}
+
+.rd-dflow.mode-external {
+  stroke-width: 2;
+  stroke-dasharray: 1 6;
+  stroke-linecap: round;
+}
+
+.rd-dflow.mode-local {
+  stroke-width: 1.5;
+}
+
+.rd-dflow.lit {
+  stroke: var(--path);
+  stroke-width: 3;
+}
+
+.rd-dflow.lit.mode-async,
+.rd-dflow.lit.mode-external {
+  stroke-width: 3.2;
+}
+
+.rd-dchip rect {
+  fill: var(--surface);
+  stroke: var(--path);
+  stroke-width: 2;
+}
+
+.rd-dchip.mode-external rect {
+  stroke-dasharray: 3 3;
+}
+
+.rd-dchip text {
+  font-size: 16.5px;
+  font-weight: 650;
+  fill: var(--ink);
+}
+
+.rd-dbox {
+  fill: var(--surface);
+  stroke: var(--rd-quiet);
+  stroke-width: 1.6;
+}
+
+.rd-dnode.kind-shared .rd-dbox,
+.rd-dnode.kind-input .rd-dbox {
+  fill: #f6f8fb;
+}
+
+.rd-dnode.kind-outside .rd-dbox {
+  stroke-dasharray: 6 5;
+}
+
+.rd-dmark {
+  fill: none;
+  stroke: var(--rd-quiet);
+  stroke-width: 1.6;
+}
+
+.rd-dbar {
+  fill: var(--rd-quiet);
+}
+
+.rd-dname {
+  font-size: 18px;
+  font-weight: 700;
+  fill: var(--ink-3);
+}
+
+.rd-dtech {
+  font-size: 16.5px;
+  fill: var(--ink-3);
+}
+
+.rd-dnode.lit .rd-dbox {
+  fill: var(--path-soft);
+  stroke: var(--path);
+  stroke-width: 2.6;
+}
+
+.rd-dnode.lit .rd-dmark {
+  stroke: var(--path);
+}
+
+.rd-dnode.lit .rd-dbar {
+  fill: var(--path);
+}
+
+.rd-dnode.lit .rd-dname {
+  fill: var(--ink);
+}
+
+.rd-dnode.lit .rd-dtech {
+  fill: var(--ink-2);
+}
+
+/* ---- foot ---------------------------------------------------------------- */
+
+.rd-unverified {
+  margin-top: 36px;
+  padding: 16px 18px 6px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: #f7f9fb;
+}
+
+.rd-unverified h2 {
+  font-size: 1.1rem;
+  margin-bottom: 6px;
+}
+
+.rd-unverified p {
+  font-size: 0.93rem;
+  color: var(--ink-2);
+}
+
+.rd-unverified ul {
+  list-style: disc;
+  padding-left: 1.3em;
+  margin-bottom: 12px;
+  font-size: 0.93rem;
+  line-height: 1.5;
+}
+
+.rd-unverified li + li {
+  margin-top: 4px;
+}
+
+.rd-foot {
+  margin-top: 24px;
+}
+
+.rd-missing {
+  color: var(--bad);
+}
+
+/* ---- the home page's list of reading pages ----------------------------------------- */
+
+.reading-section {
+  margin: 32px 0 36px;
+}
+
+.reading-section h2 {
+  font-size: 1.5rem;
+  margin-bottom: 6px;
+}
+
+.reading-section > p {
+  color: var(--ink-2);
+  max-width: 70ch;
+}
+
+.reading-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.reading-list a {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 100%;
+  padding: 9px 14px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  text-decoration: none;
+}
+
+.reading-list a:hover {
+  border-color: var(--ink);
+}
+
+.reading-list .reading-title {
+  font-weight: 700;
+  line-height: 1.3;
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 0.18em;
+}
+
+.reading-list .reading-kind {
+  font-size: 0.86rem;
+  color: var(--ink-3);
+}
+
+/* The sidebar's concept groups: one list, its groups named inside it. */
+.site-nav .nav-sub {
+  margin-top: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-3);
+}

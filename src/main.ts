@@ -8,6 +8,8 @@ import { h } from './core/dom';
 import { mountCompare } from './ui/compare';
 import { mountHome } from './ui/home';
 import { mountStructure } from './ui/structure-page';
+import './ui/reading.css';
+import { CONCEPTS, CONCEPT_GROUPS } from './reading';
 
 const REPO = 'https://github.com/deadeth/data-structures-visualised';
 
@@ -35,6 +37,17 @@ for (const group of GROUPS) {
 }
 nav.append(navGroup('Compare', [h('li', null, link('/compare', 'Head to head', 'Run one workload through every structure'))]));
 nav.append(navGroup('System designs', DESIGNS.map((d) => h('li', null, link(`/d/${d.id}`, d.name, `${d.hint}: an interactive design with a guided tour`)))));
+// Concept pages, to read rather than watch: one list, with each group named inside it.
+if (CONCEPTS.length) {
+  const groups = CONCEPT_GROUPS.filter((g) => CONCEPTS.some((c) => c.group === g));
+  const items = groups.flatMap((g) => {
+    const subId = `nav-concepts-${g.toLowerCase().replace(/[^a-z]+/g, '-')}`;
+    return [
+      h('li', null, h('p.nav-sub', { id: subId }, g), h('ul', { 'aria-labelledby': subId }, CONCEPTS.filter((c) => c.group === g).map((c) => h('li', null, link(`/c/${c.id}`, c.title, c.summary))))),
+    ];
+  });
+  nav.append(navGroup('System design patterns', items));
+}
 
 const menu = h('details.menu', null, h('summary', null, 'All structures'), nav);
 
@@ -160,6 +173,8 @@ let navToken = 0;
 /** Where each search results page was scrolled to, so Back returns to the same place in the list. */
 const searchScroll = new Map<string, number>();
 let shown = '';
+/** The reading page module once loaded, and the page it shows, so a change of section scrolls instead of drawing the page again. */
+let readingMod: typeof import('./ui/reading-page') | null = null;
 
 async function route(typing = false): Promise<void> {
   const token = ++navToken;
@@ -168,7 +183,17 @@ async function route(typing = false): Promise<void> {
   shown = location.hash;
   const path = location.hash.replace(/^#/, '') || '/';
   const found = /^\/search\/(.*)$/.exec(path);
-  const design0 = /^\/d\//.test(path);
+  // A reading page (`/c/<id>`, `/d/<design>/read`), opened at a section or not.
+  const rc = /^\/c\/([a-z0-9-]+)(?:\/([^/]+))?$/.exec(path);
+  const rd = /^\/d\/([a-z0-9-]+)\/read(?:\/([^/]+))?$/.exec(path);
+  const readKey = rc ? `c:${rc[1]}` : rd ? `d:${rd[1]}` : null;
+  const readSection = (rc?.[2] ?? rd?.[2]) ? decodeURIComponent((rc?.[2] ?? rd?.[2])!) : undefined;
+  // Another section of the page already on screen: scroll to it, and draw nothing again.
+  if (readKey && readingMod && !typing && teardown && readingMod.goToSection(readKey, readSection)) {
+    routing = false;
+    return;
+  }
+  const design0 = /^\/d\//.test(path) && !rd;
   if (design0 !== folds) {
     folds = design0;
     syncMenu();
@@ -203,6 +228,13 @@ async function route(typing = false): Promise<void> {
     const q = decodeURIComponent(found[1]);
     // Coming back to a results page (not typing into the box), focus returns to the result that was followed.
     mount = import('./ui/search').then((s) => s.mountSearch(main, q, !typing));
+  } else if (readKey) {
+    document.title = 'Reading | Data structures, visualised';
+    mount = import('./ui/reading-page').then((r) => {
+      readingMod = r;
+      document.title = `${r.readingTitle(readKey) ?? 'Page not found'} | Data structures, visualised`;
+      return r.mountReading(main, readKey, readSection);
+    });
   } else if (dm && chosen) {
     // Extras that fail to load leave the design page as it was, without them.
     const extras = chosen.extras

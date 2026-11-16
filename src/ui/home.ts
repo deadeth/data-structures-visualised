@@ -2,6 +2,8 @@ import { CATALOG, GROUPS, isReady, loadStructure } from '../catalog';
 import { costHtml, h, scrollRegion, tableRoles } from '../core/dom';
 import { Recorder } from '../core/recorder';
 import type { OpDef } from '../core/types';
+import { DESIGNS } from '../designs';
+import { CONCEPTS, WALKTHROUGHS } from '../reading';
 import { Stage } from './stage';
 import { legend } from './structure-page';
 
@@ -78,6 +80,27 @@ export async function mountHome(host: HTMLElement): Promise<() => void> {
       );
     }
     table.append(body);
+  }
+  // Reading pages, when any are written: concept pages first, then design walkthroughs.
+  const reads = [
+    ...CONCEPTS.map((c) => ({ kind: c.group, title: c.title, summary: c.summary, minutes: c.minutes, href: `#/c/${c.id}` })),
+    ...DESIGNS.filter((d) => WALKTHROUGHS.has(d.id)).map((d) => {
+      const w = WALKTHROUGHS.get(d.id)!;
+      return { kind: 'Walkthrough', title: w.title, summary: w.summary, minutes: w.minutes, href: `#/d/${d.id}/read` };
+    }),
+  ];
+  if (reads.length) {
+    page.append(
+      h(
+        'section.reading-section', { 'aria-labelledby': 'home-reading' },
+        h('h2', { id: 'home-reading' }, 'Read: system design patterns'),
+        h('p', null, 'Prose with diagrams, for a laptop or a phone. Each explains a pattern, what it costs and what breaks, and links to the animated pages for the mechanics.'),
+        h(
+          'ul.reading-list', null,
+          reads.map((r) => h('li', null, h('a', { href: r.href, title: r.summary }, h('span.reading-title', null, r.title), h('span.reading-kind', null, `${r.kind} · ${r.minutes} min`)))),
+        ),
+      ),
+    );
   }
   page.append(
     h(
