@@ -26,6 +26,6 @@ export interface Extras {
     /** What could sink it, and what you would do about each. */
     risks: { risk: string; answer: string }[];
   };
-  /** A timed run-through: what to do in each stage of a 45-minute interview. */
+  /** A timed run-through: what to do in each stage. The rehearsal clock runs for the sum of the stage minutes. */
   rehearsal: { stage: string; minutes: number; prompt: string; cover: string[] }[];
 }

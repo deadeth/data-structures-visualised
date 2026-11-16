@@ -32,10 +32,10 @@ const unnumbered = (name: string) => name.replace(/^\s*\d+[.):]\s+/, '');
 const points = (items: string[]) => h('ul', null, items.map((t) => h('li', null, t)));
 
 /** The ways into rehearsal mode and the crib, as the design page shows them. */
-function actions(id: string): HTMLElement {
+function actions(id: string, minutes: number): HTMLElement {
   return h(
     'p.dx-actions', null,
-    h('a.dx-action.primary', { href: `#/d/${id}/rehearse` }, 'Rehearse this in 45 minutes'),
+    h('a.dx-action.primary', { href: `#/d/${id}/rehearse` }, `Rehearse this in ${minutes} minutes`),
     h('a.dx-action', { href: `#/d/${id}/crib` }, 'One-page crib'),
   );
 }
@@ -70,7 +70,7 @@ export function extrasParts(design: Design, extras: Extras): { links: HTMLElemen
 
   const lead = h(
     'section.note.wide.hld-card.dx.dx-lead', { 'aria-labelledby': hid('lead') },
-    h('div.dx-head', null, h('h2', { id: hid('lead'), tabIndex: -1 }, 'Lead it'), actions(id)),
+    h('div.dx-head', null, h('h2', { id: hid('lead'), tabIndex: -1 }, 'Lead it'), actions(id, lengthOf(extras.rehearsal))),
     h('p.hld-lead', null, 'How to open the answer, then how you would deliver and run it: the engineering-leader view an interviewer is also judging.'),
     sub(
       'opening', 'The opening',
@@ -143,7 +143,7 @@ export function extrasParts(design: Design, extras: Extras): { links: HTMLElemen
     t.addEventListener('keydown', off);
   };
 
-  return { links: actions(id), sections: [lead, pushes], open };
+  return { links: actions(id, lengthOf(extras.rehearsal)), sections: [lead, pushes], open };
 }
 
 /** "7:05", or "-0:40" once past zero. */
@@ -191,17 +191,20 @@ function sectionFor(stage: { stage: string; prompt: string }): string {
   return 'pushes';
 }
 
-const TOTAL = 45 * 60;
+/** A rehearsal runs for as long as its stages add up to: 45 minutes for most designs, 60 where the real round is an hour. */
+const lengthOf = (stages: { minutes: number }[]) => stages.reduce((n, s) => n + s.minutes, 0) || 45;
 
 interface Saved {
   notes: string[];
   ticks: boolean[][];
 }
 
-/** Rehearsal mode: the question, a 45-minute clock, and the stages one at a time, ending in a summary. */
+/** Rehearsal mode: the question, a clock as long as the stages add up to, and the stages one at a time, ending in a summary. */
 export async function mountRehearse(host: HTMLElement, entry: DesignEntry, design: Design, extras?: Extras): Promise<() => void> {
   if (!extras || !extras.rehearsal.length) return notWritten(host, entry, 'Rehearsal');
   const stages = extras.rehearsal;
+  const MINUTES = lengthOf(stages);
+  const TOTAL = MINUTES * 60;
   const id = design.id;
   const base = `#/d/${id}`;
   const KEY = `dsv.rehearse.${id}`;
@@ -257,7 +260,7 @@ export async function mountRehearse(host: HTMLElement, entry: DesignEntry, desig
     window.setTimeout(() => (status.textContent = t), 60);
   };
   const totalClock = h('span.dx-clock-figure', null, clock(TOTAL));
-  const totalNote = h('span.dx-clock-note', null, 'of 45 minutes left');
+  const totalNote = h('span.dx-clock-note', null, `of ${MINUTES} minutes left`);
   const startBtn = h('button.btn.primary.dx-start', { type: 'button', onclick: () => (running ? pause() : start()) }, 'Start');
   const resetBtn = h('button.btn', { type: 'button', onclick: () => reset() }, 'Reset');
   const clockBox = h(
@@ -320,7 +323,7 @@ export async function mountRehearse(host: HTMLElement, entry: DesignEntry, desig
   function paintClocks(): void {
     const left = TOTAL - elapsed;
     totalClock.textContent = clock(Math.max(0, left));
-    totalNote.textContent = left < 0 ? `of 45 minutes left: ${clock(-left).replace('-', '')} over` : 'of 45 minutes left';
+    totalNote.textContent = left < 0 ? `of ${MINUTES} minutes left: ${clock(-left).replace('-', '')} over` : `of ${MINUTES} minutes left`;
     clockBox.classList.toggle('over', left < 0);
     if (stageClock) {
       const sl = stages[cur].minutes * 60 - spent[cur];
@@ -348,7 +351,7 @@ export async function mountRehearse(host: HTMLElement, entry: DesignEntry, desig
     }
     if (!overSaid && elapsed >= TOTAL) {
       overSaid = true;
-      say('The 45 minutes are up.');
+      say(`The ${MINUTES} minutes are up.`);
     }
     paintClocks();
   }
@@ -381,7 +384,7 @@ export async function mountRehearse(host: HTMLElement, entry: DesignEntry, desig
     startBtn.textContent = 'Start';
     paintClocks();
     syncStrip();
-    say('Clock reset to 45 minutes.');
+    say(`Clock reset to ${MINUTES} minutes.`);
   }
 
   function renderStage(focus: boolean): void {
@@ -469,7 +472,7 @@ export async function mountRehearse(host: HTMLElement, entry: DesignEntry, desig
       h(
         'section.dx-summary', { 'aria-labelledby': `${id}-summary-head` },
         head,
-        h('p.dx-summary-lead', null, `You covered ${totalTicked} of ${totalCover} points${used >= 1 ? ` in ${spoken(used)}${used > TOTAL ? `, ${spoken(used - TOTAL)} over the 45 minutes` : ''}` : ''}.`),
+        h('p.dx-summary-lead', null, `You covered ${totalTicked} of ${totalCover} points${used >= 1 ? ` in ${spoken(used)}${used > TOTAL ? `, ${spoken(used - TOTAL)} over the ${MINUTES} minutes` : ''}` : ''}.`),
         h(
           'ol.dx-summary-list', null,
           stages.map((s, i) => {
