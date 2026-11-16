@@ -45,6 +45,30 @@ export const DESIGNS: DesignEntry[] = [
     load: () => import('./card-processing').then((m) => m.cardProcessing),
     extras: () => import('./extras/card-processing').then((m) => m.extras),
   },
+  {
+    id: 'ai-phone-agent',
+    name: 'AI phone agent for a council helpline',
+    hint: 'Follow one call from the ring to a person, or one turn in milliseconds',
+    question: "How do you build a voice agent that answers a council's housing and social care line, replies within about a second, and gets a person on the line the moment a call is urgent?",
+    load: () => import('./ai-phone-agent').then((m) => m.aiPhoneAgent),
+    extras: () => import('./extras/ai-phone-agent').then((m) => m.extras),
+  },
+  {
+    id: 'ai-case-notes',
+    name: 'AI case notes pipeline',
+    hint: 'Follow one recorded visit to a signed case note, or a council\'s data being deleted',
+    question: 'A social worker records a 52-minute home visit on poor signal. How does it become a case note she has checked and signed, in minutes, without losing the audio, inventing a sentence or keeping anything past 120 days?',
+    load: () => import('./ai-case-notes').then((m) => m.aiCaseNotes),
+    extras: () => import('./extras/ai-case-notes').then((m) => m.extras),
+  },
+  {
+    id: 'ai-notes-governance',
+    name: 'Trustworthy AI notes across councils and countries',
+    hint: 'Follow one note from a home visit to deletion, or a prompt release to its rollback',
+    question: "How do you run AI note drafting for hundreds of councils in three countries so that data stays in its country, no council sees another's, every draft can be traced to what was said, and everything is gone on time?",
+    load: () => import('./ai-notes-governance').then((m) => m.aiNotesGovernance),
+    extras: () => import('./extras/ai-notes-governance').then((m) => m.extras),
+  },
 ];
 
 export const design = (id: string) => DESIGNS.find((d) => d.id === id);
