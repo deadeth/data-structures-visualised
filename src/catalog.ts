@@ -138,6 +138,13 @@ export const CATALOG: CatalogEntry[] = [
     cheat: { lookup: 'O(1) check', insert: 'O(1) lazy refill', remove: 'O(1) take', ordered: 'No', pick: 'Rate limits that allow a short burst and hold a steady average.' },
   },
   {
+    id: 'token-manager',
+    name: 'Token manager',
+    group: 'Caches and queues',
+    blurb: 'Tokens with a time to live: a map for renew, a queue in expiry order for count, and stale entries skipped.',
+    cheat: { lookup: 'O(1) renew', insert: 'O(1) generate', remove: 'O(1) amortised count', ordered: 'By expiry', pick: 'Sessions, tokens and leases that expire after their last use.' },
+  },
+  {
     id: 'crawl-frontier',
     name: 'Crawl frontier',
     group: 'Caches and queues',
