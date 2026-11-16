@@ -12,7 +12,7 @@ export interface LockedEntry {
   label: string;
 }
 
-export const LOCKED: LockedEntry[] = [{ ids: ['money-moved-dashboard'], blob: 'locked/a1.bin', label: 'Locked page' }];
+export const LOCKED: LockedEntry[] = [{ ids: ['money-moved-dashboard', 'cross-border-transfer'], blob: 'locked/a1.bin', label: 'Locked page' }];
 
 /** The entry that holds a design id, if that id is locked. */
 export const lockedEntry = (id: string): LockedEntry | undefined => LOCKED.find((e) => e.ids.includes(id));
