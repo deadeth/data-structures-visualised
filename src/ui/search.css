@@ -197,6 +197,7 @@
 @media (min-width: 900px) and (max-width: 1299px) {
   .fold-side .shell {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
   }
 
   /* One slim row: the brand, the search box with its switch beside it, the menu and the source link. */

@@ -10,6 +10,8 @@ import { mountHome } from './ui/home';
 import { mountStructure } from './ui/structure-page';
 import './ui/reading.css';
 import { CONCEPTS, CONCEPT_GROUPS } from './reading';
+import { LOCKED, lockedEntry } from './locked/manifest';
+import { isOpen, mountLock, onUnlock, unlockSaved } from './locked/unlock';
 
 const REPO = 'https://github.com/deadeth/data-structures-visualised';
 
@@ -36,7 +38,13 @@ for (const group of GROUPS) {
   nav.append(navGroup(group, items));
 }
 nav.append(navGroup('Compare', [h('li', null, link('/compare', 'Head to head', 'Run one workload through every structure'))]));
-nav.append(navGroup('System designs', DESIGNS.map((d) => h('li', null, link(`/d/${d.id}`, d.name, `${d.hint}: an interactive design with a guided tour`)))));
+// Designs, then any locked design not yet opened, under a neutral name. Drawn again when a locked page opens.
+const designItems = () => [
+  ...DESIGNS.map((d) => h('li', null, link(`/d/${d.id}`, d.name, `${d.hint}: an interactive design with a guided tour`))),
+  ...LOCKED.flatMap((e) => e.ids.filter((id) => !designEntry(id)).map((id) => h('li', null, link(`/d/${id}`, e.label)))),
+];
+const designNav = navGroup('System designs', designItems());
+nav.append(designNav);
 // Concept pages, to read rather than watch: one list, with each group named inside it.
 if (CONCEPTS.length) {
   const groups = CONCEPT_GROUPS.filter((g) => CONCEPTS.some((c) => c.group === g));
@@ -168,6 +176,16 @@ app.append(
   ),
 );
 
+// A locked page opened: name it in the sidebar, keeping the current page marked.
+onUnlock(() => {
+  const list = designNav.querySelector('ul')!;
+  list.replaceChildren(...designItems());
+  const path = location.hash.replace(/^#/, '') || '/';
+  for (const [p, a] of navLinks) if (list.contains(a) && (p === path || path.startsWith(`${p}/`))) a.setAttribute('aria-current', 'page');
+});
+/** Opens, without asking, any locked page whose password this tab has already given. */
+const saved = unlockSaved();
+
 let teardown: (() => void) | null = null;
 let navToken = 0;
 /** Where each search results page was scrolled to, so Back returns to the same place in the list. */
@@ -177,6 +195,10 @@ let shown = '';
 let readingMod: typeof import('./ui/reading-page') | null = null;
 
 async function route(typing = false): Promise<void> {
+  // A locked design's address: wait for the quiet unlock first, so an open tab never flashes the form.
+  const lockedId = /^#\/d\/([a-z0-9-]+)/.exec(location.hash)?.[1];
+  const lock = lockedId ? lockedEntry(lockedId) : undefined;
+  if (lock && !isOpen(lock)) await saved;
   const token = ++navToken;
   routing = true;
   if (/^#\/search\//.test(shown) && !typing) searchScroll.set(shown, window.scrollY);
@@ -228,6 +250,10 @@ async function route(typing = false): Promise<void> {
     const q = decodeURIComponent(found[1]);
     // Coming back to a results page (not typing into the box), focus returns to the result that was followed.
     mount = import('./ui/search').then((s) => s.mountSearch(main, q, !typing));
+  } else if (lock && !isOpen(lock)) {
+    // Any address under a locked design (its page, a step, its walkthrough, rehearsal or crib) asks for the password, then shows that address.
+    document.title = `${lock.label} | Data structures, visualised`;
+    mount = Promise.resolve(mountLock(main, lock, () => void route()));
   } else if (readKey) {
     document.title = 'Reading | Data structures, visualised';
     mount = import('./ui/reading-page').then((r) => {

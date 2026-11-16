@@ -40,6 +40,19 @@ export const WALKTHROUGHS: Map<string, Reading> = new Map(
   Object.entries(walkthroughFiles).flatMap(([path, m]) => (m.default ? [[baseName(path), m.default] as const] : [])),
 );
 
+/**
+ * Add a design walkthrough at run time, or replace one: how a locked page's walkthrough joins the site once opened.
+ * It is listed under a `locked/` file name so search and the validation test still read the design id from it.
+ */
+export function registerWalkthrough(designId: string, page: Reading): void {
+  WALKTHROUGHS.set(designId, page);
+  const file = `locked/${designId}.ts`;
+  const rf: ReadingFile = { file, kind: 'walkthrough', page };
+  const i = READING_FILES.findIndex((f) => f.file === file);
+  if (i >= 0) READING_FILES[i] = rf;
+  else READING_FILES.push(rf);
+}
+
 export const concept = (id: string): Concept | undefined => CONCEPTS.find((c) => c.id === id);
 export const walkthrough = (designId: string): Reading | undefined => WALKTHROUGHS.get(designId);
 

@@ -2,7 +2,7 @@
 
 Repo: /home/claude/data-structures-visualised. A static teaching site for system design interview preparation. Most pages animate a mechanism step by step. Reading pages are different: prose with diagrams, to be read on a laptop or a phone, that explain a pattern properly and link out to the animated pages for the mechanics.
 
-The reader is Matthew, a Senior Engineering Manager preparing for Senior Engineering Lead and Director-level system design interviews in UK fintech (a fintech, a supplier and others). He knows the basics. He wants the reasoning: what problem each option solves, what it costs, what breaks, and how to talk about it in an interview.
+The reader is Matthew, a Senior Engineering Manager preparing for Senior Engineering Lead and Director-level system design interviews at UK fintech and public-sector tech companies. He knows the basics. He wants the reasoning: what problem each option solves, what it costs, what breaks, and how to talk about it in an interview.
 
 ## The format
 

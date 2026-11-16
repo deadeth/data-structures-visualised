@@ -1479,8 +1479,10 @@ td.num {
 /* ---- narrow screens ---------------------------------------------------- */
 
 @media (max-width: 899px) {
+  /* The bar on top keeps its height; a short page (the lock form, a missing page) starts right under it. */
   .shell {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
   }
 
   .sidebar {
@@ -2286,4 +2288,46 @@ td.num {
   main {
     max-width: 2000px;
   }
+}
+
+/* ---- a locked page's password form ------------------------------------- */
+
+.lock-page {
+  max-width: 34rem;
+}
+
+.lock-form {
+  margin-top: 22px;
+}
+
+.lock-form label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 650;
+}
+
+.lock-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.lock-input {
+  flex: 1 1 14rem;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.lock-input:hover {
+  border-color: var(--ink);
+}
+
+.lock-error {
+  min-height: 1.5em;
+  margin-top: 10px;
 }

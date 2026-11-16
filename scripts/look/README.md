@@ -12,6 +12,7 @@ The ones worth knowing:
 - `alt-look.mjs`, `ex-look.mjs`, `extras-look.mjs`, `picker-look.mjs`, `collapse-look.mjs`: alternatives, examples, interview extras, the story picker, the collapse button.
 - `wide-look.mjs <routes...>`: any route at 2560, 1920 and 1440 wide.
 - `read-look.mjs <routes...>`: reading pages (`c/<id>`, `d/<design>/read`) full page at 1440x900 and 390x844, into `.shots/read-*.png`. Also prints page errors, sideways scroll, the smallest text in any figure and words in a figure that overlap. In development `c/fixture-reading` shows the renderer's fixture page.
+- `lock-look.mjs [route]`: with `LOCK_PASSWORD` set, a locked page before unlocking, after a wrong password and after the right one, at 1440x900 and 390x844, into `.shots/lock-*.png`. Also prints the sidebar's design names, whether a reload stays open, and whether search and home show the page in a fresh tab.
 - `live-code.mjs`: opens the live site, not a local build, and checks the listings show.
 - `dump-sql.mjs`: prints the SQL blocks of a design so they can be run.
 

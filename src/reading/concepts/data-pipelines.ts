@@ -449,7 +449,7 @@ const page: Concept = {
     'Kafka\'s default retention of seven days is from memory.',
     'The lambda and kappa descriptions follow Nathan Marz\'s and Jay Kreps\'s write-ups as I remember them; neither was re-read.',
     'All thresholds in the data quality table (2 minutes, 50%, 0.1%) are illustrative.',
-    'The money moved section summarises this site\'s own design page (domain events, tumbling minutes, 1,440-minute sum, deltas and offset in one transaction, ledger comparison). It is that design, not a fintech\'s real pipeline.',
+    'The money moved section summarises this site\'s own design page (domain events, tumbling minutes, 1,440-minute sum, deltas and offset in one transaction, ledger comparison). It is that design, not any company\'s real pipeline.',
   ],
 };
 

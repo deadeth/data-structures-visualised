@@ -45,14 +45,17 @@ export const DESIGNS: DesignEntry[] = [
     load: () => import('./card-processing').then((m) => m.cardProcessing),
     extras: () => import('./extras/card-processing').then((m) => m.extras),
   },
-  {
-    id: 'money-moved-dashboard',
-    name: 'Money moved dashboard (a fintech)',
-    hint: 'Follow one transfer into a public 24-hour total, or rate ticks into a report',
-    question: 'Design a public dashboard showing the total money transferred in the last 24 hours, across currencies.',
-    load: () => import('./money-moved-dashboard').then((m) => m.moneyMovedDashboard),
-    extras: () => import('./extras/money-moved-dashboard').then((m) => m.extras),
-  },
 ];
 
 export const design = (id: string) => DESIGNS.find((d) => d.id === id);
+
+/** Goes up by one each time a design joins after start-up (a locked page once opened), so the search index knows to rebuild. */
+export let designsVersion = 0;
+
+/** Add a design at run time, or replace one with the same id: how a locked page joins the site once opened. */
+export function registerDesign(entry: DesignEntry): void {
+  const i = DESIGNS.findIndex((d) => d.id === entry.id);
+  if (i >= 0) DESIGNS[i] = entry;
+  else DESIGNS.push(entry);
+  designsVersion++;
+}

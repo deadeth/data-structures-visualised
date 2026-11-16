@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { CATALOG, isReady } from '../catalog';
 import { DESIGNS } from '../designs';
+import { LOCKED_IDS } from '../locked/manifest';
 import type { Design } from '../designs/types';
 import { READING_FILES, type ReadingFile } from './index';
 import type { Block, Diagram, DiagramNode, Reading } from './types';
@@ -182,7 +183,8 @@ function checkHref(href: string, ctx: Ctx): string | null {
   m = /^d\/([^/]+)(?:\/(.*))?$/.exec(path);
   if (m) {
     const d = ctx.designs.get(m[1]);
-    if (!d) return `no design "${m[1]}"`;
+    // A locked design's content is not in the repo, so a link to it (or any part of it) cannot be checked: it leads to the password form.
+    if (!d) return LOCKED_IDS.includes(m[1]) ? null : `no design "${m[1]}"`;
     const rest = m[2];
     if (!rest) return null;
     const entry = DESIGNS.find((x) => x.id === m![1])!;

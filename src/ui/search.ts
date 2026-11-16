@@ -1,4 +1,4 @@
-import { DESIGNS } from '../designs';
+import { DESIGNS, designsVersion } from '../designs';
 import { CATALOG, isReady, loadStructure } from '../catalog';
 import { h } from '../core/dom';
 import { MODES } from '../designs/types';
@@ -20,6 +20,8 @@ interface Doc {
 }
 
 let index: Promise<Doc[]> | null = null;
+/** The design registry's version the index was built from: a page opened since then means a rebuild. */
+let indexVersion = -1;
 
 /** The words of a reading page's block, for search: its text, captions and labels, without markup. */
 function blockText(b: Block): string {
@@ -38,6 +40,8 @@ function blockText(b: Block): string {
 
 /** Everything on the site that can be looked up, built the first time someone searches. */
 function build(): Promise<Doc[]> {
+  if (indexVersion !== designsVersion) index = null;
+  indexVersion = designsVersion;
   index ??= (async () => {
     const docs: Doc[] = [];
     for (const entry of DESIGNS) {
