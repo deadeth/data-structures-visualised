@@ -634,7 +634,7 @@ export const extras: Extras = {
           'Ask one question back, redraw, then say what it costs.',
           'For news within an hour, poll feeds and sitemaps and give new links top priority.',
           'Polling 1,000 sites, 10 pages each, every 5 minutes is 33 a second, about 8 per cent of 400.',
-          "For opt-in, keep a verified list. Follow no link or redirect off it. Stop if it can't be read.",
+          "For opt-in, keep a verified list. Stop if it can't be read. Follow no link or redirect off it.",
           'With far fewer sites, one machine may be enough again.',
         ],
       },
@@ -644,7 +644,7 @@ export const extras: Extras = {
         title: "Say how you'd run it",
         lines: [
           'Promise zero politeness violations, counted from the fetch log. One breach wakes someone.',
-          'So does a slot unowned for 5 minutes, under half the target rate for 15, or write buffers filling.',
+          'So does a slot unowned for 5 minutes, fetching under half the target for 15, or buffers filling.',
           'One dead machine wakes nobody: the others take its sites.',
           'Ship one site, then many, then a crawl that keeps going. Add machines when measurements say so.',
           'Buy Kafka, databases and rendering. Build the scheduler.',
@@ -707,7 +707,7 @@ export const extras: Extras = {
         about: 'About many machines',
         when: '22 to 30',
         items: [
-          { q: 'A shared queue, or one owner per site?', a: 'A shared queue for a one-off crawl. One owner per site for a crawl that never stops, so pacing needs no lock.' },
+          { q: 'A shared queue, or one owner per site?', a: 'A shared queue and a shared per-site limiter for a one-off crawl. One owner per site for a crawl that never stops, so pacing needs no lock.' },
           { q: 'Consistent hashing or a slot map?', a: "A slot map. A ring moves few sites too, but a slot move is one explicit step with its own epoch, so the old owner's late writes fail." },
           { q: 'Why Cassandra or ScyllaDB?', a: 'Small upserts by key, and it grows by adding machines. Its 3 TB is 9 TB in three copies. The cost: one table per query, no joins.' },
           { q: "What if etcd can't be reached?", a: 'Machines pause. That is the price of one agreed answer on who owns each site.' },
@@ -718,9 +718,9 @@ export const extras: Extras = {
         when: '30 to 49',
         items: [
           { q: 'How would you build a shared rate limiter?', a: 'A Redis token bucket per IP address. A Lua script takes a token in one step. If Redis is down, use a slow fixed rate, never unlimited.' },
-          { q: 'Queues or distributed locks?', a: "A queue's lease covers one message. A lock enforces one fetch at a time per site. One owner per site needs none, only a lease on its slots." },
+          { q: 'Queues or distributed locks?', a: "A queue's lease covers one message. A lock means one fetch at a time per site. One owner per site needs no lock, only a lease on its slots." },
           { q: 'One URL crashes the worker every time?', a: "Mark it dead after three attempts. Parse in a sandbox so a crash can't take the fetcher down." },
-          { q: 'Why not a Bloom filter?', a: "It's 12 GB, not 80. But 1 per cent false positives silently skip up to 100 million new pages. Fingerprints collide about three times." },
+          { q: 'Why not a Bloom filter?', a: "It's 12 GB, not 80. But 1 per cent false positives silently skip up to 100 million new pages. Fingerprints wrongly skip about three." },
         ],
       },
       {

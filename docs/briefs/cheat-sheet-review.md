@@ -85,16 +85,22 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
 - With the clock running, below 1500px wide, the "Back to" link leaves the bar to make room; "Reset"
   brings it back.
 - While the clock runs, stretches other than the current one are dimmed in solid colours: titles
-  at about 7.6:1 on white, bullets at about 5.6:1. One reader asked for lighter and another for
-  darker; this is the middle and is settled.
+  at about 7.6:1 on white, bullets at about 5.6:1. Lighter loses legibility and darker loses the contrast with
+  the current stretch; this is the chosen middle.
 - Minutes and figures use the site's plain zero (no slash) so "30" cannot read as "3Ø".
 - On paper there are no rules between stretches: each rule costs height, and page 1 has none to give.
-- On a monitor 1700px wide or more, each button in the strip carries a word for its stretch beside
-  the minutes ("16 to 22 Sites"); narrower, the minutes alone, with the title as a tooltip.
+- Each button in the strip carries a word for its stretch: beside the minutes on a monitor 1700px
+  wide or more ("16 to 22 Sites"), under them from 1100px, and left out below that, where the strip
+  is too narrow to hold it.
+- With the clock running, "Its questions" shares the "Now" pill's colour because the two are the
+  buttons to reach for mid-interview; "Reset" is a quiet text button so it is not pressed by mistake.
+- On paper an answer is half a point smaller than its question (9.5pt against 10pt bold), so the
+  questions are what the eye finds.
+- "Fingerprints wrongly skip about three" states the notes' "about three collisions" as its
+  consequence: each collision is one new URL taken as seen.
 - Page 1 on paper is dense on purpose: the whole hour and the numbers on one side of one sheet.
   Looser spacing would push a stretch onto page 2.
-- Settled wording, changed back and forth by earlier readers and not to be reopened without a new
-  reason: "At 10 a second, if the site allows"; "finds its lease gone and stops" (the notes' own
+- Settled wording, not to be reopened without a new reason: "At 10 a second, if the site allows"; "finds its lease gone and stops" (the notes' own
   account of a woken machine); "The data stays right"; "One breach wakes someone. So does..." (to
   keep "page" for web pages); "It ends when the queue is empty" (naming the crawl costs a line).
 

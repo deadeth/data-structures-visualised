@@ -592,7 +592,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
   // The hour as a strip of its minutes, in the bar that stays in view: one press to any stretch, and with the clock
   // running the one the interview should be in is marked.
   const jumps = stretches.map((x) => {
-    const b = h(`button${x.from < 0 ? '.dx-sheet-jump-any' : ''}`, { type: 'button', 'aria-label': `${x.s.when}: ${x.s.title}`, title: x.s.title }, x.s.when, ...(x.s.short ? [h('span', null, ` ${x.s.short}`)] : []));
+    const b = h(`button${x.from < 0 ? '.dx-sheet-jump-any' : ''}`, { type: 'button', 'aria-label': `${x.s.when}: ${x.s.title}`, title: x.s.title }, h('b', null, x.s.when), ...(x.s.short ? [' ', h('span', null, x.s.short)] : []));
     b.addEventListener('click', () => x.li.scrollIntoView({ block: 'start' }));
     return b;
   });
@@ -620,7 +620,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
   // What the clock says to be doing, in the bar that stays in view; pressing it brings that stretch into view.
   const nowBtn = h('button.dx-sheet-now', { type: 'button', hidden: true });
   // The questions that belong to the stretch the clock is in.
-  const answersBtn = h('button.btn', { type: 'button', hidden: true }, 'Its questions');
+  const answersBtn = h('button.btn.dx-sheet-answers', { type: 'button', hidden: true }, 'Its questions');
   const startBtn = h('button.btn', { type: 'button' });
   const hint = h('span.dx-hint', null, 'Two A4 pages.');
   let current: (typeof stretches)[number] | undefined;
@@ -641,6 +641,8 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     sheet.classList.toggle('clocked', !!began);
     el.classList.toggle('clocked', !!began);
     startBtn.textContent = began ? 'Reset' : 'Start the clock';
+    // Once running, the way to stop it steps back: the buttons to press mid-interview are the ones that find a place.
+    startBtn.classList.toggle('quiet', !!began);
     elapsed.hidden = !began;
     // With the clock running the bar has more to hold: the hint makes way, so it stays one row.
     hint.hidden = !!began;
