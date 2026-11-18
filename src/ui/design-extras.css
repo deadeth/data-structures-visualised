@@ -891,6 +891,11 @@
   padding-top: 22px;
 }
 
+.dx-sheet-idea,
+.dx-sheet-late {
+  max-width: 92ch;
+}
+
 .dx-sheet-idea {
   text-wrap: pretty;
   margin-top: 4px;
@@ -906,7 +911,7 @@
 }
 
 .dx-sheet-sec h2 {
-  font-size: 1.2rem;
+  font-size: 1.45rem;
   font-weight: 780;
   margin-bottom: 8px;
   padding-bottom: 3px;
@@ -921,7 +926,7 @@
 }
 
 .dx-sheet-figs dt {
-  font: 760 1.35rem var(--sans);
+  font: 760 1.5rem var(--sans);
   line-height: 1.25;
 }
 
@@ -1018,12 +1023,12 @@
 .dx-sheet-jump button {
   flex: 1 1 0;
   min-width: 0;
-  height: 28px;
+  height: 32px;
   padding: 0 4px;
   border: 1px solid var(--rule-strong);
   border-radius: 6px;
   background: var(--surface);
-  font: 700 0.9rem var(--sans);
+  font: 700 0.95rem var(--sans);
   color: var(--ink);
   white-space: nowrap;
   cursor: pointer;
@@ -1689,7 +1694,7 @@
   /* Outlined, not filled: a printer set to leave backgrounds out would lose a dark tag. */
   html.crib-mode .dx-sheet-when span {
     padding: 0 4pt;
-    border: 1.2pt solid #000;
+    border: 1.5pt solid #000;
     border-radius: 3pt;
     background: none;
     color: #000;
@@ -1707,7 +1712,7 @@
   }
 
   html.crib-mode .dx-sheet-hour > li + li {
-    margin-top: 2pt;
+    margin-top: 4pt;
   }
 
   html.crib-mode .dx-sheet-hour ul li,
@@ -1737,7 +1742,12 @@
 
   html.crib-mode .dx-sheet-s-remember,
   html.crib-mode .dx-sheet-s-asked {
-    font-size: 10.2pt;
+    font-size: 10pt;
+  }
+
+  html.crib-mode .dx-sheet-idea,
+  html.crib-mode .dx-sheet-late {
+    max-width: none;
   }
 
   html.crib-mode .dx-sheet-s-asked {
@@ -1766,7 +1776,7 @@
   }
 
   html.crib-mode .dx-sheet-groups {
-    gap: 12pt;
+    gap: 14pt;
   }
 
   html.crib-mode .dx-sheet-groups h3 {
