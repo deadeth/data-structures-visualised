@@ -892,6 +892,7 @@
 }
 
 .dx-sheet-idea {
+  text-wrap: pretty;
   margin-top: 4px;
   padding: 2px 14px;
   border-left: 4px solid var(--ink);
@@ -916,11 +917,11 @@
 .dx-sheet-figs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px 28px;
+  gap: 2px 28px;
 }
 
 .dx-sheet-figs dt {
-  font: 760 1.16rem var(--sans);
+  font: 760 1.35rem var(--sans);
   line-height: 1.25;
 }
 
@@ -1036,6 +1037,12 @@
 
 .dx-sheet-jump .dx-sheet-jump-any {
   border-style: dashed;
+}
+
+/* A word for each stretch beside its minutes, where the strip is wide enough to hold it. */
+.dx-sheet-jump button span {
+  display: none;
+  font-weight: 500;
 }
 
 .dx-sheet-figs-phone {
@@ -1320,6 +1327,10 @@
 
   .dx-sheet-hour ul {
     max-width: 62ch;
+  }
+
+  .dx-sheet-jump button span {
+    display: inline;
   }
 
   .dx-sheet {
@@ -1692,7 +1703,11 @@
   }
 
   html.crib-mode .dx-sheet-hour ul {
-    gap: 1.5pt;
+    gap: 1.2pt;
+  }
+
+  html.crib-mode .dx-sheet-hour > li + li {
+    margin-top: 2pt;
   }
 
   html.crib-mode .dx-sheet-hour ul li,
@@ -1733,6 +1748,19 @@
     gap: 1.5pt;
   }
 
+  /* A typed bullet sits on the text's own line, so it cannot drift from it as a drawn dot can. */
+  html.crib-mode .dx-sheet .dx-sheet-keep li::before {
+    content: '•';
+    top: 0;
+    left: 1pt;
+    width: auto;
+    height: auto;
+    border-radius: 0;
+    background: none;
+    font-weight: 700;
+    line-height: inherit;
+  }
+
   html.crib-mode .dx-sheet-keep li {
     line-height: 1.32;
   }
@@ -1746,7 +1774,7 @@
     padding: 0 0 1pt;
     border-bottom: 0.75pt solid #000;
     background: none;
-    font-size: 11pt;
+    font-size: 12pt;
     font-weight: 800;
     color: #000;
   }
@@ -1760,7 +1788,8 @@
   }
 
   html.crib-mode .dx-sheet-asked dt {
-    font-weight: 680;
+    font-size: 10pt;
+    font-weight: 700;
   }
 
   html.crib-mode a {

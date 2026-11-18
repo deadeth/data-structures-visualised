@@ -554,6 +554,7 @@ export const extras: Extras = {
     hour: [
       {
         when: '0 to 5',
+        short: 'Ask',
         title: 'Ask before you draw',
         lines: [
           'Ask whether it is one site or the whole web, how many pages, and how fresh they must be.',
@@ -565,6 +566,7 @@ export const extras: Extras = {
       },
       {
         when: '5 to 8',
+        short: 'Sums',
         title: 'Do the sums out loud',
         lines: [
           'A million pages at 1 a second takes 11.6 days. At 10 a second, if the site allows, about 28 hours.',
@@ -574,6 +576,7 @@ export const extras: Extras = {
       },
       {
         when: '8 to 16',
+        short: 'Small',
         title: 'Draw the small design',
         lines: [
           'Draw six parts: a queue, workers, a parser, a seen set, a rate limiter and a store.',
@@ -586,6 +589,7 @@ export const extras: Extras = {
       },
       {
         when: '16 to 22',
+        short: 'Sites',
         title: 'Grow it to many sites',
         lines: [
           'Give each site a queue and the time of its next allowed fetch. Keep those times in a heap.',
@@ -596,6 +600,7 @@ export const extras: Extras = {
       },
       {
         when: '22 to 30',
+        short: 'Machines',
         title: 'Grow it to many machines',
         lines: [
           'First say what one machine carries: an assumed 50 pages a second, about 130 million a month.',
@@ -607,6 +612,7 @@ export const extras: Extras = {
       },
       {
         when: '30 to 49',
+        short: 'Deep dives',
         title: 'Go deeper where they ask',
         lines: [
           "If they don't steer, take a worker dying, a URL found twice, the rate limiter, then a dead machine.",
@@ -622,17 +628,19 @@ export const extras: Extras = {
       },
       {
         when: 'Any time',
+        short: 'Changes',
         title: 'When they change the brief',
         lines: [
           'Ask one question back, redraw, then say what it costs.',
           'For news within an hour, poll feeds and sitemaps and give new links top priority.',
           'Polling 1,000 sites, 10 pages each, every 5 minutes is 33 a second, about 8 per cent of 400.',
-          "For opt-in, keep a verified list. Drop links and redirects to other sites. Stop if it can't be read.",
+          "For opt-in, keep a verified list. Drop links and redirects off the list. Stop if it can't be read.",
           'With far fewer sites, one machine may be enough again.',
         ],
       },
       {
         when: '49 to 56',
+        short: 'Run it',
         title: "Say how you'd run it",
         lines: [
           'Promise zero politeness violations, counted from the fetch log. One breach wakes someone.',
@@ -646,6 +654,7 @@ export const extras: Extras = {
       },
       {
         when: '56 to 60',
+        short: 'Yours',
         title: 'Your questions',
         lines: [
           '“Where would you have taken this design differently?”',
@@ -675,7 +684,7 @@ export const extras: Extras = {
         about: 'About the small design',
         when: '8 to 16',
         items: [
-          { q: 'Why a queue and not recursion?', a: 'Recursion is depth-first: a long chain of links overflows the stack, and a crash loses its place. A queue on disk avoids both.' },
+          { q: 'Why a queue and not recursion?', a: 'Recursion is depth-first: a long chain overflows the stack, and a crash loses its place. A queue on disk avoids both and goes breadth-first.' },
           { q: 'Is Postgres enough?', a: 'Yes for a million pages: 10 a second is about 500 seen checks a second. It can be the queue too, until writes outgrow one machine.' },
           { q: 'How many workers?', a: 'Fetch rate times seconds per fetch: 10 a second at 1 second each is 10 workers. Add more while the rate rises. Stop if the site slows.' },
           { q: 'Threads or async?', a: 'Threads are simplest for 10 to 20 fetches at once. An event loop holds thousands of connections in one process, with parsing in others.' },
@@ -699,7 +708,7 @@ export const extras: Extras = {
         items: [
           { q: 'A shared queue, or one owner per site?', a: 'A shared queue for a one-off crawl. One owner per site for a crawl that never stops, so pacing needs no lock.' },
           { q: 'Consistent hashing or a slot map?', a: "A slot map. A ring also moves few sites, but each slot move is one explicit step with its own epoch, so the old owner's late writes fail." },
-          { q: 'Why Cassandra or ScyllaDB?', a: 'Small upserts by key, and it grows by adding machines: 3 TB, or 9 TB with three copies. The cost is one table per query and no joins.' },
+          { q: 'Why Cassandra or ScyllaDB?', a: 'Small upserts by key, and it grows by adding machines. It holds 3 TB, 9 TB in three copies. The cost: one table per query, no joins.' },
           { q: "What if etcd can't be reached?", a: 'Machines pause. That is the price of one agreed answer on who owns each site.' },
         ],
       },
@@ -710,7 +719,7 @@ export const extras: Extras = {
           { q: 'How would you build a shared rate limiter?', a: 'A Redis token bucket per IP address. A Lua script takes a token in one step. If Redis is down, use a slow fixed rate, never unlimited.' },
           { q: 'Queues or distributed locks?', a: 'A queue leases one message. A lock enforces one fetch at a time per site. One owner per site needs no such lock, only a lease on its slots.' },
           { q: 'One URL crashes the worker every time?', a: "Mark it dead after three attempts. Parse in a sandbox so a crash can't take the fetcher down." },
-          { q: 'Why not a Bloom filter?', a: 'It needs 12 GB, not 80. But 1 per cent false positives silently skip up to 100 million new pages. Fingerprints lose about three pages.' },
+          { q: 'Why not a Bloom filter?', a: "It's 12 GB, not 80. But 1 per cent false positives silently skip up to 100 million new pages. Fingerprints collide about three times." },
         ],
       },
       {

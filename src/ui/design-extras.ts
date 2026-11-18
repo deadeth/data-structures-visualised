@@ -592,7 +592,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
   // The hour as a strip of its minutes, in the bar that stays in view: one press to any stretch, and with the clock
   // running the one the interview should be in is marked.
   const jumps = stretches.map((x) => {
-    const b = h(`button${x.from < 0 ? '.dx-sheet-jump-any' : ''}`, { type: 'button', 'aria-label': `${x.s.when}: ${x.s.title}`, title: x.s.title }, x.s.when);
+    const b = h(`button${x.from < 0 ? '.dx-sheet-jump-any' : ''}`, { type: 'button', 'aria-label': `${x.s.when}: ${x.s.title}`, title: x.s.title }, x.s.when, ...(x.s.short ? [h('span', null, ` ${x.s.short}`)] : []));
     b.addEventListener('click', () => x.li.scrollIntoView({ block: 'start' }));
     return b;
   });

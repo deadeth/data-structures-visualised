@@ -44,8 +44,9 @@ export interface Crib {
   /**
    * The interview in order: what to do in each stretch of the clock. `when` is minutes, "8 to 16", each stretch
    * starting where the last ended, or "Any time" for something the interviewer may start whenever they like.
+   * `short` is a word or two for the strip of minutes on a wide monitor.
    */
-  hour: { when: string; title: string; lines: string[] }[];
+  hour: { when: string; short?: string; title: string; lines: string[] }[];
   /** The figures worth saying out loud, each with what it is and where it comes from. */
   numbers: { figure: string; what: string }[];
   /** Habits that are easy to drop under pressure. */
