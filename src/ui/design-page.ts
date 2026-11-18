@@ -6,6 +6,7 @@ import { MODES, type Component, type Design, type Example, type Flow } from '../
 import { walkthrough } from '../reading';
 import { studyCard } from './design-study';
 import { tourAudio } from './design-audio';
+import { hasQuiz } from '../designs/quizzes';
 
 const NS = 'http://www.w3.org/2000/svg';
 const SPEEDS = [0.5, 1, 2] as const;
@@ -837,8 +838,10 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
         },
       }, 'Study guide')
     : null;
-  const headLinks = ex?.links ?? (readLink || studyLink ? h('p.dx-actions', null, readLink) : null);
+  const quizLink = hasQuiz(design.id) ? h('a.dx-action', { href: `${base}/test` }, 'Test yourself') : null;
+  const headLinks = ex?.links ?? (readLink || studyLink || quizLink ? h('p.dx-actions', null, readLink) : null);
   if (studyLink && headLinks) headLinks.append(studyLink);
+  if (quizLink && headLinks) headLinks.append(quizLink);
   const page = h('article.design', null, h('header.page-head', null, h('h1', null, design.name), h('p.lede', null, design.blurb), headLinks), storyNav, notFound, stage, status, explainBox, detail, notes);
   host.append(page);
 

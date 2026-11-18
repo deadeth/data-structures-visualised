@@ -550,7 +550,7 @@ export const extras: Extras = {
 
   crib: {
     idea: 'Each site sets its own pace, whatever hardware you have. Speed comes from crawling many sites at once, so the hard part is scheduling: picking the next URL without sending a site more than it allows.',
-    late: 'Still asking at 7? Do the sums. Small at 18? Grow it. On sites at 25? Add machines. Deep at 47? Say how you\'d run it.',
+    late: 'Behind? Start the sums by 7, grow it by 18, add machines by 25. Still deep at 47? Say how you\'d run it.',
     hour: [
       {
         when: '0 to 5',
@@ -571,7 +571,7 @@ export const extras: Extras = {
         lines: [
           'A million pages at 1 a second takes 11.6 days. At 10 a second, if the site allows, about 28 hours.',
           "A million at 100 KB is 100 GB. Ask if it's a billion.",
-          'At 1 a second a site gives at most 86,400 pages a day, so sites set the pace, not the hardware.',
+          "At 1 a second a site gives at most 86,400 a day. Sites set the pace, so it's a scheduling problem.",
         ],
       },
       {
@@ -579,10 +579,10 @@ export const extras: Extras = {
         short: 'Small',
         title: 'Draw the small design',
         lines: [
-          'Draw six parts: a queue, workers, a parser, a seen set, a rate limiter and a store.',
+          'Draw six parts, breadth-first from a queue: workers, a parser, a seen set, a rate limiter, a store.',
           'Tidy every URL into one spelling before the seen check.',
           'Mark a URL seen when you queue it, not when you fetch it.',
-          'One table: url (unique), status, lease until, attempts.',
+          'One table: URL (unique), status, lease until, attempts.',
           'Pages go to object storage. Everything else is in Postgres, so a restart loses nothing.',
           'It ends when the queue is empty and no worker is busy.',
         ],
@@ -624,7 +624,7 @@ export const extras: Extras = {
           'The new owner waits out the old lease, plus clock drift.',
           "It loads each slot's snapshot and replays Kafka from there.",
           'If the old machine wakes, it finds its lease gone and stops.',
-          'Say the scheduler is weakest, and ask them to test it.',
+          'At 42, say the scheduler is weakest and ask them to test it.',
         ],
       },
       {
@@ -667,7 +667,7 @@ export const extras: Extras = {
       { figure: '400 a second', what: 'A billion pages a month. Build for 1,000 a second.' },
       { figure: '20 machines', what: '1,000 a second, at about 50 a machine.' },
       { figure: '86,400 a day', what: 'The most one site gives at 1 request a second.' },
-      { figure: '100 KB', what: 'A page. A billion a month is 100 TB, or 320 Mbit/s.' },
+      { figure: '100 KB', what: 'A page. A billion a month is 100 TB, about 320 Mbit/s.' },
       { figure: '20,000 a second', what: 'Seen checks, from 400 pages a second at 50 links each.' },
       { figure: '80 GB', what: '10 billion URLs as 8-byte fingerprints.' },
       { figure: '1,024 slots', what: 'Sites hash into them, about 51 to a machine.' },
@@ -687,7 +687,7 @@ export const extras: Extras = {
         when: '8 to 16',
         items: [
           { q: 'Why a queue and not recursion?', a: 'Recursion is depth-first: a long chain overflows the stack, and a crash loses its place. A queue on disk avoids both and goes breadth-first.' },
-          { q: 'Is Postgres enough?', a: 'Yes for a million pages: 10 pages a second is about 500 seen checks. It can be the queue too, until writes outgrow one machine.' },
+          { q: 'Is Postgres enough?', a: 'Yes for a million pages: 10 a second is 500 seen checks a second. It can be the queue too, until writes outgrow one machine.' },
           { q: 'How many workers?', a: 'Fetch rate times seconds per fetch: 10 a second at 1 second each is 10 workers. Add more while the rate rises. Stop if the site slows.' },
           { q: 'Threads or async?', a: 'Threads are simplest for 10 to 20 fetches at once. An event loop holds thousands of connections in one process, with parsing in others.' },
         ],
@@ -697,7 +697,7 @@ export const extras: Extras = {
         when: '16 to 22',
         items: [
           { q: 'What gets crawled first?', a: 'Seeds first, then pages that many others link to. Priority queues feed the per-site queues, so priority and pacing stay separate.' },
-          { q: 'How long between requests to one site?', a: 'The largest of 1 second, its Crawl-delay and ten times the last response time. After a fetch of 0.84 seconds, wait 8.4.' },
+          { q: 'How long between requests to one site?', a: 'The largest of 1 second, its Crawl-delay and 10 times the last response time. After a fetch of 0.84 seconds, wait 8.4.' },
           { q: 'A site with endless pages, such as a calendar?', a: "Every URL really is new, so the seen check can't help. Give each site a page budget and a depth cap." },
           { q: 'The same article at fifty URLs?', a: 'Hash the body to catch exact copies. For near copies use a 64-bit SimHash: fingerprints 3 bits or fewer apart count as copies.' },
           { q: 'How do you keep pages fresh?', a: "Start with fixed tiers: news hourly, the rest monthly. Later, halve a page's interval when it changes and lengthen it when it doesn't." },

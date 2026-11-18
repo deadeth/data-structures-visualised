@@ -1,0 +1,520 @@
+/* A design's test (#/d/<id>/test). Green: right. Red dashed: a wrong pick. Magenta: only the current question in the strip. */
+
+.dq-page {
+  max-width: 72ch;
+}
+
+.dq-back {
+  margin: 0 0 14px;
+}
+
+.dq-back a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  font-weight: 600;
+}
+
+.dq-back a::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-right: 8px;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.dq-empty {
+  max-width: 62ch;
+  margin-top: 12px;
+}
+
+.dq-progress {
+  margin: 12px 0 0;
+  color: var(--ink-2);
+  font-weight: 650;
+}
+
+.dq-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---- the strip of question numbers ---- */
+.dq-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 18px 0 20px;
+  padding: 0;
+  list-style: none;
+}
+
+.dq-cell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 6px;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 650;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.dq-cell:hover {
+  background: #e9edf3;
+}
+
+.dq-cell.is-right {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+  color: #06603f;
+}
+
+.dq-cell.is-wrong {
+  border: 1.5px dashed var(--bad);
+  background: var(--bad-soft);
+  color: #a52323;
+}
+
+.dq-cell-mark {
+  font-size: 0.8rem;
+}
+
+.dq-cell[aria-current] {
+  outline: 3px solid var(--key);
+  outline-offset: 2px;
+}
+
+.dq-cell-score {
+  padding: 0 12px;
+}
+
+/* ---- one question ---- */
+.dq-card {
+  padding: 22px 24px 24px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.dq-stage {
+  display: inline-block;
+  margin: 0 0 10px;
+  padding: 2px 9px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.dq-form fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.dq-q {
+  display: block;
+  padding: 0;
+  margin: 0 0 16px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+.dq-hint {
+  margin: -6px 0 12px;
+  color: var(--ink-2);
+}
+
+.dq-opts {
+  display: grid;
+  gap: 10px;
+}
+
+.dq-opt {
+  border: 1.5px solid var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+.dq-opt label {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 48px;
+  padding: 11px 14px;
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.dq-opt input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  accent-color: var(--ink);
+}
+
+.dq-opt-n {
+  flex: none;
+  min-width: 1.4em;
+  color: var(--ink-2);
+  font-family: var(--sans);
+  font-weight: 650;
+}
+
+.dq-opt-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dq-opt:has(input:enabled):hover {
+  background: #f1f4f8;
+}
+
+.dq-opt.is-picked {
+  border: 2px solid var(--ink);
+  background: #e9edf3;
+}
+
+.dq-opt.is-picked label {
+  padding: 10.5px 13.5px;
+  font-weight: 600;
+}
+
+.dq-opt:has(input:focus-visible) {
+  outline: 3px solid var(--path);
+  outline-offset: 2px;
+}
+
+.dq-opt input:disabled,
+.dq-opt input:disabled + .dq-opt-n {
+  cursor: default;
+}
+
+.dq-opt:has(input:disabled) label {
+  cursor: default;
+}
+
+.dq-opt.is-right {
+  border: 2px solid var(--ok);
+  background: var(--ok-soft);
+}
+
+.dq-opt.is-wrong {
+  border: 2px dashed var(--bad);
+  background: var(--bad-soft);
+}
+
+.dq-opt.is-right label,
+.dq-opt.is-wrong label {
+  min-height: 0;
+  padding: 10.5px 13.5px 2px;
+}
+
+.dq-opt-after {
+  padding: 0 14px 10px calc(14px + 20px + 12px + 1.4em + 12px);
+}
+
+.dq-tag {
+  display: inline-block;
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
+.tag-right {
+  color: #06603f;
+}
+
+.tag-wrong {
+  color: #a52323;
+}
+
+.dq-opt-why {
+  margin: 4px 0 0;
+  color: var(--ink);
+}
+
+/* ---- the number box ---- */
+.dq-numrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.dq-numlabel {
+  font-weight: 650;
+}
+
+.dq-numbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dq-num {
+  width: 12ch;
+  height: 44px;
+  padding: 0 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--sans);
+  font-size: 1.1rem;
+}
+
+.dq-num:disabled {
+  opacity: 1;
+  color: var(--ink);
+}
+
+.dq-numrow.is-right .dq-num {
+  border: 2px solid var(--ok);
+  background: var(--ok-soft);
+}
+
+.dq-numrow.is-wrong .dq-num {
+  border: 2px dashed var(--bad);
+  background: var(--bad-soft);
+}
+
+.dq-unit {
+  font-weight: 650;
+}
+
+.dq-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 0;
+}
+
+.dq-actions .btn {
+  min-height: 44px;
+  font: inherit;
+  font-weight: 650;
+}
+
+/* ---- the explanation ---- */
+.dq-explain {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+  line-height: 1.55;
+}
+
+.dq-explain > p,
+.dq-explain > div {
+  margin: 0 0 12px;
+}
+
+.dq-verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.2rem;
+  font-weight: 750;
+}
+
+.dq-verdict.is-right {
+  color: #06603f;
+}
+
+.dq-verdict.is-wrong,
+.dq-verdict.is-partly {
+  color: #a52323;
+}
+
+.dq-verdict-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6em;
+  height: 1.6em;
+  border-radius: 50%;
+  font-size: 0.85em;
+}
+
+.dq-verdict.is-right .dq-verdict-mark {
+  background: var(--ok-soft);
+  border: 2px solid var(--ok);
+}
+
+.dq-verdict.is-wrong .dq-verdict-mark,
+.dq-verdict.is-partly .dq-verdict-mark {
+  background: var(--bad-soft);
+  border: 2px dashed var(--bad);
+}
+
+.dq-label {
+  margin: 0 0 4px;
+  font-weight: 750;
+}
+
+.dq-working ol {
+  margin: 0;
+  padding-left: 1.5em;
+}
+
+.dq-say {
+  padding: 10px 14px;
+  border-left: 4px solid var(--ink-2);
+  background: var(--paper);
+  border-radius: 0 var(--radius-s) var(--radius-s) 0;
+}
+
+.dq-say p {
+  margin: 0;
+}
+
+.dq-say .dq-label {
+  margin-bottom: 2px;
+}
+
+.dq-from a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  font-weight: 600;
+}
+
+/* ---- the score ---- */
+.dq-end-h {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.dq-total {
+  margin: 4px 0 18px;
+  font-family: var(--sans);
+  font-size: 2.2rem;
+  font-weight: 750;
+}
+
+.dq-stages {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--rule);
+}
+
+.dq-stages > li {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.dq-stage-row {
+  margin: 0;
+  font-weight: 650;
+}
+
+.dq-stage-score {
+  font-family: var(--sans);
+}
+
+.dq-missed {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dq-link {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 0;
+  border: 0;
+  background: none;
+  color: var(--path);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.dq-link:hover {
+  color: var(--ink);
+}
+
+.dq-missed-n {
+  font-family: var(--sans);
+  font-weight: 650;
+}
+
+.dq-unanswered {
+  color: var(--ink-2);
+}
+
+.dq-confirm-q {
+  font-weight: 650;
+}
+
+@media (max-width: 640px) {
+  .dq-card {
+    padding: 16px 14px 18px;
+    border-radius: var(--radius-s);
+  }
+
+  .dq-q {
+    font-size: 1.15rem;
+  }
+
+  .dq-opt label {
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .dq-opt.is-picked label {
+    padding: 9.5px 11.5px;
+  }
+
+  .dq-opt.is-right label,
+  .dq-opt.is-wrong label {
+    padding: 9.5px 11.5px 2px;
+  }
+
+  .dq-opt-after {
+    padding: 0 12px 10px 12px;
+  }
+
+  .dq-actions .btn {
+    flex: 1 1 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dq-page * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* Headings and the verdict take focus from the script only, to move a reader there: no ring. */
+.dq-end-h:focus,
+.dq-verdict:focus {
+  outline: none;
+}

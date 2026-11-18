@@ -1393,6 +1393,10 @@
   font-weight: 550;
 }
 
+.dx-sheet-late b {
+  font: 800 1.12em var(--sans);
+}
+
 .dx-sheet-groups {
   display: grid;
   gap: 18px;
@@ -1718,12 +1722,12 @@
   }
 
   html.crib-mode .dx-sheet-sec {
-    margin-top: 6pt;
+    margin-top: 4pt;
   }
 
   html.crib-mode .dx-sheet-sec h2 {
     font-size: 13.5pt;
-    margin-bottom: 4pt;
+    margin-bottom: 3pt;
     padding-bottom: 1pt;
     border-bottom: 1.2pt solid #000;
     break-after: avoid;
@@ -1731,7 +1735,7 @@
 
   html.crib-mode .dx-sheet-figs {
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 3pt 12pt;
+    gap: 2pt 12pt;
   }
 
   html.crib-mode .dx-sheet-figs dt {
@@ -1823,8 +1827,9 @@
   }
 
   html.crib-mode .dx-sheet-hour > li + li {
-    margin-top: 6.5pt;
+    margin-top: 8pt;
   }
+
 
   html.crib-mode .dx-sheet-hour ul li,
   html.crib-mode .dx-sheet-keep li {
@@ -1862,7 +1867,7 @@
   }
 
   html.crib-mode .dx-sheet-s-asked {
-    margin-top: 16pt;
+    margin-top: 11pt;
   }
 
   html.crib-mode .dx-sheet-keep {
@@ -1887,7 +1892,7 @@
   }
 
   html.crib-mode .dx-sheet-groups {
-    gap: 14pt;
+    gap: 15pt;
   }
 
   html.crib-mode .dx-sheet-groups h3 {

@@ -576,6 +576,9 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     const a = /^(.*) (\([^)]*\))$/.exec(t);
     return a ? [a[1], ' ', h('span.dx-sheet-aside', null, a[2])] : [t];
   };
+  // The running-behind note names the minute by which each move should have been made: the minutes are set
+  // heavier, so they are found first.
+  const lateItems = (t: string): (string | HTMLElement)[] => t.split(/(\b\d+\b)/).map((p, i) => (i % 2 ? h('b', null, p) : p));
   const stretches = crib.hour.map((s) => {
     const m = /^(\d+) to (\d+)$/.exec(s.when);
     const li = h(
@@ -689,7 +692,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
       sec('numbers', 'Numbers to say', figs),
       sec(
         'hour', 'The hour, by the minute',
-        ...(crib.late ? [h('p.dx-sheet-late', null, crib.late)] : []),
+        ...(crib.late ? [h('p.dx-sheet-late', null, ...lateItems(crib.late))] : []),
         h('div.dx-sheet-cols', null, hour.map((part) => h('ol.dx-sheet-hour', null, part.map((x) => x.li)))),
       ),
       sec('remember', 'Keep doing', h('div.dx-sheet-cols', null, halves(crib.remember, (t) => 1 + Math.ceil(t.length / 55)).map((part) => h('ul.dx-sheet-keep', null, part.map((t) => h('li', null, t)))))),

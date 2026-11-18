@@ -247,9 +247,9 @@ async function route(typing = false): Promise<void> {
   let mount: Promise<() => void>;
   const m = /^\/s\/([a-z0-9-]+)$/.exec(path);
   // A design page, opened at a box (c), connection (f), glossary term (g), tour step (t), story (s, as `id` or `id.step`), likely push (q) or section (x);
-  // or its rehearsal mode or crib.
+  // or its rehearsal mode, crib or test.
   // The part id is matched loosely and lower-cased, so a mistyped or capitalised deep link reaches the design page's own "no such part" note.
-  const dm = /^\/d\/([a-z0-9-]+)(?:\/([cfgtqxs])\/([^/]+)|\/(rehearse|crib))?$/.exec(path);
+  const dm = /^\/d\/([a-z0-9-]+)(?:\/([cfgtqxs])\/([^/]+)|\/(rehearse|crib|test))?$/.exec(path);
   const chosen = dm ? designEntry(dm[1]) : undefined;
   // The course (`/course`), one module (`/course/<module>`), or a module at one item (`/course/<module>/<item>`).
   const cm = /^\/course(?:\/([a-z0-9-]+)(?:\/([a-z0-9-]+))?)?$/.exec(path);
@@ -290,7 +290,10 @@ async function route(typing = false): Promise<void> {
         })
       : Promise.resolve(undefined);
     const mode = dm[4];
-    if (mode) {
+    if (mode === 'test') {
+      document.title = `Test: ${chosen.name} | Data structures, visualised`;
+      mount = import('./ui/design-quiz').then((q) => q.mountQuiz(main, chosen));
+    } else if (mode) {
       document.title = `${mode === 'crib' ? 'Crib' : 'Rehearse'}: ${chosen.name} | Data structures, visualised`;
       mount = Promise.all([import('./ui/design-extras'), chosen.load(), extras]).then(([x, d, e]) => (mode === 'crib' ? x.mountCrib(main, chosen, d, e) : x.mountRehearse(main, chosen, d, e)));
     } else {
