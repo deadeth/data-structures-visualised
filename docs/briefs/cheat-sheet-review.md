@@ -65,7 +65,15 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
   but still costs the site a visit.
 - The default order for the deep dive follows the notes: a worker dying, one URL found twice, the
   rate limiter, then a whole machine failing.
-- The running-behind note covers minutes 18, 25 and 47, and stays one printed line.
+- The running-behind note covers minutes 7, 18, 25 and 47 in one printed line; it is clipped on
+  purpose, as a note to self, because a second line would push a stretch off page 1.
+- Before the clock starts, a monitor's first view is the idea, the numbers and the opening
+  stretches, which is what the first minutes need. Later stretches are one press away on the
+  strip, and once the clock runs the "Now" pill goes to the current one.
+- "(short answers)" beside "Say how you'd run it" is the cue at the stretch; the habit under
+  "Keep doing" gives the rule in full (two or three sentences, then offer to go further).
+- The hour names the rejected option where the choice is made ("one owner, not a shared queue
+  with a lock per site"); the question under "If they ask" adds when each one wins.
 - The Postgres columns are the ones the notes give for the small design.
 - A group of questions is never split between the two columns, so on page 2 the columns end at
   different heights. That is accepted.
@@ -80,8 +88,8 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
   title and bullets share one left edge.
 - The change of brief has no group of its own under "If they ask": its points are in the hour,
   and a one-question group would cost two lines on a full page.
-- On a phone, before the clock starts, the strip is one row that scrolls sideways and the bar has
-  its own "Numbers" button. With the clock running the strip makes way for the "Now" pill, so the
+- On a phone, before the clock starts, the strip is one row that scrolls sideways, fading at its
+  right edge to show there is more, and the bar has its own "Numbers" button. With the clock running the strip makes way for the "Now" pill, so the
   bar stays two rows.
 - "3 minutes each" puts the four deep dives at 30 to 42 and naming the weakest part at 42 to 44,
   before the change of brief at 44 to 49, as the rehearsal has it.
@@ -136,7 +144,11 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
   account of a woken machine); "The data stays right"; "One breach wakes someone. So does..." (to
   keep "page" for web pages); "It ends when the queue is empty" (naming the crawl costs a line);
   "A lock is for a rule across messages" (the notes' own distinction); "the limiter" in the deep
-  dives' first line (the full name takes it past 100 characters).
+  dives' first line (the full name takes it past 100 characters); "ask them to test it" (not the
+  site's word "push"); "the newer fetch time wins" (writes carry the fetch time); "So does
+  fetching under half the target for 15 minutes, a slot unowned for 5, or buffers filling".
+- On paper the minute tags are 8.5pt in a 1.5pt outline: larger crowds the title, smaller is hard
+  to read at arm's length.
 
 ## What to report
 

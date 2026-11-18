@@ -550,7 +550,7 @@ export const extras: Extras = {
 
   crib: {
     idea: 'Each site sets its own pace, whatever hardware you have. Speed comes from crawling many sites at once, so the hard part is scheduling: picking the next URL without sending a site more than it allows.',
-    late: 'Still small at 18? Grow it. Still on sites at 25? Move to machines. Still deep at 47? Finish, then say how you\'d run it.',
+    late: 'Still asking at 7? Do the sums. Small at 18? Grow it. On sites at 25? Add machines. Deep at 47? Say how you\'d run it.',
     hour: [
       {
         when: '0 to 5',
@@ -604,7 +604,7 @@ export const extras: Extras = {
         title: 'Grow it to many machines',
         lines: [
           'First say what one machine carries: an assumed 50 pages a second, about 130 million a month.',
-          'Give each site one owner. Sites hash into 1,024 slots, and etcd maps slots to owners.',
+          'Give each site one owner, not a shared queue with a lock per site. etcd maps 1,024 slots to owners.',
           "Each machine keeps its sites' queues (about 15 GB) and seen fingerprints (4 GB) on local disk.",
           'The URL table moves to Cassandra or ScyllaDB.',
           "Links to another machine's sites go through Kafka, keyed by site. The owner decides when to fetch.",
@@ -617,14 +617,14 @@ export const extras: Extras = {
         lines: [
           "If they don't steer: a worker dying, a URL found twice, the limiter, a dead machine. 3 minutes each.",
           "A dead worker's lease ends and its URL is retried. Acknowledge after saving the page and links.",
-          'A retry can refetch a page. The data stays right: upserts by URL, and the newer fetch wins.',
+          'A retry can refetch a page. The data stays right: upserts by URL, and the newer fetch time wins.',
           'Two workers find the same URL? An atomic insert keeps the first. With one owner, there is no race.',
           'Limit each site with a local timer, and shared IP addresses with a Redis token bucket.',
           'If a machine dies or stalls, others take its slots and raise the epoch, so its late writes fail.',
           'The new owner waits out the old lease, plus clock drift.',
           "It loads each slot's snapshot and replays Kafka from there.",
           'If the old machine wakes, it finds its lease gone and stops.',
-          'Name the weakest part, the scheduler, and invite a push.',
+          'Say the scheduler is weakest, and ask them to test it.',
         ],
       },
       {
@@ -635,17 +635,17 @@ export const extras: Extras = {
           'Ask one question back, redraw, then say what it costs.',
           'For news within an hour, poll feeds and sitemaps and give new links top priority.',
           'Polling 1,000 sites, 10 pages each, every 5 minutes is 33 a second, about 8 per cent of 400.',
-          "If sites must opt in, keep to a verified list, redirects too. If the list can't be read, stop.",
+          "If sites must opt in, keep to a verified list, after redirects too. Stop if the list can't be read.",
           'With far fewer sites, one machine may be enough again.',
         ],
       },
       {
         when: '49 to 56',
         short: 'Run it',
-        title: "Say how you'd run it",
+        title: "Say how you'd run it (short answers)",
         lines: [
           'Promise zero politeness violations, counted from the fetch log. One breach wakes someone.',
-          'So does a slot unowned for 5 minutes, fetching under half the target for 15, or buffers filling.',
+          'So does fetching under half the target for 15 minutes, a slot unowned for 5, or buffers filling.',
           'One dead machine wakes nobody: the others take its sites.',
           'Ship one site, then many, then a crawl that keeps going. Add machines when measurements say so.',
           'Buy Kafka, databases and rendering. Build the scheduler.',
@@ -712,7 +712,7 @@ export const extras: Extras = {
           { q: 'A shared queue, or one owner per site?', a: 'For a one-off crawl, a shared queue and a shared per-site limiter. For one that never stops, one owner per site, so pacing needs no lock.' },
           { q: 'Consistent hashing or a slot map?', a: "A slot map. Both move few sites, but a slot move is one explicit step with its own epoch, so the old owner's late writes fail." },
           { q: 'Why Cassandra or ScyllaDB?', a: 'It suits small upserts by key and grows by adding machines. The table is 3 TB, 9 TB in three copies. The cost: a table per query, no joins.' },
-          { q: "What if etcd can't be reached?", a: 'Machines pause, and someone is woken. That is the price of one agreed answer on who owns each site.' },
+          { q: "What if etcd can't be reached?", a: 'Machines pause, and someone is woken. Better that than two machines fetching one site.' },
         ],
       },
       {

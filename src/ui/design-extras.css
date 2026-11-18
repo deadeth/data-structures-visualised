@@ -1023,6 +1023,10 @@
   color: var(--ink-2);
 }
 
+.dx-sheet.clocked .dx-sheet-hour > li:not(.now) ul li::before {
+  background: var(--rule-strong);
+}
+
 /* The hour as a strip of minutes under the bar's buttons: a press goes to that stretch. */
 .dx-sheet-jump {
   display: flex;
@@ -1315,7 +1319,7 @@
   }
 
   .dx-sheet-elapsed {
-    font-size: 1.05rem;
+    font-size: 1.2rem;
   }
 }
 
@@ -1428,7 +1432,7 @@
   }
 
   .dx-sheet-hour ul {
-    max-width: 62ch;
+    max-width: 56ch;
   }
 
   .dx-sheet-jump button span {
@@ -1752,6 +1756,7 @@
   }
 
   html.crib-mode .dx-sheet-gwhen {
+    margin-left: 2pt;
     padding: 0 4pt;
     border: 1.5pt solid #000;
     border-radius: 3pt;
