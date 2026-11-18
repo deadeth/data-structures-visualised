@@ -12,6 +12,7 @@ describe('design study guides', async () => {
   const structures = new Set(CATALOG.map((c) => c.id));
   const concepts = new Map(CONCEPTS.map((c) => [c.id, new Set(c.sections.map((s) => s.id))]));
   const tours = new Map(designs.map((d) => [d.id, d.design.tour.length]));
+  const stories = new Map(designs.map((d) => [d.id, new Map((d.design.stories ?? []).map((x) => [x.id, x.tour.length]))]));
 
   function problem(href: string): string | null {
     const parts = href.replace(/^#\//, '').split('/');
@@ -32,6 +33,12 @@ describe('design study guides', async () => {
         return !rest[1] || w.sections.some((s) => s.id === rest[1]) ? null : `no section "${rest[1]}" in the walkthrough of "${id}"`;
       }
       if (rest[0] === 't') return Number(rest[1]) >= 1 && Number(rest[1]) <= tours.get(id)! ? null : `design "${id}" has no tour step ${rest[1]}`;
+      if (rest[0] === 's') {
+        const [sid, n] = (rest[1] ?? '').split('.');
+        const len = stories.get(id)!.get(sid);
+        if (len === undefined) return `design "${id}" has no story "${sid}"`;
+        return Number(n) >= 1 && Number(n) <= len ? null : `story "${sid}" of "${id}" has no step ${n}`;
+      }
       if (rest[0] === 'rehearse' || rest[0] === 'crib') return DESIGNS.find((d) => d.id === id)?.extras ? null : `design "${id}" has no ${rest[0]} page`;
       return `unknown design address "${href}"`;
     }
