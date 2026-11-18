@@ -52,7 +52,7 @@ export interface Crib {
   remember: string[];
   /**
    * Likely questions, each with an answer short enough to say in one breath, grouped by the part of the hour they
-   * tend to come up in, in the hour's order.
+   * tend to come up in, in the hour's order. `when` is that stretch's minutes, as in `hour`.
    */
-  asked: { about: string; items: { q: string; a: string }[] }[];
+  asked: { about: string; when?: string; items: { q: string; a: string }[] }[];
 }

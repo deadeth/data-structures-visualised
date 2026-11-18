@@ -892,8 +892,8 @@
 }
 
 .dx-sheet-idea {
-  margin-top: 8px;
-  padding: 8px 16px;
+  margin-top: 4px;
+  padding: 6px 14px;
   border-left: 4px solid var(--ink);
   background: #eef2f8;
   font-size: 1.06rem;
@@ -988,6 +988,8 @@
   border-left-color: var(--key);
   padding-left: 8px;
   background: var(--key-soft);
+  outline: 2px solid var(--key);
+  outline-offset: -2px;
 }
 
 .dx-sheet-hour > li.now .dx-sheet-when span {
@@ -999,7 +1001,60 @@
 
 .dx-sheet.clocked .dx-sheet-hour > li:not(.now),
 .dx-sheet.clocked .dx-sheet-hour > li:not(.now) h3 {
+  color: var(--ink-3);
+}
+
+/* The hour as a strip of minutes under the bar's buttons: a press goes to that stretch. */
+.dx-sheet-jump {
+  display: flex;
+  flex: 1 0 100%;
+  gap: 4px;
+}
+
+.dx-sheet-jump button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 28px;
+  padding: 0 4px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  font: 700 0.9rem var(--sans-data);
+  color: var(--ink);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dx-sheet-jump button.now {
+  border-color: var(--key);
+  background: var(--key);
+  color: #fff;
+}
+
+@media (hover: hover) {
+  .dx-sheet-jump button:not(.now):hover {
+    background: #e4eaf4;
+  }
+}
+
+/* A group of questions carries its stretch's minutes, and is marked while the clock is in that stretch. */
+.dx-sheet-gwhen {
+  margin-left: 8px;
+  font: 600 0.9em var(--sans-data);
   color: var(--ink-2);
+}
+
+.dx-sheet-groups section {
+  scroll-margin-top: 110px;
+}
+
+.dx-sheet-groups section.now h3 {
+  background: var(--key);
+  color: #fff;
+}
+
+.dx-sheet-groups section.now .dx-sheet-gwhen {
+  color: #fff;
 }
 
 .dx-sheet.clocked .dx-sheet-hour > li:not(.now) .dx-sheet-when:not(.dx-sheet-any) span {
@@ -1008,7 +1063,7 @@
 }
 
 .dx-sheet-hour > li {
-  scroll-margin-top: 80px;
+  scroll-margin-top: 110px;
 }
 
 .dx-sheet-elapsed {
@@ -1031,6 +1086,19 @@
 @media screen and (max-width: 1099px) {
   .dx-sheet-now {
     font-size: 1rem;
+  }
+}
+
+@media screen and (max-width: 899px) {
+  .dx-sheet-jump {
+    display: none;
+  }
+}
+
+@media screen and (max-width: 519px) {
+  .dx-sheet-figs dt {
+    font-size: 1.02rem;
+    white-space: nowrap;
   }
 }
 
@@ -1482,8 +1550,20 @@
   }
 
   html.crib-mode .dx-sheet-elapsed,
-  html.crib-mode .dx-sheet-now {
+  html.crib-mode .dx-sheet-now,
+  html.crib-mode .dx-sheet-jump {
     display: none;
+  }
+
+  html.crib-mode .dx-sheet-gwhen,
+  html.crib-mode .dx-sheet-groups section.now h3,
+  html.crib-mode .dx-sheet-groups section.now .dx-sheet-gwhen {
+    background: none;
+    color: #000;
+  }
+
+  html.crib-mode .dx-sheet-hour > li.now {
+    outline: 0;
   }
 
   html.crib-mode .dx-sheet.clocked .dx-sheet-hour > li {
@@ -1555,7 +1635,7 @@
   }
 
   html.crib-mode .dx-sheet-s-asked {
-    margin-top: 14pt;
+    margin-top: 10pt;
   }
 
   html.crib-mode .dx-sheet-keep {
@@ -1578,7 +1658,7 @@
   html.crib-mode .dx-sheet-groups h3 {
     margin-bottom: 4pt;
     padding: 0 0 1pt;
-    border-bottom: 0.5pt solid #000;
+    border-bottom: 0.75pt solid #000;
     background: none;
     font-size: 10.5pt;
     color: #000;

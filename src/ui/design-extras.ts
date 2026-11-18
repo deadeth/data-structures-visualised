@@ -579,7 +579,23 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     return { s, li, from: m ? Number(m[1]) : -1, to: m ? Number(m[2]) : -1 };
   });
   const hour = halves(stretches, (x) => 2.2 + x.s.lines.reduce((n, t) => n + 1 + (t.length > 62 ? 0.9 : 0), 0));
-  const asked = halves(crib.asked, (g) => 1.6 + g.items.reduce((n, x) => n + 2 + Math.ceil(x.a.length / 60), 0));
+  const groups = crib.asked.map((g) => {
+    const m = /^(\d+) to (\d+)$/.exec(g.when ?? '');
+    const el = h(
+      'section', null,
+      h('h3', null, g.about, ...(g.when ? [h('span.dx-sheet-gwhen', null, g.when)] : [])),
+      h('dl.dx-sheet-asked', null, g.items.map((x) => h('div', null, h('dt', null, x.q), h('dd', null, x.a)))),
+    );
+    return { g, el, from: m ? Number(m[1]) : -1, to: m ? Number(m[2]) : -1 };
+  });
+  const asked = halves(groups, (x) => 1.6 + x.g.items.reduce((n, i) => n + 2 + Math.ceil(i.a.length / 60), 0));
+  // The hour as a strip of its minutes, in the bar that stays in view: one press to any stretch, and with the clock
+  // running the one the interview should be in is marked.
+  const jumps = stretches.map((x) => {
+    const b = h('button', { type: 'button', 'aria-label': `${x.s.when}: ${x.s.title}`, title: x.s.title }, x.s.when);
+    b.addEventListener('click', () => x.li.scrollIntoView({ block: 'center' }));
+    return b;
+  });
 
   // The clock: started by hand as the interview starts, kept for the tab so a reload does not lose it.
   const KEY = `dsv.sheet.${id}`;
@@ -596,17 +612,27 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
   const elapsed = h('span.dx-sheet-elapsed', { role: 'timer', 'aria-live': 'off' });
   // What the clock says to be doing, in the bar that stays in view; pressing it brings that stretch into view.
   const nowBtn = h('button.dx-sheet-now', { type: 'button', hidden: true });
+  // The questions that belong to the stretch the clock is in.
+  const answersBtn = h('button.btn', { type: 'button', hidden: true }, 'Its questions');
   const startBtn = h('button.btn', { type: 'button' });
   const hint = h('span.dx-hint', null, 'Two A4 pages.');
   let current: (typeof stretches)[number] | undefined;
+  let currentGroup: (typeof groups)[number] | undefined;
   nowBtn.addEventListener('click', () => current?.li.scrollIntoView({ block: 'center' }));
+  answersBtn.addEventListener('click', () => currentGroup?.el.scrollIntoView({ block: 'start' }));
   function show(): void {
     const secs = began ? Math.max(0, Math.floor((Date.now() - began) / 1000)) : 0;
     const min = Math.floor(secs / 60);
     current = began ? stretches.find((x) => min >= x.from && min < x.to) : undefined;
-    for (const x of stretches) x.li.classList.toggle('now', x === current);
+    currentGroup = began ? groups.find((x) => min >= x.from && min < x.to) : undefined;
+    stretches.forEach((x, i) => {
+      x.li.classList.toggle('now', x === current);
+      jumps[i].classList.toggle('now', x === current);
+    });
+    for (const x of groups) x.el.classList.toggle('now', x === currentGroup);
+    answersBtn.hidden = !currentGroup;
     sheet.classList.toggle('clocked', !!began);
-    startBtn.textContent = began ? 'Reset the clock' : 'Start the clock';
+    startBtn.textContent = began ? 'Reset' : 'Start the clock';
     elapsed.hidden = !began;
     // With the clock running the bar has more to hold: the hint makes way, so it stays one row.
     hint.hidden = !!began;
@@ -636,7 +662,8 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     h(
       'div.dx-crib-bar.dx-sheet-bar', null,
       h('p.dx-back', null, h('a', { href: `#/d/${id}` }, `Back to ${design.name}`)),
-      h('p.dx-crib-tools', null, nowBtn, elapsed, startBtn, h('button.btn.primary', { type: 'button', onclick: () => window.print() }, 'Print'), hint),
+      h('p.dx-crib-tools', null, nowBtn, answersBtn, elapsed, startBtn, h('button.btn.primary', { type: 'button', onclick: () => window.print() }, 'Print'), hint),
+      h('nav.dx-sheet-jump', { 'aria-label': 'The hour' }, jumps),
     ),
     sheet,
   );
@@ -652,7 +679,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
       sec('remember', 'Keep doing', h('ul.dx-sheet-keep', null, crib.remember.map((t) => h('li', null, t)))),
       sec(
         'asked', 'If they ask',
-        h('div.dx-sheet-cols', null, asked.map((part) => h('div.dx-sheet-groups', null, part.map((g) => h('section', null, h('h3', null, g.about), h('dl.dx-sheet-asked', null, g.items.map((x) => h('div', null, h('dt', null, x.q), h('dd', null, x.a))))))))),
+        h('div.dx-sheet-cols', null, asked.map((part) => h('div.dx-sheet-groups', null, part.map((x) => x.el)))),
       ),
   );
   run();
