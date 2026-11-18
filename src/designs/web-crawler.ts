@@ -30,8 +30,30 @@ export const webCrawler: Design = {
       built: [
         { name: 'Sitemaps', what: 'A file a site publishes listing its URLs, often with the date each last changed. A job here reads the sitemaps of seed sites and posts the URLs it finds to the seeds API.', why: 'They hand over new and changed URLs without fetching and parsing a page. They can be stale or wrong, so the design treats them as hints, never as the truth.' },
         { name: 'Seeds API', what: 'A small internal web service, POST /v1/seeds, that operators and the sitemap job call to add starting URLs. It makes each URL canonical, records who added it and why, and queues it on the node that owns its host.', why: 'Seeds decide what the crawl can ever reach, so every change is audited and reviewed like code. A file dropped in a bucket would give the caller no answer about bad URLs and a weaker audit trail. Posting a seed twice queues it once, so callers can retry.' },
+        { name: 'Crawl policy', what: 'A small reviewed file kept beside the seed list: a default page budget and depth cap for every host, and overrides for hosts known to be large or known to be trouble. The seeds API serves it, and each node loads the entries for its own hosts at start and re-reads them every few minutes.', why: 'The limits that stop a trap are a decision about a site, like the seed itself, so they are reviewed in the same place by the same people. Raising a budget for a large, real site is then a reviewed change, not a code change.' },
       ],
       fails: 'A poor seed list walks the crawl straight into link farms. Review it like code, and keep a per-domain kill switch beside it.',
+      tables: [
+        {
+          title: 'Crawl policy, one reviewed file',
+          lang: 'text',
+          code: `# kept and reviewed beside the seed list
+default:
+  page_budget: 5000    # pages a day, for each host
+  depth_cap: 20        # hops from a seed
+
+hosts:
+  archive.example.org:
+    page_budget: 86400 # all that 1 a second allows
+    depth_cap: 60      # long, real archives
+  shop.example.com:
+    page_budget: 500   # filters that combine without end
+
+# GET /v1/policy serves it. Each node loads the entries
+# for its own hosts at start, and again every few minutes.`,
+          note: 'The two limits that stop a trap. 5,000 pages a day and 20 hops are this design\'s choices, with no measurement behind them. The count against the budget is kept in the frontier, in each host\'s row.',
+        },
+      ],
       alternatives: [
         {
           name: 'Curated seed list plus sitemaps', chosen: true, good: 'Predictable coverage, and sitemaps hand you fresh URLs without parsing a page.', cost: 'Someone has to own the list. Sitemaps can be stale or wrong, so treat them as hints.',
@@ -123,15 +145,18 @@ export const webCrawler: Design = {
           lang: 'text',
           code: `# one RocksDB per node, on local SSD; keys sort as bytes
 key    queue/<slot>/<host>/<seq>
-value  <url> p=<priority>, and the validators on a recrawl
+value  <url> p=<priority> d=<depth>,
+       and the validators on a recrawl
 
 queue/417/example.org/000918107
-  -> "https://example.org/news p=1"
+  -> "https://example.org/news p=1 d=1"
 queue/417/example.org/000918273
-  -> "https://example.org/news/2026/11/rates p=2"
+  -> "https://example.org/news/2026/11/rates p=2 d=2"
 
 # <seq> counts up per host, zero-padded, so a host's keys
-# sort oldest first. About 100 million keys a node.`,
+# sort oldest first. About 100 million keys a node.
+# d is hops from a seed: a seed is 0, and a link found
+# on a page at depth d is queued at d+1.`,
           note: 'The slot comes first, so one slot is one key range: that range is what a snapshot copies and a failover moves.',
         },
         {
@@ -145,8 +170,12 @@ host/417/example.org
      errors=0 budget_left=4812
 
 # next_at is the host's entry in the heap, kept on disk
-# so a restart does not forget a back-off. budget_left
-# is the page budget that stops traps; 4812 is made up.`,
+# so a restart does not forget a back-off.
+# budget_left is what remains of today's page budget,
+# 5,000 a day unless the crawl policy says otherwise.
+# It drops by one for each page fetched. At 0 the host
+# is handed out no more until the daily refill, and is
+# listed for review: raise its budget, or add a trap rule.`,
         },
         {
           title: 'URLs the recrawl scheduler queued',
@@ -187,7 +216,7 @@ leases        lease_id -> (queue key, epoch, deadline)
 it = db.iterator()
 it.seek("queue/417/example.org/")
 it.key()    # "queue/417/example.org/000918107"
-it.value()  # "https://example.org/news p=1"
+it.value()  # "https://example.org/news p=1 d=1"
 
 leases["L417-55120"] = ("queue/417/example.org/000918107",
                         epoch=7, deadline="10:21:00Z")
@@ -220,7 +249,7 @@ if db.get(k) is not None:
 else:
     q = "queue/417/example.org/000931552"
     batch = WriteBatch()
-    batch.put(q, 'https://example.org/news p=1'
+    batch.put(q, 'https://example.org/news p=1 d=1'
                  ' etag="6731-a91c"'
                  ' lm="Thu, 12 Nov 2026 10:12:00 GMT"')
     batch.put(k, q)
@@ -639,7 +668,7 @@ EVALSHA <take_token> 1 tb:ip:203.0.113.27 4 8 1794478800370 1
       alternatives: [
         {
           name: 'Budgets per host plus a near-duplicate alarm', chosen: true, good: 'Catches traps by their effect, whatever shape they take.', cost: 'Needs a fingerprint for near-duplicates and a place to count.',
-          what: 'Each host gets a page budget and a depth cap, counted on the node that owns it. The parser\'s SimHash shows when a host keeps producing near-identical pages, and that raises an alarm. The check is against that host\'s last 64 fingerprints, kept in memory on its node, never against every stored page.',
+          what: 'Each host gets a page budget and a depth cap, counted on the node that owns it. The parser\'s SimHash shows when a host keeps producing near-identical pages, and that raises an alarm. The check is against that host\'s last 64 fingerprints, kept in memory on its node, never against every stored page. The budget and the cap are set in the crawl policy kept with the seed list. The count against the budget sits in the host\'s row in the frontier, and each URL carries its depth. A host that runs out waits for the next day\'s refill and is listed for review.',
           pros: ['Catches traps by their effect, whatever shape they take.', 'Counting is local, because one node owns each host.', 'Reuses the SimHash the parser computes anyway.'],
           cons: ['Needs a fingerprint for near-duplicates and a place to count.', 'A budget set too low cuts off a large, real site.', 'Pages up to the budget are still fetched before it trips.'],
         },
@@ -748,7 +777,7 @@ EVALSHA <take_token> 1 tb:ip:203.0.113.27 4 8 1794478800370 1
       built: [
         { name: 'Normalise', what: 'Rewriting each URL into one standard spelling (canonicalisation): lower-case scheme and host, default port removed, fragment dropped, relative links resolved, tracking parameters stripped.', why: 'Without it one page enters the frontier under a dozen spellings. The rules live in one tested library used by every stage, because normalising too hard merges different pages and too gently lets duplicates through.' },
         { name: 'Route', what: 'slot = hash(host) mod 1,024, and the coordinator\'s map says which node owns each slot, about 51 a node. A link for this node goes to the seen check; any other goes to the discovered-urls topic.', why: 'Routing by host puts everything about a host on one node: its queue, its rate limit and its robots rules, so politeness needs no locks. A host\'s slot never changes, and moving a slot is an explicit, versioned step, where hash(host) mod 20 would move almost every host when a node is added or lost.' },
-        { name: 'Scope and trap rules', what: 'Checks that drop links outside the crawl\'s scope or shaped like known traps, such as dates far in the future or session identifiers in the path.', why: 'They are cheap, run before the seen check, and stop known offenders at once. Budgets per host catch the traps the rules miss.' },
+        { name: 'Scope and trap rules', what: 'Checks that drop links outside the crawl\'s scope or shaped like known traps, such as dates far in the future or session identifiers in the path. Each link also takes its depth here, one more than the page it was found on, and a link past its host\'s depth cap in the crawl policy is dropped.', why: 'They are cheap, run before the seen check, and stop known offenders at once. Budgets per host catch the traps the rules miss.' },
       ],
       numbers: [{ text: 'Most links point to the same host, so most never leave the node.', from: 'An assumption: menus, footers and body links mostly stay on the site. A link to another host lands on this node only by chance, about 1 time in 20 with 20 nodes, so the share that leaves is roughly the share of links that point off-site.' }],
       fails: 'Normalise too hard and two different pages collapse into one. Too gently and duplicates flood the frontier. Keep the rules in one tested library used by every stage.',
@@ -926,7 +955,7 @@ consumers   no group: each node assigns itself the
 producer.send("discovered-urls", partition=88,
               key=b"blog.example.net",
               value=b'{"url": "https://blog.example.net/p/12",'
-                    b' "slot": 88, ...}')`,
+                    b' "slot": 88, "depth": 2, ...}')`,
           note: 'Left to itself, Kafka would pick the partition from its own hash of the key, which is not the crawl\'s slot. Setting it keeps partition and slot the same number.',
         },
         {
@@ -1125,6 +1154,7 @@ SUCCESS`,
           lang: 'sql',
           code: `CREATE TABLE crawl.urls (
   url           text PRIMARY KEY,
+  depth         int,       -- hops from a seed
   status        int,
   etag          text,
   last_modified timestamp,
@@ -1147,6 +1177,7 @@ SUCCESS`,
   url           text,
   etag          text,
   last_modified timestamp,
+  depth         int,
   PRIMARY KEY ((bucket), next_fetch_at, url)
 );`,
           note: 'One partition per hour, rows sorted by due time inside it. That makes a window one read, and a busy hour one hot partition.',
@@ -1158,7 +1189,7 @@ SUCCESS`,
           lang: 'sql',
           code: `BEGIN BATCH USING TIMESTAMP 1794478801000000
   UPDATE crawl.urls
-  SET status = 200,
+  SET status = 200, depth = 1,
       etag = '"6731-a91c"',
       last_modified = '2026-11-12 10:12:00+0000',
       content_hash = 'sha256:4be1c0f29d7a5e3b',
@@ -1167,10 +1198,10 @@ SUCCESS`,
       next_fetch_at = '2026-11-12 10:50:01+0000'
   WHERE url = 'https://example.org/news';
   INSERT INTO crawl.urls_due
-    (bucket, next_fetch_at, url, etag, last_modified)
+    (bucket, next_fetch_at, url, etag, last_modified, depth)
   VALUES ('2026-11-12T10', '2026-11-12 10:50:01+0000',
     'https://example.org/news', '"6731-a91c"',
-    '2026-11-12 10:12:00+0000');
+    '2026-11-12 10:12:00+0000', 1);
 APPLY BATCH;`,
           note: 'About 400 a second. Both are upserts by key, and the write time is the fetch time (10:20:01), so a late retry of an older outcome loses.',
         },
@@ -1195,7 +1226,7 @@ WHERE url = 'https://example.org/news';`,
         {
           title: 'What is due between 10:50 and 11:00',
           lang: 'sql',
-          code: `SELECT url, etag, last_modified, next_fetch_at
+          code: `SELECT url, etag, last_modified, depth, next_fetch_at
 FROM crawl.urls_due
 WHERE bucket = '2026-11-12T10'
   AND next_fetch_at >= '2026-11-12 10:50:00+0000'
@@ -1213,7 +1244,7 @@ WHERE bucket = '2026-11-12T09';`,
           title: 'Last resort: rebuild a lost frontier',
           lang: 'sql',
           code: `-- one of 256 token ranges, run in parallel
-SELECT url, next_fetch_at, etag, last_modified
+SELECT url, next_fetch_at, etag, last_modified, depth
 FROM crawl.urls
 WHERE token(url) >  -9223372036854775808
   AND token(url) <= -9151314442816847872;
@@ -1605,6 +1636,7 @@ message QueuedUrl {
   int32 priority = 2;
   string etag = 3;           // sent back as If-None-Match
   string last_modified = 4;  // sent back as If-Modified-Since
+  int32 depth = 5;           // hops from a seed
 }
 
 message EnqueueReply {
@@ -1618,7 +1650,7 @@ message EnqueueReply {
           code: `// recrawl scheduler -> crawler-07, owner of slot 417
 Enqueue {
   urls: [
-    { url: "https://example.org/news", priority: 1,
+    { url: "https://example.org/news", priority: 1, depth: 1,
       etag: '"6731-a91c"',
       last_modified: "Thu, 12 Nov 2026 10:12:00 GMT" },
     ... 311 more URLs due in crawler-07's slots
@@ -2283,7 +2315,9 @@ HTTPS://Example.org:443/about#team
 https://blog.example.net/p/12
   -> slot 88, owner crawler-03: to discovered-urls
 /calendar/2099/01/
-  -> dropped: a date far in the future (trap rule)`,
+  -> dropped: a date far in the future (trap rule)
+/archive/2019/page/7      found on a page at depth 20
+  -> dropped: depth 21 is past the cap of 20`,
         },
         {
           title: 'The call',
@@ -2432,7 +2466,7 @@ poll()`,
           lang: 'sql',
           code: `BEGIN BATCH USING TIMESTAMP 1794478801000000
   UPDATE crawl.urls
-  SET status = 200,
+  SET status = 200, depth = 1,
       etag = '"6731-a91c"',
       last_modified = '2026-11-12 10:12:00+0000',
       content_hash = 'sha256:4be1c0f29d7a5e3b',
@@ -2441,10 +2475,10 @@ poll()`,
       next_fetch_at = '2026-11-12 10:50:01+0000'
   WHERE url = 'https://example.org/news';
   INSERT INTO crawl.urls_due
-    (bucket, next_fetch_at, url, etag, last_modified)
+    (bucket, next_fetch_at, url, etag, last_modified, depth)
   VALUES ('2026-11-12T10', '2026-11-12 10:50:01+0000',
     'https://example.org/news', '"6731-a91c"',
-    '2026-11-12 10:12:00+0000');
+    '2026-11-12 10:12:00+0000', 1);
 APPLY BATCH;`,
           note: 'The write timestamp is the fetch time, so a late retry of an older outcome loses to a newer one.',
         },
@@ -2453,6 +2487,7 @@ APPLY BATCH;`,
           lang: 'sql',
           code: `CREATE TABLE crawl.urls (
   url           text PRIMARY KEY,
+  depth         int,       -- hops from a seed
   status        int,
   etag          text,
   last_modified timestamp,
@@ -2482,14 +2517,14 @@ APPLY BATCH;`,
         {
           title: 'Range read (CQL)',
           lang: 'sql',
-          code: `SELECT url, etag, last_modified, next_fetch_at
+          code: `SELECT url, etag, last_modified, depth, next_fetch_at
 FROM crawl.urls_due
 WHERE bucket = '2026-11-12T10'
   AND next_fetch_at >= '2026-11-12 10:50:00+0000'
   AND next_fetch_at <  '2026-11-12 11:00:00+0000';
 
 -- https://example.org/news | "6731-a91c"
---   | 2026-11-12 10:12:00+0000 | 2026-11-12 10:50:01+0000
+--   | 2026-11-12 10:12:00+0000 | 1 | 2026-11-12 10:50:01+0000
 -- and the rest of the window, grouped by owning node`,
           note: 'The hour is the partition key, so a window is one partition read; it is also why a busy hour can be hot.',
         },
@@ -2502,6 +2537,7 @@ WHERE bucket = '2026-11-12T10'
   url           text,
   etag          text,
   last_modified timestamp,
+  depth         int,
   PRIMARY KEY ((bucket), next_fetch_at, url)
 );`,
         },
