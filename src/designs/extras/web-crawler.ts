@@ -550,7 +550,7 @@ export const extras: Extras = {
 
   crib: {
     idea: 'Each site sets its own pace, whatever hardware you have. Speed comes from crawling many sites at once, so the hard part is scheduling: picking the next URL without sending a site more than it allows.',
-    late: 'Still on many sites at 25 minutes? Move to many machines. Still deep at 47? Stop and say how you\'d run it.',
+    late: 'Still on many sites at 25? Move to many machines. Still deep at 47? Finish that point, then say how you\'d run it.',
     hour: [
       {
         when: '0 to 5',
@@ -580,7 +580,7 @@ export const extras: Extras = {
           'Tidy every URL into one spelling before the seen check.',
           'Mark a URL seen when you queue it, not when you fetch it.',
           'In Postgres: url (unique), status, lease until, attempts.',
-          'Pages go to object storage. Everything else is in the table, so a restart loses nothing.',
+          'Pages go to object storage. Everything else is in Postgres, so a restart loses nothing.',
           'It ends when the queue is empty and no worker is busy.',
         ],
       },
@@ -588,8 +588,8 @@ export const extras: Extras = {
         when: '16 to 22',
         title: 'Grow it to many sites',
         lines: [
-          'Give each site its own queue and a next-allowed time.',
-          'Cache DNS for its TTL and robots.txt for up to a day.',
+          'Give each site a queue and the time of its next allowed fetch. Keep those times in a heap.',
+          'Cache DNS for its TTL and robots.txt for up to a day. A 5xx on robots.txt means fetch nothing.',
           'On a 429 or 503, honour Retry-After or double the gap.',
           'Limit per IP address too: many sites can share one.',
         ],
@@ -598,8 +598,7 @@ export const extras: Extras = {
         when: '22 to 30',
         title: 'Grow it to many machines',
         lines: [
-          "First show one machine's limit: about 50 pages a second, 130 million a month.",
-          'For the whole web, redo the sums: a billion pages a month is about 400 a second.',
+          'First say what one machine carries: about 50 pages a second, an assumption, 130 million a month.',
           'Give each site one owner. Sites hash into 1,024 slots, and etcd holds who owns which.',
           "Each machine keeps its sites' queues and seen fingerprints on local disk, about 20 GB.",
           'The URL table moves to Cassandra or ScyllaDB. Pages stay in object storage.',
@@ -613,9 +612,9 @@ export const extras: Extras = {
           "If they don't steer, start with a worker dying, then one URL found twice, then the rate limiter.",
           'Workers acknowledge only after storing. If one dies, its lease runs out and the URL comes back.',
           'A page may be fetched twice. The data stays right: each write is an upsert with its fetch time.',
-          'If two workers find one URL, one atomic insert keeps the first. Never check first, then insert.',
-          'A shared rate limiter is a token bucket in Redis. If one machine owns a site, a timer will do.',
-          'If a machine dies or stalls, the others take its slots and raise the epoch, so its old writes fail.',
+          'If two workers find the same URL, an atomic insert keeps the first. Never check, then insert.',
+          'A token bucket in Redis limits IP addresses that many sites share. Per site, a local timer does.',
+          'If a machine dies or stalls, others take its slots and raise the epoch, so its late writes fail.',
           'The new owner waits out the old lease, plus a margin for clock drift, before its first fetch.',
           'It restores each slot from a snapshot, then replays Kafka.',
           'If the old machine wakes, it finds its lease gone and stops.',
@@ -628,7 +627,8 @@ export const extras: Extras = {
           'Ask one question back, then say what the change costs.',
           'For news within an hour, poll feeds and sitemaps and put new links at the front of the queue.',
           'Polling 1,000 sites, 10 pages each, every 5 minutes is 33 a second, about 8 per cent of 400.',
-          "For opt-in sites only, keep a verified list, drop every other link, and stop if it can't be read.",
+          "For opt-in sites only, keep a verified list and drop other links. Stop if the list can't be read.",
+          'That means far fewer sites, so it may fit on one machine again.',
         ],
       },
       {
@@ -675,8 +675,8 @@ export const extras: Extras = {
         about: 'About the small design',
         items: [
           { q: 'Why a queue and not recursion?', a: 'Recursion is depth-first: a long chain of links overflows the stack, and a crash loses its place. A durable queue survives both.' },
-          { q: 'Is Postgres enough?', a: 'For a million pages, yes, and as the queue too. It stops being enough when writes and the table outgrow one machine.' },
-          { q: 'How many workers?', a: 'Fetch rate times time per fetch: 10 a second at 1 second each is 10 in flight. Then measure, and stop adding when the rate stops rising.' },
+          { q: 'Is Postgres enough?', a: 'Yes for a million pages, and it can be the queue too. It stops being enough when writes and the table outgrow one machine.' },
+          { q: 'How many workers?', a: 'Fetch rate times seconds per fetch: 10 a second at 1 second each is 10 in flight. Measure, then stop adding when the rate stops rising.' },
           { q: 'Threads or async?', a: 'Threads are simplest for 10 to 20 fetches at once. An event loop holds thousands of connections in one process. Parse in other processes.' },
         ],
       },
@@ -685,29 +685,34 @@ export const extras: Extras = {
         items: [
           { q: 'What gets crawled first?', a: 'Seeds first, then pages that many others link to. Priority queues feed the per-site queues, so priority and pacing stay separate.' },
           { q: 'A site with endless pages, such as a calendar?', a: "Every URL really is new, so the seen check can't help. Give each site a page budget and a depth cap." },
-          { q: 'The same article at fifty URLs?', a: 'Hash the body to catch exact copies. For near copies use a 64-bit SimHash: pages 3 bits or fewer apart count as the same.' },
+          { q: 'The same article at fifty URLs?', a: 'Hash the body to catch exact copies. For near copies use a 64-bit SimHash: fingerprints 3 bits or fewer apart count as one page.' },
           { q: 'How do you keep pages fresh?', a: "Start with fixed tiers: news hourly, the rest monthly. Later, halve a page's interval when it changes and lengthen it when it doesn't." },
-          { q: 'Pages built with JavaScript?', a: 'Leave them out of the first version and say so. Later, queue them for a sandboxed rendering service that you buy, not build.' },
-          { q: 'Why not a Bloom filter?', a: 'It needs 12 GB, not 80. But 1 per cent false positives silently skip up to 100 million new pages. Fingerprints lose about three pages.' },
+          { q: 'Pages built with JavaScript?', a: 'The first version skips them. Later, queue them for a sandboxed rendering service, bought before built.' },
         ],
       },
       {
         about: 'About many machines',
         items: [
           { q: 'A shared queue, or one owner per site?', a: 'A shared queue for a one-off crawl. One owner per site for a crawl that never stops: each machine paces its own sites.' },
-          { q: 'Consistent hashing or a slot map?', a: 'A slot map. A ring moves as few sites, but a slot move is an explicit step with an epoch, so an old owner can be refused.' },
-          { q: 'How would you build a shared rate limiter?', a: 'A token bucket per key in Redis, taken in one Lua script. If Redis is down, drop to a slow fixed rate, never unlimited.' },
-          { q: 'Where does the data live at this size?', a: 'Pages in object storage, in WARC batches. URL rows in Cassandra or ScyllaDB: 3 TB, or 9 TB with three copies.' },
-          { q: 'Queues or distributed locks?', a: 'A queue leases one message. A lock keeps a rule across messages, such as one request per site. Better to give the site one owner.' },
-          { q: 'One URL crashes the worker every time?', a: "Count attempts and mark it dead after three. Run the parser in a sandbox so a crash can't take the fetcher down." },
+          { q: 'Consistent hashing or a slot map?', a: 'A slot map. A ring moves just as few sites, but a slot move is an explicit step with an epoch, so old owners are refused.' },
+          { q: 'Where does the data live at this size?', a: 'WARC batches of about 500 pages in object storage. URL rows come to 3 TB, or 9 TB with three copies.' },
+        ],
+      },
+      {
+        about: 'About the deep dives',
+        items: [
+          { q: 'How would you build a shared rate limiter?', a: 'A token bucket per key in Redis. One Lua script takes each token. If Redis is down, drop to a slow fixed rate, never unlimited.' },
+          { q: 'Queues or distributed locks?', a: 'A queue leases one message. A lock keeps a rule across messages. Better to give the site one owner.' },
+          { q: 'One URL crashes the worker every time?', a: "Mark it dead after three attempts. Parse in a sandbox so a crash can't take the fetcher down." },
+          { q: 'Why not a Bloom filter?', a: 'It needs 12 GB, not 80. But 1 per cent false positives silently skip up to 100 million new pages. Fingerprints lose about three pages.' },
         ],
       },
       {
         about: 'About running it',
         items: [
-          { q: 'How would you know it is being rude?', a: 'Count overlapping requests, gaps that were too short, and fetches robots.txt disallows. The target is zero.' },
+          { q: 'How would you know it is being rude?', a: 'Count overlapping requests, gaps that were too short, and fetches that robots.txt disallows. The target is zero.' },
           { q: 'Could it be turned against your own network?', a: 'Yes. Check every resolved address against private ranges, connect to that exact address, and check again on each redirect.' },
-          { q: 'How do you know failover works?', a: 'Run a drill: kill a real machine, and check that no site saw two requests at once.' },
+          { q: 'How do you know failover works?', a: 'Run a drill: kill a real machine, time how long its sites take to come back, and check no site saw two requests at once.' },
           { q: 'What does it cost?', a: 'Storage is the cost that keeps growing: 20 TB a month compressed. People cost most, because the scheduler is custom code.' },
         ],
       },
