@@ -953,7 +953,7 @@
 /* A stretch: its minutes as a dark tag in the margin, then what to do. A rule parts it from the one above. */
 .dx-sheet-hour > li {
   display: grid;
-  grid-template-columns: 5.8rem minmax(0, 1fr);
+  grid-template-columns: 6.6rem minmax(0, 1fr);
   gap: 0 12px;
   padding: 14px 8px 10px 10px;
   border-left: 4px solid transparent;
@@ -1074,7 +1074,7 @@
   .dx-sheet-jump button span {
     display: block;
     overflow: hidden;
-    font-size: 0.78rem;
+    font-size: 0.82rem;
     text-overflow: ellipsis;
   }
 
@@ -1152,6 +1152,12 @@
     margin-right: 10px;
   }
 
+  /* Every tag as wide as the widest ("Any time"), so the titles beside them start on one line down the column. */
+  .dx-sheet-when span {
+    min-width: 5.9rem;
+    text-align: center;
+  }
+
   .dx-sheet-hour h3 {
     line-height: 1.75;
   }
@@ -1211,7 +1217,10 @@
     overflow-x: auto;
     gap: 6px;
     margin-top: 2px;
+    padding-right: 28px;
     scrollbar-width: none;
+    /* The row fades at its right edge, to show there is more to the side. */
+    mask-image: linear-gradient(to right, #000 calc(100% - 44px), transparent);
   }
 
   .dx-sheet-jump::-webkit-scrollbar {
@@ -1265,7 +1274,7 @@
 @media screen and (max-width: 699px) {
   .dx-sheet-bar .dx-back,
   .dx-sheet-bar .dx-hint,
-  .dx-sheet-page.clocked .dx-sheet-bar .btn.primary {
+  .dx-sheet-page.clocked .dx-sheet-bar .dx-sheet-print {
     display: none;
   }
 
@@ -1775,6 +1784,8 @@
     background: none;
     color: #000;
     font-size: 8.5pt;
+    min-width: 45pt;
+    text-align: center;
   }
 
   html.crib-mode .dx-sheet-hour h3 {
@@ -1784,11 +1795,11 @@
   }
 
   html.crib-mode .dx-sheet-hour ul {
-    gap: 1.8pt;
+    gap: 1.4pt;
   }
 
   html.crib-mode .dx-sheet-hour > li + li {
-    margin-top: 5pt;
+    margin-top: 6.5pt;
   }
 
   html.crib-mode .dx-sheet-hour ul li,
@@ -1827,7 +1838,7 @@
   }
 
   html.crib-mode .dx-sheet-s-asked {
-    margin-top: 12pt;
+    margin-top: 16pt;
   }
 
   html.crib-mode .dx-sheet-keep {

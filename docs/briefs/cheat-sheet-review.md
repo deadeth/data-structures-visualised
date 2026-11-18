@@ -83,7 +83,17 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
   its own "Numbers" button. With the clock running the strip makes way for the "Now" pill, so the
   bar stays two rows.
 - "When they change the brief" is "Any time" because an interviewer may change it early; "(often
-  44)" says where the rehearsal puts it. "4 minutes each" in the deep dives leaves room for it.
+  44)" says where the rehearsal puts it. "3 minutes each" puts the four deep dives at 30 to 42,
+  naming the weakest part at 42 to 44, and the change of brief at 44 to 49, as the rehearsal has it.
+- Naming the weakest part is the last line of the deep dives, where the rehearsal puts it, and
+  is not also a habit. The sixth habit is the rehearsal's rule for the last stage: two or three
+  sentences an answer.
+- "The new owner waits out the old lease, plus clock drift" is kept to one printed line to pay for
+  the weakest-part line.
+- 86,400 a day is in the numbers and again in the sums, because it is said aloud in the sums.
+- Before the clock starts, "Start the clock" is the filled button and Print the plain one.
+- The minute tags share one width (on paper, and on a monitor below 1700px), so the titles beside
+  them start on one line down each column.
 - Two closing questions, not three: the rehearsal asks for two or three, and page 1 has no line.
 - The rehearsal's "say what breaks first" for each step up is the habit "For each choice, say the
   problem it fixes, the alternative and what yours costs", so it is not repeated in each stretch.
@@ -96,8 +106,9 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
   170px and wrap it to four lines, saving no height.
 - The current stretch is marked three ways (bar, fill, outline) so it is found from the corner of
   the eye; it is meant to be the heaviest thing on the page.
-- On paper the hour's bullets have 1.8pt between them and 1.25 leading inside them; section
-  headings are 13.5pt and the question groups' headings 11.5pt.
+- On paper the hour has 6.5pt between stretches, 1.4pt between bullets and 1.25 leading inside
+  them. Section headings are 13.5pt and the question groups' headings 11.5pt. The two columns of
+  page 1 both end at the foot of the page: a point more anywhere pushes a stretch to page 2.
 - "Say how you'd run it" lists what pages someone, as the notes' on-call list does; what waits for
   the morning (Kafka lag, repeat fetches) is left to the notes.
 - With the clock running, below 1500px wide, the "Back to" link leaves the bar to make room; "Reset"
@@ -133,7 +144,7 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
    quote the line and give the exact replacement; for layout, say what to change and at which size;
    for a missing point, give the line you would add and where, and what you would cut to make room
    (page 1 is full: no spare line in either column, so any added line needs a cut beside it;
-   page 2 has about two lines spare on the left and one on the right; "Keep doing" now has six
+   page 2 has about one line spare on the left and none on the right; "Keep doing" now has six
    habits, three a side). The sheet must stay two A4 pages.
 3. Anything outside your categories that is plainly wrong, in one line each.
 

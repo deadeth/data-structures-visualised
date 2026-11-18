@@ -649,7 +649,9 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     el.classList.toggle('clocked', !!began);
     startBtn.textContent = began ? 'Reset' : 'Start the clock';
     // Once running, the way to stop it steps back: the buttons to press mid-interview are the ones that find a place.
+    // Before that, starting it is the one thing to do here, so it is the filled button and Print the plain one.
     startBtn.classList.toggle('quiet', !!began);
+    startBtn.classList.toggle('primary', !began);
     elapsed.hidden = !began;
     // With the clock running the bar has more to hold: the hint makes way, so it stays one row.
     hint.hidden = !!began;
@@ -679,7 +681,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     h(
       'div.dx-crib-bar.dx-sheet-bar', null,
       h('p.dx-back', null, h('a', { href: `#/d/${id}` }, `Back to ${design.name}`)),
-      h('p.dx-crib-tools', null, nowBtn, toNumbersPhone, answersBtn, elapsed, startBtn, h('button.btn.primary', { type: 'button', onclick: () => window.print() }, 'Print'), hint),
+      h('p.dx-crib-tools', null, nowBtn, toNumbersPhone, answersBtn, elapsed, startBtn, h('button.btn.dx-sheet-print', { type: 'button', onclick: () => window.print() }, 'Print'), hint),
       h('nav.dx-sheet-jump', { 'aria-label': 'The hour' }, toNumbers, jumps),
     ),
     sheet,

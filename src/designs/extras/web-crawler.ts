@@ -570,7 +570,7 @@ export const extras: Extras = {
         title: 'Do the sums out loud',
         lines: [
           'A million pages at 1 a second takes 11.6 days. At 10 a second, if the site allows, about 28 hours.',
-          'A million pages at 100 KB is 100 GB. Or is it a billion?',
+          "A million at 100 KB is 100 GB. Ask if it's a billion.",
           'At 1 a second a site gives at most 86,400 pages a day, so sites set the pace, not the hardware.',
         ],
       },
@@ -615,15 +615,16 @@ export const extras: Extras = {
         short: 'Deep dives',
         title: 'Go deeper where they ask',
         lines: [
-          "If they don't steer: a worker dying, a URL found twice, the limiter, a dead machine. 4 minutes each.",
-          "Acknowledge after saving the page and links. A dead worker's lease ends and its URL is retried.",
+          "If they don't steer: a worker dying, a URL found twice, the limiter, a dead machine. 3 minutes each.",
+          "A dead worker's lease ends and its URL is retried. Acknowledge after saving the page and links.",
           'A page may be fetched twice. The data stays right: upserts by URL, and the newer fetch wins.',
           'Two workers find the same URL? An atomic insert keeps the first. Never check and then insert.',
           'A local timer paces each site. A Redis token bucket limits IP addresses that many sites share.',
           'If a machine dies or stalls, others take its slots and raise the epoch, so its late writes fail.',
-          'The new owner waits out the old lease, plus a margin for clock drift, before its first fetch.',
+          'The new owner waits out the old lease, plus clock drift.',
           "It loads each slot's snapshot and replays Kafka from there.",
           'If the old machine wakes, it finds its lease gone and stops.',
+          'Name the weakest part, the scheduler, and invite a push.',
         ],
       },
       {
@@ -678,7 +679,7 @@ export const extras: Extras = {
       'For each choice, say the problem it fixes, the alternative and what yours costs.',
       'Check in now and then: “Is this the level of detail you want?”',
       'Say what happens when each part fails.',
-      'Name the weakest part, the custom scheduler few understand, and invite them to push on it.',
+      "On how you'd run it, keep each answer to two or three sentences, then offer to go further.",
     ],
     asked: [
       {
@@ -711,7 +712,7 @@ export const extras: Extras = {
           { q: 'A shared queue, or one owner per site?', a: 'For a one-off crawl, a shared queue and a shared per-site limiter. For one that never stops, one owner per site, so pacing needs no lock.' },
           { q: 'Consistent hashing or a slot map?', a: "A slot map. Both move few sites, but a slot move is one explicit step with its own epoch, so the old owner's late writes fail." },
           { q: 'Why Cassandra or ScyllaDB?', a: 'It suits small upserts by key and grows by adding machines. 3 TB is 9 TB in three copies. The cost: a table per query, no joins.' },
-          { q: "What if etcd can't be reached?", a: 'Machines pause. That is the price of one agreed answer on who owns each site.' },
+          { q: "What if etcd can't be reached?", a: 'Machines pause, and someone is woken. That is the price of one agreed answer on who owns each site.' },
         ],
       },
       {
