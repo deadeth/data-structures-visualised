@@ -63,12 +63,13 @@ export const webCrawler: Design = {
     {
       id: 'recrawl',
       name: 'Recrawl scheduler',
-      tech: 'next_fetch_at',
+      tech: 'scheduler service',
       short: 'Recrawl',
-      x: 70, y: 214, w: 130, h: 56, kind: 'input',
-      what: 'Feeds URLs back into the frontier when they are due again. Each URL carries a next fetch time, set from how often the page has changed in the past.',
+      x: 70, y: 214, w: 130, h: 56, kind: 'shared',
+      what: 'A small service of its own, outside the crawler nodes, that feeds URLs back into the frontier when they are due again. On a timer it reads from the metadata store the URLs whose next fetch time has come, and calls Enqueue on the node that owns each one. The next fetch time is set after every fetch, from how often the page has changed in the past.',
       why: 'A crawl that never revisits goes stale within weeks. One that revisits everything on a fixed timer wastes most of its budget on pages that never change.',
       built: [
+        { name: 'A scheduler service', what: 'A small program, separate from the crawler nodes, that runs on a timer. Each run reads one window of the due table (crawl.urls_due) in the metadata store, groups the URLs by the node that owns them, and calls Enqueue on each owner in batches.', why: 'It holds no data of its own: what is due lives in the metadata store, and what is queued lives in each frontier. If it stops, nothing is lost: the due rows wait in the table, and revisits fall behind until it runs again. Enqueue ignores a URL that is already queued, so a repeated run does no harm.' },
         { name: 'next_fetch_at', what: 'A column on each URL\'s row in the metadata store: the time the page should next be fetched. It is set after every fetch from how often the page has changed before.', why: 'Visits go where a change is likely: a change halves the interval, no change lengthens it. It needs no new store, being one more column written with the outcome, and a second table keyed by the hour it falls in lets the scheduler read what is due without a scan of 10 billion rows.' },
         { name: 'Conditional requests', what: 'HTTP headers that ask the server to send the page only if it changed: If-None-Match with the saved ETag, If-Modified-Since with the saved date. An unchanged page answers 304 with headers and no body.', why: 'They make a wasted revisit almost free: a 304 against about 100 KB for a full page. That is what lets the scheduler err towards visiting.' },
       ],
