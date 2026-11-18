@@ -1,6 +1,7 @@
 # Reviewing a cheat sheet for a system design interview
 
-You are one of four independent reviewers. You have not seen any earlier review and must not look for one.
+A round has three advisors and one judge. Your task message says which you are. Nobody on the
+panel has seen an earlier round, and you must not look for one.
 Do not edit any file in the repo. Do not run git. Write nothing except your report (your final message).
 
 ## What is being reviewed
@@ -178,15 +179,38 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
 
 ## What to report
 
-1. A score out of 10 for each of YOUR TWO categories (named in your task), with two or three
-   sentences of reasons each. Be strict: 9 means you would hand it to the candidate as it is; 10
-   means you cannot find anything worth changing. Do not round up to be kind.
-2. Every change needed to reach 9 in each category, most important first. Be concrete: for wording,
-   quote the line and give the exact replacement; for layout, say what to change and at which size;
-   for a missing point, give the line you would add and where, and what you would cut to make room
-   (page 1 is full: no spare line in either column, so any added line needs a cut beside it;
-   page 2 has about one line spare on the left and none on the right; "Keep doing" now has six
-   habits, three a side). The sheet must stay two A4 pages.
-3. Anything outside your categories that is plainly wrong, in one line each.
+### If you are an advisor
 
-Keep the report under 600 words. Scores first, in the form `Category name: N/10`.
+You look at one side of the sheet (named in your task) and advise the judge. You give no scores.
+
+1. What is wrong or weak in your area, most important first. Be concrete: for wording, quote the
+   line and give the exact replacement; for layout, say what to change and at which size; for a
+   missing point, give the line you would add and where, and what you would cut to make room
+   (page 1 is full: no spare line in either column, so any added line needs a cut beside it;
+   page 2 has about one line spare on the left and none on the right). The sheet must stay two
+   A4 pages. Say for each point whether it would stop you handing the sheet to the candidate as
+   it is, or is polish.
+2. What you checked and found sound, in a few lines, so the judge knows what was covered.
+3. Anything outside your area that is plainly wrong, in one line each.
+
+Keep the report under 500 words.
+
+### If you are the judge
+
+You score all eight categories out of 10: Facts and figures; Technical soundness; Coverage;
+Order and timing; Glance on screen; Print; Sounds human; Clear at a glance. The advisors'
+reports for this round are in the round folder's `advice/` directory. They are advice: check
+each point you rely on against the sheet itself, and set aside any that the "deliberate" list
+already answers or that you judge to be taste. Read the sheet yourself as well; the two writing
+categories have no advisor and are yours alone.
+
+Be strict: 9 means you would hand it to the candidate as it is; 10 means you cannot find
+anything worth changing. Do not round up to be kind, and do not mark down for a point you would
+not ask to be changed.
+
+1. Scores first, in the form `Category name: N/10`, each with two or three sentences of reasons.
+2. For every category below 9, the changes needed to reach 9, most important first, as exactly
+   as an advisor would give them (quoted line and replacement, or what to change at which size).
+3. Optional polish for categories at 9 or above, kept short.
+
+Keep the report under 800 words.

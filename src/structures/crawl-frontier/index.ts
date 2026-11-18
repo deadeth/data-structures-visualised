@@ -566,6 +566,16 @@ const HEAD_Y = -(CELL_H / 2 + PROBE_H + 16 + 12);
 const LEFT = FRONT_X - SLOT_W / 2 - LANE_GAP - 6 * LABEL_CHAR_W;
 const RIGHT = HEAP_X + HEAP_GAP / 2 + HEAP_W;
 const BOTTOM = LEASE_Y + CELL_H / 2 + CAPTION_ROOM;
+/** The frame round one crawler machine: a title above the headings, the way out under the leases. */
+const FRAME_PAD = 10;
+/** Narrow lines, so a phone scrolled sideways shows the title whole or not at all. */
+const TITLE = 'One crawler machine.\nQueues and host table:\nRocksDB on its own disk.\nHeap: in memory.';
+const TITLE_Y = HEAD_Y - 4 * LABEL_LINE - 12;
+const FRAME_TOP = TITLE_Y - LABEL_MAX * 0.65 - FRAME_PAD;
+const OUT_Y = BOTTOM + LABEL_MAX * 0.65 + 4;
+const FRAME_BOTTOM = OUT_Y + LABEL_LINE + LABEL_MAX * 0.65 + FRAME_PAD;
+/** The way in sits under the low front queue, level with the leases. */
+const IN_Y = 2 * ROW + CELL_H / 2 + 12 + LABEL_MAX * 0.65;
 
 /** Heap index to its place: the root on top, its two children under it. */
 function heapPlace(i: number): { x: number; y: number } {
@@ -594,6 +604,9 @@ export function layout(s: FrontierState): Scene {
   });
   const slot = (id: string, x: number, y: number): SceneNode => ({ id, x, y, cells: [{ text: '', w: SLOT_W }] });
   const decor: Decor[] = [
+    // Where all of this lives in a real crawler: one machine, its own disk and memory.
+    // No hue: furniture, not state. First, so it is drawn under everything else.
+    { id: 'machine', type: 'band', x: LEFT - FRAME_PAD, y: FRAME_TOP, w: RIGHT - LEFT + 2 * FRAME_PAD, h: FRAME_BOTTOM - FRAME_TOP },
     { id: 'head-front', type: 'label', x: FRONT_X - SLOT_W / 2, y: HEAD_Y, text: 'Front queues', strong: true },
     { id: 'head-back', type: 'label', x: BACK_X - SLOT_W / 2, y: HEAD_Y, text: 'Back queues', strong: true },
     { id: 'head-table', type: 'label', x: TABLE_X - TABLE_W / 2, y: HEAD_Y, text: 'Host table', strong: true },
@@ -601,6 +614,11 @@ export function layout(s: FrontierState): Scene {
     // Two empty labels pin the corners, so the view holds still as heap entries and leases come and go.
     { id: 'corner-a', type: 'label', x: LEFT, y: HEAD_Y, text: '' },
     { id: 'corner-b', type: 'label', x: RIGHT, y: BOTTOM - LABEL_MAX * 0.65, text: '' },
+    { id: 'machine-label', type: 'label', x: LEFT, y: TITLE_Y, text: TITLE },
+    // Under the low front queue, where nothing else is drawn.
+    { id: 'way-in', type: 'label', x: LEFT, y: IN_Y, text: 'in: from its own parser,\nand from other machines\nby Kafka' },
+    // Under the leases, lined up with their row label, and short enough to sit inside a phone's view.
+    { id: 'way-out', type: 'label', x: BACK_X - SLOT_W / 2 - LANE_GAP - 6 * LABEL_CHAR_W, y: OUT_Y, text: 'out: to a fetcher\non this machine' },
   ];
 
   // Front queues: one row per priority, head on the left.

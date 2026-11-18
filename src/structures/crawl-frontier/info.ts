@@ -10,6 +10,7 @@ export const info: Info = {
     'After a lease the host gets a new time, clock + delay, and its queue goes back into the heap behind the hosts that are due sooner. That is why hosts take turns.',
     'A back queue that runs empty pulls from the front queues, highest priority first. Each pulled URL is looked up in the host table: a known host sends it to that host\'s queue, an unknown host takes over the empty queue.',
     'A host that gives up its queue keeps its time in the table. Watch the ready column: if the host comes back, it does not get a free early request.',
+    'The frame is one crawler machine. Its queues and host table are kept in RocksDB on that machine\'s own disk, and the heap in memory. Nothing drawn here is Kafka: Kafka only carries links from one machine to another, and a link that arrives that way is added to a front queue like any other.',
     'This page has 3 back queues, 4 slots in each queue and 5 hosts so that everything stays readable. It also uses one fixed delay for every host.',
   ],
   complexity: [
@@ -68,6 +69,7 @@ export const info: Info = {
     'Say what politeness means in numbers: one request in flight per host, and a gap between requests. A common rule is the largest of a floor such as 1 second, the Crawl-delay in robots.txt, and about ten times the last response time. At 1 request a second that is 86,400 pages a day from any one site, whatever the size of your fleet.',
     'Know the sizing rule: about three back queues per fetcher thread. Fewer and threads wait on hosts that are not due. The heap is tiny, so Next costs O(log B) for B back queues, not O(log n) for n URLs.',
     'Durability: "Billions of URLs do not fit in memory, so the queues are on disk with only their heads and tails cached. I would keep them in an embedded store such as RocksDB, snapshot it, and replay a log of discovered URLs after a crash."',
+    'Where each piece lives: "The frontier is local to the machine that owns the site, in an embedded store such as RocksDB. Kafka sits between machines and carries links to their owner. If a machine is lost, the new owner loads a snapshot of its frontier and replays Kafka from the position saved with it." The web crawler design on this site shows that failover step by step.',
     'Distribution: "Hash the host to a node, so every URL for a host lands on one node and politeness stays a local decision with no network call." Then name the gap: many hosts can share one IP address and land on different nodes, so busy addresses need a shared rate limit as well.',
     'Hand-outs are leases with a deadline, so fetching is at-least-once. If a fetcher dies the URL returns to its queue. Say that this means a page can be fetched twice and the stages after it must cope.',
     'If asked "why not just use SQS or Kafka?": they are good pipes between stages, but neither can hold one host back while serving another, or reorder by priority. You end up rebuilding the frontier around them with a lock per host and constant re-queueing.',
