@@ -20,6 +20,7 @@ export const DESIGNS: DesignEntry[] = [
     hint: 'Follow one URL round the crawl loop',
     question: 'Design a distributed web crawler.',
     load: () => import('./web-crawler').then((m) => m.webCrawler),
+    extras: () => import('./extras/web-crawler').then((m) => m.extras),
   },
   {
     id: 'ledger',

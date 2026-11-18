@@ -2872,6 +2872,8 @@ WHERE bucket = '2026-11-12T10'
         why: 'Reading is not the same as saying it against a clock.',
         items: [
           { href: '#/course/classic-prompts/web-crawler', label: 'Design it cold, in the course', minutes: 45, take: 'Answer the prompt out loud with a timer and a blank page, before looking at anything here. Then mark yourself against the walkthrough.' },
+          { href: '#/d/web-crawler/rehearse', label: 'The 60-minute rehearsal', minutes: 60, take: 'Talk through all eight stages out loud against the clock, drawing as you go. Do it once for one site and a million pages, and once for the whole web.' },
+          { href: '#/d/web-crawler/crib', label: 'The crib', minutes: 5, take: 'The opening, the numbers and the lines to say, for a last look on the day.' },
           { href: '#/d/web-crawler/read/pacing', label: 'Pacing the interview', minutes: 5, take: 'Check your timings against the last section of the walkthrough: where you ran long, and what you never reached.' },
         ],
       },
