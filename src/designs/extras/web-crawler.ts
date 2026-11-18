@@ -560,7 +560,7 @@ export const extras: Extras = {
           "Ask what it's for, and whether it runs once or keeps going.",
           'Agree to obey robots.txt, wait 1 second between requests to a site, and publish a contact page.',
           'Leave out JavaScript pages, images and logins, and say so.',
-          'Sketch both in a sentence each: one machine with Postgres, or 20 machines. Then draw the small one.',
+          "Describe both designs in a sentence each: one machine with Postgres, or 20. Say you'll start small.",
         ],
       },
       {
@@ -579,7 +579,7 @@ export const extras: Extras = {
           'Draw six parts: a queue, workers, a parser, a seen set, a rate limiter and a store.',
           'Tidy every URL into one spelling before the seen check.',
           'Mark a URL seen when you queue it, not when you fetch it.',
-          'In Postgres: url (unique), status, lease until, attempts.',
+          'One table: url (unique), status, lease until, attempts.',
           'Pages go to object storage. Everything else is in Postgres, so a restart loses nothing.',
           'It ends when the queue is empty and no worker is busy.',
         ],
@@ -600,9 +600,9 @@ export const extras: Extras = {
         lines: [
           'First say what one machine carries: an assumed 50 pages a second, about 130 million a month.',
           'Give each site one owner. Sites hash into 1,024 slots, and etcd holds who owns which.',
-          "Each machine keeps its sites' queues and seen fingerprints on local disk, about 20 GB.",
+          "Each machine keeps its sites' queues (about 15 GB) and seen fingerprints (4 GB) on local disk.",
           'The URL table moves to Cassandra or ScyllaDB. Pages stay in object storage.',
-          "Kafka carries links between machines. It doesn't schedule: the machine that owns a site does.",
+          "Kafka, keyed by site, carries each link to the site's owner. It moves links and doesn't schedule.",
         ],
       },
       {
@@ -610,7 +610,7 @@ export const extras: Extras = {
         title: 'Go deeper where they ask',
         lines: [
           "If they don't steer, take a worker dying, a URL found twice, the rate limiter, then a dead machine.",
-          "Acknowledge after saving the page and its links. A dead worker's lease ends and the URL returns.",
+          "Acknowledge after saving the page and links. A dead worker's lease ends and its URL is retried.",
           'A page may be fetched twice. The data stays right: each write is an upsert with its fetch time.',
           'Two workers find the same URL? An atomic insert keeps the first. Never check and then insert.',
           'A local timer paces each site. A Redis token bucket limits IP addresses that many sites share.',
@@ -625,10 +625,10 @@ export const extras: Extras = {
         title: 'When they change the brief',
         lines: [
           'Ask one question back, then say what the change costs.',
-          'For news within an hour, poll feeds and sitemaps and put new links at the front of the queue.',
+          'For news within an hour, poll feeds and sitemaps and give new links top priority.',
           'Polling 1,000 sites, 10 pages each, every 5 minutes is 33 a second, about 8 per cent of 400.',
           "For opt-in sites only, keep a verified list and drop other links. Stop if the list can't be read.",
-          'That means far fewer sites, so one machine may do again.',
+          'With far fewer sites, one machine may be enough again.',
         ],
       },
       {
@@ -638,10 +638,10 @@ export const extras: Extras = {
           'Promise zero politeness violations, counted from the fetch log. One breach wakes someone.',
           'Also watch the fetch rate, Kafka lag and repeat fetches.',
           'One dead machine wakes nobody: the others take its sites.',
-          'Ship one site, then many sites, then many machines. Each step waits for a measured limit.',
+          'Ship one site, then many sites, then many machines. Move on only when you hit a measured limit.',
           'Buy Kafka, the databases and rendering. Build the scheduler and the URL rules.',
           'At first one team of four to six owns it all. One named person answers for politeness.',
-          'Cover the legal side: obey robots.txt, publish a contact page, answer takedowns fast.',
+          'Cover the legal side: obey robots.txt, publish a contact page, answer takedowns, no proxy rotation.',
         ],
       },
       {
@@ -676,7 +676,7 @@ export const extras: Extras = {
         when: '8 to 16',
         items: [
           { q: 'Why a queue and not recursion?', a: 'Recursion is depth-first: a long chain of links overflows the stack, and a crash loses its place. A durable queue survives both.' },
-          { q: 'Is Postgres enough?', a: 'Yes for a million pages, and it can be the queue too. It stops being enough when writes and the table outgrow one machine.' },
+          { q: 'Is Postgres enough?', a: 'Yes for a million pages: 10 pages a second is about 500 seen checks. It can be the queue too, until writes outgrow one machine.' },
           { q: 'How many workers?', a: 'Fetch rate times seconds per fetch: 10 a second at 1 second each is 10 workers. Measure, then stop adding when the rate stops rising.' },
           { q: 'Threads or async?', a: 'Threads are simplest for 10 to 20 fetches at once. An event loop holds thousands of connections in one process. Parse in other processes.' },
         ],
@@ -698,7 +698,7 @@ export const extras: Extras = {
         when: '22 to 30',
         items: [
           { q: 'A shared queue, or one owner per site?', a: 'A shared queue for a one-off crawl. One owner per site for a crawl that never stops: each machine paces its own sites.' },
-          { q: 'Consistent hashing or a slot map?', a: 'A slot map. A ring moves just as few sites, but a slot move is an explicit step with an epoch, so old owners are refused.' },
+          { q: 'Consistent hashing or a slot map?', a: 'A slot map. A ring moves just as few sites, but a slot move is an explicit step with an epoch, so late writes fail.' },
           { q: 'Where does the data live at this size?', a: 'WARC batches of about 500 pages in object storage. URL rows come to 3 TB, or 9 TB with three copies.' },
         ],
       },
@@ -706,8 +706,8 @@ export const extras: Extras = {
         about: 'About the deep dives',
         when: '30 to 49',
         items: [
-          { q: 'How would you build a shared rate limiter?', a: 'A Redis token bucket per key. A Lua script takes a token in one step. If Redis is down, use a slow fixed rate, never unlimited.' },
-          { q: 'Queues or distributed locks?', a: 'A queue leases one message. A lock enforces one fetch at a time per site. One owner needs no lock.' },
+          { q: 'How would you build a shared rate limiter?', a: 'A Redis token bucket per IP address. A Lua script takes a token in one step. If Redis is down, use a slow fixed rate, never unlimited.' },
+          { q: 'Queues or distributed locks?', a: 'A queue leases one message. A lock enforces one fetch at a time per site. One owner needs no lock per fetch, only a lease on its slots.' },
           { q: 'One URL crashes the worker every time?', a: "Mark it dead after three attempts. Parse in a sandbox so a crash can't take the fetcher down." },
           { q: 'Why not a Bloom filter?', a: 'It needs 12 GB, not 80. But 1 per cent false positives silently skip up to 100 million new pages. Fingerprints lose about three pages.' },
         ],

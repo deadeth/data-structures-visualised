@@ -896,7 +896,7 @@
   padding: 6px 14px;
   border-left: 4px solid var(--ink);
   background: #eef2f8;
-  font-size: 1.06rem;
+  font-size: 1rem;
   font-weight: 600;
   line-height: 1.4;
 }
@@ -1025,6 +1025,14 @@
   cursor: pointer;
 }
 
+.dx-sheet-jump .dx-sheet-jump-figs {
+  flex: 0 0 auto;
+  padding: 0 12px;
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+
 .dx-sheet-jump button.now {
   border-color: var(--key);
   background: var(--key);
@@ -1032,7 +1040,7 @@
 }
 
 @media (hover: hover) {
-  .dx-sheet-jump button:not(.now):hover {
+  .dx-sheet-jump button:not(.now):not(.dx-sheet-jump-figs):hover {
     background: #e4eaf4;
   }
 }
@@ -1040,8 +1048,8 @@
 /* A group of questions carries its stretch's minutes, and is marked while the clock is in that stretch. */
 .dx-sheet-gwhen {
   margin-left: 8px;
-  font: 600 0.9em var(--sans-data);
-  color: var(--ink-2);
+  font: 760 0.92em var(--sans-data);
+  color: var(--ink);
 }
 
 .dx-sheet-groups section {
@@ -1063,7 +1071,32 @@
 }
 
 .dx-sheet-hour > li {
-  scroll-margin-top: 110px;
+  scroll-margin-top: 104px;
+}
+
+.dx-sheet-figs {
+  scroll-margin-top: 140px;
+}
+
+/* A monitor of ordinary width: the minutes sit on the title's line, as on paper, so the lines below run the
+   column's full width and wrap less. A wide monitor keeps them in the margin. */
+@media screen and (min-width: 900px) and (max-width: 1699px) {
+  .dx-sheet-hour > li {
+    display: block;
+  }
+
+  .dx-sheet-when {
+    float: left;
+    margin-right: 10px;
+  }
+
+  .dx-sheet-hour h3 {
+    line-height: 1.75;
+  }
+
+  .dx-sheet-hour > li > div > ul {
+    clear: left;
+  }
 }
 
 .dx-sheet-elapsed {
@@ -1105,8 +1138,14 @@
 /* A phone: the bar keeps to what the clock needs. */
 @media screen and (max-width: 699px) {
   .dx-sheet-bar .dx-back,
-  .dx-sheet-bar .dx-hint {
+  .dx-sheet-bar .dx-hint,
+  .dx-sheet-page.clocked .dx-sheet-bar .btn.primary {
     display: none;
+  }
+
+  .dx-sheet-hour > li,
+  .dx-sheet-groups section {
+    scroll-margin-top: 120px;
   }
 
   .dx-sheet-bar .dx-crib-tools {
@@ -1555,6 +1594,10 @@
     display: none;
   }
 
+  html.crib-mode .dx-sheet-gwhen {
+    font-weight: 800;
+  }
+
   html.crib-mode .dx-sheet-gwhen,
   html.crib-mode .dx-sheet-groups section.now h3,
   html.crib-mode .dx-sheet-groups section.now .dx-sheet-gwhen {
@@ -1631,7 +1674,7 @@
 
   html.crib-mode .dx-sheet-s-remember,
   html.crib-mode .dx-sheet-s-asked {
-    font-size: 10pt;
+    font-size: 10.2pt;
   }
 
   html.crib-mode .dx-sheet-s-asked {
