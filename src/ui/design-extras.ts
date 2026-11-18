@@ -548,23 +548,28 @@ export function cue(text: string, max = 120): string {
  * A hand-written cheat sheet (Extras.crib): the interview by the clock, the figures to say, habits to keep and short
  * answers to likely questions. Whole short sentences in large type, for a second screen; two A4 pages printed.
  */
-function cribSheet(entry: DesignEntry, design: Design, crib: Crib): HTMLElement {
+function cribSheet(_entry: DesignEntry, design: Design, crib: Crib): HTMLElement {
   const id = design.id;
   const hid = (k: string) => `${id}-sheet-${k}`;
   const sec = (key: string, title: string, ...body: HTMLElement[]) => h(`section.dx-sheet-sec.dx-sheet-s-${key}`, { 'aria-labelledby': hid(key) }, h('h2', { id: hid(key) }, title), ...body);
-  // The hour in two columns read downwards, cut where the two come out nearest the same height (a stretch costs its
-  // title and its lines).
-  const cost = crib.hour.map((s) => 2 + s.lines.length);
-  const total = cost.reduce((a, b) => a + b, 0);
-  let cut = 1;
-  for (let k = 1, left = 0, best = Infinity; k < cost.length; k++) {
-    left += cost[k - 1];
-    if (Math.abs(total - 2 * left) < best) {
-      best = Math.abs(total - 2 * left);
-      cut = k;
+  /** A list in two columns read downwards, cut where the two come out nearest the same height. */
+  function halves<T>(items: T[], cost: (x: T) => number): T[][] {
+    const c = items.map(cost);
+    const total = c.reduce((a, b) => a + b, 0);
+    let cut = 1;
+    for (let k = 1, left = 0, best = Infinity; k < c.length; k++) {
+      left += c[k - 1];
+      if (Math.abs(total - 2 * left) < best) {
+        best = Math.abs(total - 2 * left);
+        cut = k;
+      }
     }
+    return [items.slice(0, cut), items.slice(cut)].filter((x) => x.length);
   }
-  const halves = [crib.hour.slice(0, cut), crib.hour.slice(cut)].filter((x) => x.length);
+  // A stretch costs its title and its lines, a longer line a little more; an answer its question and about a row for
+  // every 60 characters.
+  const hour = halves(crib.hour, (s) => 2.2 + s.lines.reduce((n, t) => n + 1 + (t.length > 62 ? 0.9 : 0), 0));
+  const asked = halves(crib.asked, (x) => 2 + Math.ceil(x.a.length / 60));
   return h(
     'article.dx-page.dx-crib-page.dx-sheet-page', null,
     h(
@@ -574,18 +579,16 @@ function cribSheet(entry: DesignEntry, design: Design, crib: Crib): HTMLElement 
     ),
     h(
       'div.dx-crib.dx-sheet', null,
-      h('header.dx-crib-head', null, h('h1', null, design.name, h('span.dx-crib-kind', null, ': cheat sheet')), h('p.dx-sheet-q', null, entry.question)),
+      h('header.dx-crib-head', null, h('h1', null, design.name, h('span.dx-crib-kind', null, ': cheat sheet'))),
       h('p.dx-sheet-idea', null, crib.idea),
+      sec('numbers', 'Numbers to say', h('dl.dx-sheet-figs', null, crib.numbers.map((n) => h('div', null, h('dt', null, n.figure), h('dd', null, n.what))))),
       sec(
         'hour', 'The hour, by the minute',
-        h('div.dx-sheet-cols', null, halves.map((part) => h('ol.dx-sheet-hour', null, part.map((s) => h('li', null, h('p.dx-sheet-when', null, s.when), h('div', null, h('h3', null, s.title), h('ul', null, s.lines.map((t) => h('li', null, t))))))))),
+        ...(crib.late ? [h('p.dx-sheet-late', null, crib.late)] : []),
+        h('div.dx-sheet-cols', null, hour.map((part) => h('ol.dx-sheet-hour', null, part.map((s) => h('li', null, h('p.dx-sheet-when', null, h('span', null, s.when)), h('div', null, h('h3', null, s.title), h('ul', null, s.lines.map((t) => h('li', null, t))))))))),
       ),
-      h(
-        'div.dx-sheet-pair', null,
-        sec('numbers', 'Numbers to say', h('dl.dx-sheet-figs', null, crib.numbers.map((n) => h('div', null, h('dt', null, n.figure), h('dd', null, n.what))))),
-        sec('remember', 'Keep doing', h('ul.dx-sheet-keep', null, crib.remember.map((t) => h('li', null, t)))),
-      ),
-      sec('asked', 'If they ask', h('dl.dx-sheet-asked', null, crib.asked.map((x) => h('div', null, h('dt', null, x.q), h('dd', null, x.a))))),
+      sec('remember', 'Keep doing', h('ul.dx-sheet-keep', null, crib.remember.map((t) => h('li', null, t)))),
+      sec('asked', 'If they ask', h('div.dx-sheet-cols', null, asked.map((part) => h('dl.dx-sheet-asked', null, part.map((x) => h('div', null, h('dt', null, x.q), h('dd', null, x.a))))))),
     ),
   );
 }

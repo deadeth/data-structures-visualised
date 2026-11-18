@@ -14,11 +14,12 @@ describe('cheat sheets', () => {
 
   for (const { id, extras, crib } of sheets) {
     describe(id, () => {
-      const lines = [crib.idea, ...crib.hour.flatMap((s) => [s.title, ...s.lines]), ...crib.numbers.flatMap((n) => [n.figure, n.what]), ...crib.remember, ...crib.asked.flatMap((x) => [x.q, x.a])];
+      const lines = [crib.idea, ...(crib.late ? [crib.late] : []), ...crib.hour.flatMap((s) => [s.title, ...s.lines]), ...crib.numbers.flatMap((n) => [n.figure, n.what]), ...crib.remember, ...crib.asked.flatMap((x) => [x.q, x.a])];
 
       it('the hour starts at 0, has no gaps and ends when the rehearsal does', () => {
         let at = 0;
         for (const s of crib.hour) {
+          if (s.when === 'Any time') continue;
           const m = /^(\d+) to (\d+)$/.exec(s.when);
           expect(m, s.when).not.toBeNull();
           expect(Number(m![1]), s.when).toBe(at);

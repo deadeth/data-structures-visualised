@@ -39,7 +39,12 @@ export interface Extras {
 export interface Crib {
   /** The one idea to hold on to, in a sentence or two. */
   idea: string;
-  /** The interview in order: what to do in each stretch of the clock. */
+  /** What to drop when the clock is against you, in a sentence or two. */
+  late?: string;
+  /**
+   * The interview in order: what to do in each stretch of the clock. `when` is minutes, "8 to 16", each stretch
+   * starting where the last ended, or "Any time" for something the interviewer may start whenever they like.
+   */
   hour: { when: string; title: string; lines: string[] }[];
   /** The figures worth saying out loud, each with what it is and where it comes from. */
   numbers: { figure: string; what: string }[];
