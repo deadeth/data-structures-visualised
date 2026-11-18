@@ -545,10 +545,11 @@ export function cue(text: string, max = 120): string {
 }
 
 /**
- * A hand-written cheat sheet (Extras.crib): the interview by the clock, the figures to say, habits to keep and short
+ * A hand-written cheat sheet (Extras.crib): the figures to say, the interview by the clock, habits to keep and short
  * answers to likely questions. Whole short sentences in large type, for a second screen; two A4 pages printed.
+ * "Start the clock" marks the stretch the interview should be in, from the minutes on each stretch.
  */
-function cribSheet(_entry: DesignEntry, design: Design, crib: Crib): HTMLElement {
+function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => void } {
   const id = design.id;
   const hid = (k: string) => `${id}-sheet-${k}`;
   const sec = (key: string, title: string, ...body: HTMLElement[]) => h(`section.dx-sheet-sec.dx-sheet-s-${key}`, { 'aria-labelledby': hid(key) }, h('h2', { id: hid(key) }, title), ...body);
@@ -566,16 +567,65 @@ function cribSheet(_entry: DesignEntry, design: Design, crib: Crib): HTMLElement
     }
     return [items.slice(0, cut), items.slice(cut)].filter((x) => x.length);
   }
-  // A stretch costs its title and its lines, a longer line a little more; an answer its question and about a row for
-  // every 60 characters.
-  const hour = halves(crib.hour, (s) => 2.2 + s.lines.reduce((n, t) => n + 1 + (t.length > 62 ? 0.9 : 0), 0));
-  const asked = halves(crib.asked, (x) => 2 + Math.ceil(x.a.length / 60));
-  return h(
+  // A stretch costs its title and its lines, a longer line a little more; a group of answers its heading, and each
+  // answer its question and about a row for every 60 characters.
+  const stretches = crib.hour.map((s) => {
+    const m = /^(\d+) to (\d+)$/.exec(s.when);
+    const li = h(
+      'li', null,
+      h(`p.dx-sheet-when${m ? '' : '.dx-sheet-any'}`, null, h('span', null, s.when)),
+      h('div', null, h('h3', null, s.title), h('ul', null, s.lines.map((t) => h('li', null, t)))),
+    );
+    return { s, li, from: m ? Number(m[1]) : -1, to: m ? Number(m[2]) : -1 };
+  });
+  const hour = halves(stretches, (x) => 2.2 + x.s.lines.reduce((n, t) => n + 1 + (t.length > 62 ? 0.9 : 0), 0));
+  const asked = halves(crib.asked, (g) => 1.6 + g.items.reduce((n, x) => n + 2 + Math.ceil(x.a.length / 60), 0));
+
+  // The clock: started by hand as the interview starts, kept for the tab so a reload does not lose it.
+  const KEY = `dsv.sheet.${id}`;
+  const length = Math.max(...stretches.map((x) => x.to));
+  const read = (): number => {
+    try {
+      return Number(sessionStorage.getItem(KEY)) || 0;
+    } catch {
+      return 0;
+    }
+  };
+  let began = read();
+  let ticking = 0;
+  const elapsed = h('span.dx-sheet-elapsed', { role: 'timer', 'aria-live': 'off' });
+  const startBtn = h('button.btn', { type: 'button' });
+  function show(): void {
+    const secs = began ? Math.max(0, Math.floor((Date.now() - began) / 1000)) : 0;
+    const min = Math.floor(secs / 60);
+    for (const x of stretches) x.li.classList.toggle('now', !!began && min >= x.from && min < x.to);
+    startBtn.textContent = began ? 'Reset the clock' : 'Start the clock';
+    elapsed.hidden = !began;
+    if (began) elapsed.textContent = min >= length ? `${length} minutes are up` : `${min}:${String(secs % 60).padStart(2, '0')} of ${length} minutes`;
+  }
+  function run(): void {
+    clearInterval(ticking);
+    ticking = began ? window.setInterval(show, 1000) : 0;
+    show();
+  }
+  startBtn.addEventListener('click', () => {
+    began = began ? 0 : Date.now();
+    try {
+      if (began) sessionStorage.setItem(KEY, String(began));
+      else sessionStorage.removeItem(KEY);
+    } catch {
+      // Storage can be blocked; the clock still runs until the page is left.
+    }
+    run();
+  });
+  run();
+
+  const el = h(
     'article.dx-page.dx-crib-page.dx-sheet-page', null,
     h(
-      'div.dx-crib-bar', null,
+      'div.dx-crib-bar.dx-sheet-bar', null,
       h('p.dx-back', null, h('a', { href: `#/d/${id}` }, `Back to ${design.name}`)),
-      h('p.dx-crib-tools', null, h('button.btn.primary', { type: 'button', onclick: () => window.print() }, 'Print'), h('span.dx-hint', null, 'Two A4 pages.')),
+      h('p.dx-crib-tools', null, elapsed, startBtn, h('button.btn.primary', { type: 'button', onclick: () => window.print() }, 'Print'), h('span.dx-hint', null, 'Two A4 pages.')),
     ),
     h(
       'div.dx-crib.dx-sheet', null,
@@ -585,12 +635,16 @@ function cribSheet(_entry: DesignEntry, design: Design, crib: Crib): HTMLElement
       sec(
         'hour', 'The hour, by the minute',
         ...(crib.late ? [h('p.dx-sheet-late', null, crib.late)] : []),
-        h('div.dx-sheet-cols', null, hour.map((part) => h('ol.dx-sheet-hour', null, part.map((s) => h('li', null, h('p.dx-sheet-when', null, h('span', null, s.when)), h('div', null, h('h3', null, s.title), h('ul', null, s.lines.map((t) => h('li', null, t))))))))),
+        h('div.dx-sheet-cols', null, hour.map((part) => h('ol.dx-sheet-hour', null, part.map((x) => x.li)))),
       ),
       sec('remember', 'Keep doing', h('ul.dx-sheet-keep', null, crib.remember.map((t) => h('li', null, t)))),
-      sec('asked', 'If they ask', h('div.dx-sheet-cols', null, asked.map((part) => h('dl.dx-sheet-asked', null, part.map((x) => h('div', null, h('dt', null, x.q), h('dd', null, x.a))))))),
+      sec(
+        'asked', 'If they ask',
+        h('div.dx-sheet-cols', null, asked.map((part) => h('div.dx-sheet-groups', null, part.map((g) => h('section', null, h('h3', null, g.about), h('dl.dx-sheet-asked', null, g.items.map((x) => h('div', null, h('dt', null, x.q), h('dd', null, x.a))))))))),
+      ),
     ),
   );
+  return { el, stop: () => clearInterval(ticking) };
 }
 
 /** The crib: everything worth glancing at before the interview, on one or two printed A4 pages. */
@@ -600,11 +654,12 @@ export async function mountCrib(host: HTMLElement, entry: DesignEntry, design: D
   const root = document.documentElement;
   root.classList.add('crib-mode');
   if (extras.crib) {
-    const sheet = cribSheet(entry, design, extras.crib);
-    host.append(sheet);
+    const sheet = cribSheet(design, extras.crib);
+    host.append(sheet.el);
     return () => {
+      sheet.stop();
       root.classList.remove('crib-mode');
-      sheet.remove();
+      sheet.el.remove();
     };
   }
   const hid = (k: string) => `${id}-crib-${k}`;

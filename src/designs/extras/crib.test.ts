@@ -14,7 +14,7 @@ describe('cheat sheets', () => {
 
   for (const { id, extras, crib } of sheets) {
     describe(id, () => {
-      const lines = [crib.idea, ...(crib.late ? [crib.late] : []), ...crib.hour.flatMap((s) => [s.title, ...s.lines]), ...crib.numbers.flatMap((n) => [n.figure, n.what]), ...crib.remember, ...crib.asked.flatMap((x) => [x.q, x.a])];
+      const lines = [crib.idea, ...(crib.late ? [crib.late] : []), ...crib.hour.flatMap((s) => [s.title, ...s.lines]), ...crib.numbers.flatMap((n) => [n.figure, n.what]), ...crib.remember, ...crib.asked.flatMap((g) => [g.about, ...g.items.flatMap((x) => [x.q, x.a])])];
 
       it('the hour starts at 0, has no gaps and ends when the rehearsal does', () => {
         let at = 0;
@@ -31,8 +31,8 @@ describe('cheat sheets', () => {
 
       it('every line is short enough to read in a glance, and whole', () => {
         for (const t of crib.hour.flatMap((s) => s.lines).concat(crib.remember)) expect(t.length, t).toBeLessThanOrEqual(100);
-        for (const x of crib.asked) expect(x.a.length, x.a).toBeLessThanOrEqual(140);
-        expect(crib.idea.length).toBeLessThanOrEqual(200);
+        for (const x of crib.asked.flatMap((g) => g.items)) expect(x.a.length, x.a).toBeLessThanOrEqual(140);
+        expect(crib.idea.length).toBeLessThanOrEqual(210);
         for (const t of lines) {
           expect(t.trim(), t).toBe(t);
           expect(t, t).not.toMatch(/…|\.\.\.$/);

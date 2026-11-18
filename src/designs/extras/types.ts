@@ -50,6 +50,9 @@ export interface Crib {
   numbers: { figure: string; what: string }[];
   /** Habits that are easy to drop under pressure. */
   remember: string[];
-  /** Likely questions, each with an answer short enough to say in one breath. */
-  asked: { q: string; a: string }[];
+  /**
+   * Likely questions, each with an answer short enough to say in one breath, grouped by the part of the hour they
+   * tend to come up in, in the hour's order.
+   */
+  asked: { about: string; items: { q: string; a: string }[] }[];
 }
