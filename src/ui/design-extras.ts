@@ -658,7 +658,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
         f.removeAttribute('aria-invalid');
       }
     resetBtn.hidden = !moved;
-    hintText.textContent = moved ? 'Yours. Lines without an underline keep the page\u2019s numbers.' : 'Type over any underlined number.';
+    hintText.textContent = moved ? 'Lines with no underline keep the page\u2019s numbers.' : 'Type over any underlined number.';
     try {
       if (moved) sessionStorage.setItem(LIVE, JSON.stringify(values));
       else sessionStorage.removeItem(LIVE);

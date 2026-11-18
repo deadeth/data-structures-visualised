@@ -571,8 +571,8 @@ export const extras: Extras = {
         title: 'Do the sums out loud',
         lines: [
           '{smallPages} pages at {siteRate} a second takes {smallTime}. At {fastRate} a second, if the site allows, about {fastTime}.',
-          "{smallSaid} at {pageKBText} KB is {smallBytes}. Ask if it's a billion.",
-          "At {siteRateText} a second a site gives at most {perSiteDay} a day. Sites set the pace, so it's a scheduling problem.",
+          "{smallSaid} at {pageKBText} KB is {smallBytes}. {smallChecks} seen checks a second: one Postgres copes. Ask if it's a billion.",
+          "One site gives at most {perSiteDay} a day, so it's scheduling.",
         ],
       },
       {
@@ -580,7 +580,7 @@ export const extras: Extras = {
         short: 'Small',
         title: 'Draw the small design',
         lines: [
-          'Draw six parts, breadth-first from a queue: workers, a parser, a seen set, a rate limiter, a store.',
+          'Draw six parts: a queue, workers, a parser, a seen set, a rate limiter, a store. Go breadth-first.',
           'Tidy every URL into one spelling before the seen check.',
           'Mark a URL seen when you queue it, not when you fetch it.',
           'One table: URL (unique), status, lease until, attempts.',
@@ -680,7 +680,7 @@ export const extras: Extras = {
       'For each choice, say the problem it fixes, the alternative and what yours costs.',
       'Check in now and then: “Is this the level of detail you want?”',
       'Say what happens when each part fails.',
-      "Asked how you'd run it, keep answers to two or three sentences, then offer to go further.",
+      "When asked how you'd run it, give two or three sentences, then offer to go further.",
     ],
     asked: [
       {
@@ -688,7 +688,7 @@ export const extras: Extras = {
         when: '8 to 16',
         items: [
           { q: 'Why a queue and not recursion?', a: 'Recursion is depth-first: a long chain overflows the stack, and a crash loses its place. A queue on disk avoids both and goes breadth-first.' },
-          { q: 'Is Postgres enough?', a: 'Yes for a million pages: 10 a second is 500 seen checks a second. It can be the queue too, until writes outgrow one machine.' },
+          { q: 'Is Postgres enough?', a: 'Yes for a million pages, and it can be the queue too, until writes outgrow one machine.' },
           { q: 'How many workers?', a: 'Fetch rate times seconds per fetch: 10 a second at 1 second each is 10 workers. Add more while the rate rises. Stop if the site slows.' },
           { q: 'Threads or async?', a: 'Threads are simplest for 10 to 20 fetches at once. An event loop holds thousands of connections in one process, with parsing in others.' },
         ],
@@ -720,7 +720,7 @@ export const extras: Extras = {
         about: 'About the deep dives',
         when: '30 to 44',
         items: [
-          { q: 'How would you build a shared rate limiter?', a: 'A Redis token bucket per IP address. A Lua script takes a token in one step. If Redis is down, use a slow fixed rate, never unlimited.' },
+          { q: 'How would you build a shared rate limiter?', a: 'A Redis token bucket per IP address and domain, run by a Lua script in one step. If Redis is down, use a slow fixed rate, never unlimited.' },
           { q: 'Queues or distributed locks?', a: "A queue's lease covers one message. A lock is for a rule across messages: one fetch per site. One owner per site needs only a slot lease." },
           { q: 'One URL crashes the worker every time?', a: "Mark it dead after three attempts. Parse in a sandbox so a crash can't take the fetcher down." },
           { q: 'Why not a Bloom filter?', a: "It's 12 GB, not 80. But 1 per cent false positives silently skip up to 100 million new pages. Fingerprints wrongly skip about three." },
@@ -769,6 +769,7 @@ export const extras: Extras = {
           smallSaid: words(v.smallPages),
           smallTime: duration(v.smallPages / v.siteRate),
           fastRate: trim(v.siteRate * 10),
+          smallChecks: said(v.siteRate * 10 * v.links),
           fastTime: duration(v.smallPages / (v.siteRate * 10)),
           smallBytes: size(v.smallPages * v.pageKB * 1000),
           perMachineMonth: words(v.perMachine * MONTH, 2),

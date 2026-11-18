@@ -1027,8 +1027,9 @@
   background: var(--rule-strong);
 }
 
-/* Live numbers: a field in the run of the sentence, in the sentence's own type, marked as editable by a dotted
-   underline and a faint tint; a solid ink outline while typing; a red dashed one while the text is not a number. */
+/* Live numbers: a field in the run of the sentence, in the sentence's own type, marked as editable by a tint and
+   a solid rule under it; a solid ink outline while typing; a red dashed one while the text is not a number.
+   A figure worked from the fields has no tint, and a dotted rule once it has moved, so the two are told apart. */
 .dx-sheet-in {
   display: inline-block;
   box-sizing: content-box;
@@ -1042,16 +1043,16 @@
   color: inherit;
   vertical-align: baseline;
   text-align: center;
-  background-color: #eef2f8;
-  background-image: linear-gradient(to right, var(--ink-3) 55%, transparent 0);
-  background-size: 4px 1.5px;
-  background-repeat: repeat-x;
+  background-color: #e2e9f5;
+  background-image: linear-gradient(var(--rule-strong), var(--rule-strong));
+  background-size: 100% 2px;
+  background-repeat: no-repeat;
   background-position: 0 100%;
   cursor: text;
 }
 
 .dx-sheet-in:hover {
-  background-color: #e4e9f0;
+  background-color: #d5deee;
 }
 
 .dx-sheet-in:focus {
@@ -1085,8 +1086,8 @@
   gap: 4px;
   height: 1.95rem;
   margin: 0;
-  color: var(--ink-3);
-  font-size: 0.92rem;
+  color: var(--ink-2);
+  font-size: 0.95rem;
 }
 
 .dx-sheet-livehint .btn.quiet {
@@ -1099,9 +1100,17 @@
 @media screen and (max-width: 699px) {
   .dx-sheet-livehint {
     position: static;
-    flex-wrap: wrap;
+    align-items: flex-start;
     height: auto;
     margin: -2px 0 6px;
+  }
+
+  .dx-sheet-livehint span {
+    flex: 1 1 auto;
+  }
+
+  .dx-sheet-livehint .btn.quiet {
+    flex: 0 0 auto;
   }
 }
 

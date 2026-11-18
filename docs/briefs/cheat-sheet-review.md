@@ -39,16 +39,22 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
 
 - The candidate asked for the numbers to be editable "so they can be done real time": when the
   interviewer gives a different scale he types over a number and reads the new sums. Six numbers
-  are fields in the run of the text, with a dotted underline and a faint tint: pages a month,
+  are fields in the run of the text, with a tint and a solid rule under them: pages a month,
   pages a second a machine, requests a second a site, page size, links a page, and the small
   crawl's pages. The figures worked from them (in "Numbers to say", the three lines of "Do the
   sums out loud" and the one-machine line in 22 to 30) recalculate on every keystroke, and a
-  changed figure gets a dotted underline. Every other line keeps the page's own numbers, and the
+  changed figure gets a dotted rule and no tint, so it is told apart from a field. Every other
+  line keeps the page's own numbers, and the
   hint beside the heading says so once a number is changed. "Reset numbers" puts the page's
   numbers back. On paper the fields are plain text.
 - Because a field shows its number, the sheet says "1 billion pages a month" and "1 million
   pages", not "A billion" and "A million".
 - Rates are rounded as they would be said: 386 a second is "400".
+- The sums stretch ends on the rehearsal's conclusion, "500 seen checks a second: one Postgres
+  copes". To pay for that line, the 86,400 line is one printed line ("so it's scheduling"); the
+  idea at the top says the rest. "Is Postgres enough?" no longer repeats the 500.
+- "Draw six parts: a queue, workers, ... a store. Go breadth-first." lists all six, so he can
+  count boxes against it.
 
 - Lines in the hour are capped at 100 characters, answers at 140. A test enforces it.
 - The change of brief has the rehearsal's minutes, 44 to 49, so the clock can point at it;
