@@ -5,7 +5,8 @@ import type { Course, Module } from './types';
  *
  *   { items:       { '<module>/<item>': { done, at } },
  *     checkpoints: { '<module>/<index>': { done, at } },      index counts from 0
- *     confidence:  { '<module>': { level, at } } }            level: 'not-yet' | 'shaky' | 'solid'
+ *     confidence:  { '<module>': { level, at } },            level: 'not-yet' | 'shaky' | 'solid'
+ *     pages:       { '<address>': { done, at } } }           pages ticked in a design's study guide that the course does not list
  *
  * `at` is an ISO date-time. Every read and write is wrapped: when storage is blocked or full, progress
  * lives in memory for the visit and `saving` is false. Entries for ids the course no longer has (a
@@ -33,6 +34,8 @@ export interface Progress {
   items: Record<string, Mark>;
   checkpoints: Record<string, Mark>;
   confidence: Record<string, Rating>;
+  /** Pages ticked as studied outside the course (a design's study guide), by site address such as `#/s/heap`. */
+  pages: Record<string, Mark>;
 }
 
 /** The part of the Storage interface used here, so a test can hand in its own. */
@@ -42,7 +45,7 @@ export interface StorageLike {
   removeItem(key: string): void;
 }
 
-export const empty = (): Progress => ({ items: {}, checkpoints: {}, confidence: {} });
+export const empty = (): Progress => ({ items: {}, checkpoints: {}, confidence: {}, pages: {} });
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isDate = (v: unknown): v is string => typeof v === 'string' && v.length <= 40 && !Number.isNaN(Date.parse(v));
@@ -69,6 +72,7 @@ export function parse(text: string | null): Progress | null {
   };
   marks(raw.items, out.items);
   marks(raw.checkpoints, out.checkpoints);
+  marks(raw.pages, out.pages);
   if (isObj(raw.confidence)) {
     for (const [k, v] of Object.entries(raw.confidence)) {
       if (isObj(v) && LEVELS.some((l) => l.id === v.level)) out.confidence[k] = { level: v.level as Level, at: isDate(v.at) ? v.at : '' };
@@ -132,10 +136,23 @@ export class ProgressStore {
 
   itemDone = (m: string, i: string) => this.data.items[itemKey(m, i)]?.done === true;
   checkpointDone = (m: string, i: number) => this.data.checkpoints[checkpointKey(m, i)]?.done === true;
+  pageDone = (href: string) => this.data.pages[href]?.done === true;
   level = (m: string): Level | undefined => this.data.confidence[m]?.level;
 
   setItem(m: string, i: string, done: boolean): void {
     this.data.items[itemKey(m, i)] = { done, at: this.stamp() };
+    this.save();
+  }
+
+  /** Ticks or unticks several course items at once, with one save. */
+  setItems(keys: { module: string; item: string }[], done: boolean): void {
+    const at = this.stamp();
+    for (const k of keys) this.data.items[itemKey(k.module, k.item)] = { done, at };
+    this.save();
+  }
+
+  setPage(href: string, done: boolean): void {
+    this.data.pages[href] = { done, at: this.stamp() };
     this.save();
   }
 
@@ -253,4 +270,19 @@ export function nextItem(c: Course, s: ProgressStore): { module: Module; index: 
     if (index >= 0) return { module: m, index };
   }
   return null;
+}
+
+// ---- pages shared with a design's study guide ---------------------------------------------
+
+/**
+ * The course items a study guide's page stands for, so a tick in either place is one tick.
+ * An address of a course item (`#/course/<module>/<item>`) is that item. Any other address is
+ * every reading or watching item the course links to the same page; a practice prompt or a drill
+ * that happens to link there is a different piece of work and is left alone.
+ */
+export function linkedItems(c: Course | null, href: string): { module: string; item: string }[] {
+  if (!c) return [];
+  const own = /^#\/course\/([^/]+)\/([^/]+)$/.exec(href);
+  if (own) return c.modules.some((m) => m.id === own[1] && m.items.some((i) => i.id === own[2])) ? [{ module: own[1], item: own[2] }] : [];
+  return c.modules.flatMap((m) => m.items.filter((i) => i.href === href && (i.kind === 'read' || i.kind === 'watch')).map((i) => ({ module: m.id, item: i.id })));
 }

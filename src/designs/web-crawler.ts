@@ -2803,6 +2803,80 @@ WHERE bucket = '2026-11-12T10'
     },
   ],
 
+  study: {
+    intro:
+      "The crawler is a scheduling problem built from about twenty mechanisms, and most have their own page on this site. Study them in this order: the whole answer first, then each hard part where the design uses it. Tick a page when you can explain its part of the crawler out loud. With one evening, do groups 1 to 3.",
+    groups: [
+      {
+        title: 'The whole answer first',
+        why: 'See the shape before the parts, so each later page has somewhere to fit.',
+        items: [
+          { href: '#/d/web-crawler/read', label: 'The crawler walkthrough', minutes: 25, take: 'Read it once for the questions to ask, the sums (about 400 pages a second on twenty machines) and the order the design is drawn in.' },
+          { href: '#/d/web-crawler/t/1', label: 'The 14-step tour on this page', minutes: 20, take: 'Follow one URL from seed to recrawl. Then the two failure steps: the lease runs out, and a new owner takes over.' },
+          { href: '#/c/system-design-interview-playbook', label: 'The interview playbook', minutes: 15, take: "How to spend the hour. The crawler rewards doing the numbers early, because they show it's a scheduling problem, not a compute problem." },
+        ],
+      },
+      {
+        title: 'The frontier: what to fetch, and when',
+        why: 'This is where interviewers go deep. Priority and politeness are two separate questions, and a plain queue answers neither.',
+        items: [
+          { href: '#/s/crawl-frontier', label: 'Crawl frontier', minutes: 15, take: 'Front queues order URLs by priority, back queues hold one host each, and a heap of next-allowed times decides which host is served. Be able to draw it from memory.' },
+          { href: '#/s/heap', label: 'Binary heap', minutes: 10, take: 'Why "which host is due next?" costs O(log n) and not a scan of every host.' },
+          { href: '#/s/priority-queue', label: 'Priority queue', minutes: 8, take: 'The front half of the frontier. Know why one sorted queue either starves low priorities or ignores politeness.' },
+          { href: '#/s/token-bucket', label: 'Token bucket', minutes: 10, take: 'The per-IP limiter. Many hosts share one address, so a delay per host is not enough on its own.' },
+          { href: '#/s/lru-cache', label: 'LRU cache', minutes: 8, take: 'The DNS resolver and robots.txt caches: bounded memory, eviction, and an expiry so stale answers leave.' },
+        ],
+      },
+      {
+        title: 'Have we seen this before?',
+        why: 'At about 20,000 links a second, the seen check is the hottest path in the system and the easiest place to lose pages without noticing.',
+        items: [
+          { href: '#/s/hash-table', label: 'Hash table', minutes: 8, take: 'URLs become 64-bit fingerprints. Know what a collision costs here: a page that is never fetched.' },
+          { href: '#/s/bloom-filter', label: 'Bloom filter', minutes: 12, take: '"Definitely not seen" in about 10 bits a URL. A false positive is a page skipped in silence, and it stays wrong until the filter is rebuilt.' },
+          { href: '#/s/lsm-tree', label: 'LSM tree', minutes: 15, take: 'RocksDB holds the frontier and the seen set on local disk. Know why an LSM suits a flood of small writes, and what a read costs.' },
+          { href: '#/s/simhash', label: 'SimHash', minutes: 15, take: 'Near-duplicate pages: fingerprints that stay close when the text does, and the block-table search that avoids comparing with every stored page.' },
+        ],
+      },
+      {
+        title: 'Twenty nodes: splitting the work',
+        why: 'One machine cannot crawl a billion pages a month. The split has to keep each host on one node, or politeness breaks.',
+        items: [
+          { href: '#/s/consistent-hashing', label: 'Consistent hash ring', minutes: 12, take: 'How adding a node moves only a small share of hosts. This design uses fixed slots with a map the coordinator owns: be ready to say why.' },
+          { href: '#/c/sharding-and-partitioning', label: 'Sharding and partitioning', minutes: 15, take: 'Choosing the key (the host), hot keys (one enormous site), and fixed partitions against a ring.' },
+          { href: '#/s/partitioning', label: 'Partitioning and secondary indexes', minutes: 10, take: 'What stays local to a node and what needs a lookup across nodes.' },
+          { href: '#/s/append-log', label: 'Append-only log', minutes: 10, take: 'The discovered-urls topic. A link found on one node and owned by another travels through Kafka, keyed by host.' },
+          { href: '#/c/message-queues-and-streams', label: 'Message queues and streams', minutes: 15, take: 'At-least-once delivery, order per key and lag: what the Kafka hop promises, and why the seen check makes a repeat harmless.' },
+        ],
+      },
+      {
+        title: 'When a node dies',
+        why: 'The tour ends on this failure, and so will the interview: "a crawler node just died, what happens to its URLs?"',
+        items: [
+          { href: '#/c/consensus-and-coordination', label: 'Consensus and coordination', minutes: 15, take: 'Leases and fencing: how a slot changes owner, and how a paused old owner is stopped from writing after it has lost the slot.' },
+          { href: '#/s/raft', label: 'Raft consensus', minutes: 12, take: 'In outline only: what a coordination store runs underneath so every node agrees on the slot map.' },
+          { href: '#/s/stream-checkpoints', label: 'Exactly-once: Flink checkpoints', minutes: 12, take: "Snapshot, then replay from the log. It is the same idea as the frontier's snapshot per slot and re-reading the topic after a takeover." },
+          { href: '#/c/resilience-patterns', label: 'Resilience patterns', minutes: 12, take: 'Timeouts, backoff and breakers for slow or failing sites, so one bad host cannot hold the fetchers.' },
+        ],
+      },
+      {
+        title: 'Storage, and what comes after',
+        why: 'The follow-up questions: where do the pages go, why that database, and what is this crawl for?',
+        items: [
+          { href: '#/c/choosing-a-database', label: 'Choosing a database', minutes: 12, take: 'Why the metadata sits in a wide-column store and raw pages go to object storage in batches.' },
+          { href: '#/s/b-plus-tree', label: 'B+ tree', minutes: 10, take: 'The other index family, for when you are asked "why not Postgres?"' },
+          { href: '#/s/graph', label: 'Graph traversal', minutes: 10, take: 'A crawl is a breadth-first walk of the link graph. Know where that picture stops: politeness, priority, and a graph with no end.' },
+        ],
+      },
+      {
+        title: 'Test yourself',
+        why: 'Reading is not the same as saying it against a clock.',
+        items: [
+          { href: '#/course/classic-prompts/web-crawler', label: 'Design it cold, in the course', minutes: 45, take: 'Answer the prompt out loud with a timer and a blank page, before looking at anything here. Then mark yourself against the walkthrough.' },
+          { href: '#/d/web-crawler/read/pacing', label: 'Pacing the interview', minutes: 5, take: 'Check your timings against the last section of the walkthrough: where you ran long, and what you never reached.' },
+        ],
+      },
+    ],
+  },
   brief: [
     {
       heading: 'Ask first',

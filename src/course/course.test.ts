@@ -5,7 +5,7 @@ import type { Design } from '../designs/types';
 import { LOCKED_IDS } from '../locked/manifest';
 import { READING_FILES } from '../reading';
 import fixture from './__fixtures__/fixture-course';
-import { ProgressStore, STORAGE_KEY, courseTally, moduleTally, nextItem, parse, type StorageLike } from './progress';
+import { ProgressStore, STORAGE_KEY, courseTally, linkedItems, moduleTally, nextItem, parse, type StorageLike } from './progress';
 import type { Course } from './types';
 
 /**
@@ -270,6 +270,7 @@ describe('progress store', () => {
       items: { 'foundations/b-plus-tree': { done: true, at: '2026-11-16T10:00:00.000Z' } },
       checkpoints: { 'foundations/1': { done: true, at: '2026-11-16T10:00:00.000Z' } },
       confidence: { foundations: { level: 'shaky', at: '2026-11-16T10:00:00.000Z' } },
+      pages: {},
     });
     const b = new ProgressStore(mem, at);
     expect(b.itemDone('foundations', 'b-plus-tree')).toBe(true);
@@ -281,7 +282,7 @@ describe('progress store', () => {
   it('ignores corrupted JSON and bad entries', () => {
     const mem = new MemStorage();
     mem.map.set(STORAGE_KEY, '{not json');
-    expect(new ProgressStore(mem).data).toEqual({ items: {}, checkpoints: {}, confidence: {} });
+    expect(new ProgressStore(mem).data).toEqual({ items: {}, checkpoints: {}, confidence: {}, pages: {} });
     mem.map.set(STORAGE_KEY, '[1,2]');
     expect(new ProgressStore(mem).data.items).toEqual({});
     mem.map.set(STORAGE_KEY, JSON.stringify({ items: { 'm/a': { done: true, at: 'yesterday-ish' }, 'm/b': { done: 'yes' }, 'm/c': 7 }, checkpoints: null, confidence: { m: { level: 'great' }, n: { level: 'solid', at: '2026-01-02T00:00:00Z' } } }));
@@ -346,5 +347,45 @@ describe('progress store', () => {
     expect(b.importText('null')).toBe(false);
     expect(b.importText(`  ${text}\n`)).toBe(true);
     expect(b.itemDone('foundations', 'lsm')).toBe(true);
+  });
+
+  it('keeps pages ticked outside the course, and reads exports made before there were any', () => {
+    const mem = new MemStorage();
+    const a = new ProgressStore(mem, at);
+    a.setPage('#/s/heap', true);
+    expect(new ProgressStore(mem).pageDone('#/s/heap')).toBe(true);
+    expect(new ProgressStore(mem).pageDone('#/s/trie')).toBe(false);
+    a.setPage('#/s/heap', false);
+    expect(new ProgressStore(mem).pageDone('#/s/heap')).toBe(false);
+    const old = parse(JSON.stringify({ items: {}, checkpoints: {}, confidence: {} }))!;
+    expect(old.pages).toEqual({});
+  });
+
+  it("links a study guide's page to the course items that read or watch it, and to nothing else", () => {
+    const c: Course = {
+      title: 'T', summary: 'S', howTo: [],
+      modules: [
+        {
+          id: 'one', title: 'One', why: 'w', minutes: 30, checkpoint: [],
+          items: [
+            { id: 'watch-heap', kind: 'watch', title: 'Heap', href: '#/s/heap', minutes: 10, note: 'n' },
+            { id: 'drill-heap', kind: 'drill', title: 'Heap drill', href: '#/s/heap', minutes: 10, note: 'n' },
+            { id: 'cold', kind: 'practise', title: 'Design it', href: '#/d/web-crawler', minutes: 45, note: 'n', covers: ['x'] },
+          ],
+        },
+        { id: 'two', title: 'Two', why: 'w', minutes: 10, checkpoint: [], items: [{ id: 'read-heap', kind: 'read', title: 'Heap again', href: '#/s/heap', minutes: 10, note: 'n' }] },
+      ],
+    };
+    expect(linkedItems(c, '#/s/heap')).toEqual([{ module: 'one', item: 'watch-heap' }, { module: 'two', item: 'read-heap' }]);
+    expect(linkedItems(c, '#/d/web-crawler')).toEqual([]);
+    expect(linkedItems(c, '#/course/one/cold')).toEqual([{ module: 'one', item: 'cold' }]);
+    expect(linkedItems(c, '#/course/one/gone')).toEqual([]);
+    expect(linkedItems(null, '#/s/heap')).toEqual([]);
+
+    const s = new ProgressStore(new MemStorage(), at);
+    s.setItems(linkedItems(c, '#/s/heap'), true);
+    expect(s.itemDone('one', 'watch-heap')).toBe(true);
+    expect(s.itemDone('two', 'read-heap')).toBe(true);
+    expect(s.itemDone('one', 'drill-heap')).toBe(false);
   });
 });

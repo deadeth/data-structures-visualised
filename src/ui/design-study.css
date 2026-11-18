@@ -1,0 +1,124 @@
+/* The study guide card on a design page. */
+.study .study-count {
+  margin: 14px 0 6px;
+  font-family: var(--sans-data);
+  font-size: 0.95rem;
+  color: var(--ink-2);
+}
+
+.study-bar {
+  height: 8px;
+  border: 1px solid var(--ink-3);
+  border-radius: 999px;
+  background: var(--paper);
+  overflow: hidden;
+}
+
+.study-bar > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--ink);
+}
+
+.study-unsaved {
+  margin: 8px 0 0;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+
+.study-group {
+  margin-top: 26px;
+}
+
+.study-group h3 {
+  margin: 0 0 4px;
+  font-size: 1.1rem;
+}
+
+.study-why {
+  margin: 0 0 10px;
+  max-width: 46rem;
+  color: var(--ink-2);
+}
+
+.study-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.study-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--paper);
+}
+
+.study-item.done {
+  border-color: var(--ok, #0b7a53);
+  background: var(--surface);
+}
+
+.study-item input {
+  width: 20px;
+  height: 20px;
+  margin: 3px 0 0;
+  accent-color: var(--ok, #0b7a53);
+}
+
+.study-title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.study-kind {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid var(--ink-3);
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--ink-2);
+  vertical-align: 2px;
+}
+
+.study-min {
+  font-family: var(--sans-data);
+  font-weight: 400;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.study-take {
+  margin: 4px 0 0;
+  max-width: 46rem;
+  color: var(--ink-2);
+}
+
+/* The notes' own dash bullets and indents do not belong on these rows. */
+.note .study-item::before {
+  content: none;
+}
+
+.note .study-item {
+  padding-left: 14px;
+}
+
+.study-shared {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.82rem;
+  color: var(--ink-3);
+}
+
+.study-shared[hidden] {
+  display: none;
+}

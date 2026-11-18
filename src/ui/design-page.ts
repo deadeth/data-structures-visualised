@@ -4,6 +4,7 @@ import type { Extras } from '../designs/extras/types';
 import { extrasParts } from './design-extras';
 import { MODES, type Component, type Design, type Example, type Flow } from '../designs/types';
 import { walkthrough } from '../reading';
+import { studyCard } from './design-study';
 
 const NS = 'http://www.w3.org/2000/svg';
 const SPEEDS = [0.5, 1, 2] as const;
@@ -715,8 +716,11 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   );
   // The interview extras, when written: "Lead it" and "Likely pushes" go after the notes and before the glossary.
   const ex = extras ? extrasParts(design, extras) : null;
+  // Which pages to study for this design, when written: first among the notes, with a link to it in the header.
+  const study = studyCard(design);
   const notes = h(
     'div.notes', null,
+    ...(study ? [study] : []),
     ...design.brief.map((b) => h('section.note.hld-card', null, h('h2', null, b.heading), list(b.points))),
     h('section.note.wide.hld-card', null, h('h2', { id: `${design.id}-numbers` }, 'Numbers to have ready'), table(['Quantity', 'Assumption', 'Result'], design.numbers.map((n) => [n.what, n.assumption, n.result]), 'hld-table', `${design.id}-numbers`)),
     h(
@@ -821,7 +825,17 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   // A written walkthrough of this design, when one exists: linked beside the rehearsal and crib links, or on its own.
   const readLink = walkthrough(design.id) ? h('a.dx-action', { href: `${base}/read` }, 'Read the walkthrough') : null;
   if (readLink && ex?.links) ex.links.append(readLink);
-  const headLinks = ex?.links ?? (readLink ? h('p.dx-actions', null, readLink) : null);
+  const studyLink = study
+    ? h('button.dx-action', {
+        type: 'button',
+        onclick: () => {
+          study.scrollIntoView({ block: 'start', behavior: smooth() });
+          (study.querySelector('h2') as HTMLElement).focus({ preventScroll: true });
+        },
+      }, 'Study guide')
+    : null;
+  const headLinks = ex?.links ?? (readLink || studyLink ? h('p.dx-actions', null, readLink) : null);
+  if (studyLink && headLinks) headLinks.append(studyLink);
   const page = h('article.design', null, h('header.page-head', null, h('h1', null, design.name), h('p.lede', null, design.blurb), headLinks), storyNav, notFound, stage, status, explainBox, detail, notes);
   host.append(page);
 

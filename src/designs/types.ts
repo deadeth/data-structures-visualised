@@ -188,6 +188,22 @@ export interface TourStep {
   story?: { context: string; problem: string; consequence: string; fix: string };
 }
 
+/** One page to study for a design: where it is, how long it takes, and what to take from it. */
+export interface StudyItem {
+  /** A site address: `#/s/<structure>`, `#/c/<concept>`, `#/d/<design>` and its sub-routes, or `#/course/...`. */
+  href: string;
+  label: string;
+  minutes: number;
+  /** What to take from the page for this design, in a sentence or two. */
+  take: string;
+}
+
+/** The site's pages to study for one design, in the order to study them. Shown on the design page with tick boxes. */
+export interface StudyGuide {
+  intro: string;
+  groups: { title: string; why: string; items: StudyItem[] }[];
+}
+
 export interface Design {
   id: string;
   name: string;
@@ -207,6 +223,8 @@ export interface Design {
   tourName?: string;
   /** More tours over the same diagram, each following something else. The reader picks one above the diagram; `tour` is the first. */
   stories?: { id: string; name: string; tour: TourStep[] }[];
+  /** Which of the site's pages to study for this design, in order. */
+  study?: StudyGuide;
   brief: { heading: string; points: string[] }[];
   numbers: { what: string; assumption: string; result: string }[];
   framings: { name: string; scale: string; shape: string }[];
