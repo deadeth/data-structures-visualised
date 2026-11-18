@@ -997,7 +997,8 @@
   color: #fff;
 }
 
-.dx-sheet.clocked .dx-sheet-hour > li:not(.now) {
+.dx-sheet.clocked .dx-sheet-hour > li:not(.now),
+.dx-sheet.clocked .dx-sheet-hour > li:not(.now) h3 {
   color: var(--ink-2);
 }
 
@@ -1011,19 +1012,41 @@
 }
 
 .dx-sheet-elapsed {
-  font: 700 1rem var(--sans-data);
+  font: 760 1.25rem var(--sans-data);
   white-space: nowrap;
 }
 
+/* What to be doing now: the one thing in the bar to read at a glance. */
 .dx-sheet-now {
-  padding: 5px 12px;
+  padding: 6px 14px;
   border: 0;
-  border-left: 6px solid var(--key);
-  background: var(--key-soft);
-  font: 700 1rem var(--sans);
-  color: var(--ink);
+  border-radius: 6px;
+  background: var(--key);
+  font: 720 1.12rem var(--sans);
+  color: #fff;
   text-align: left;
   cursor: pointer;
+}
+
+@media screen and (max-width: 1099px) {
+  .dx-sheet-now {
+    font-size: 1rem;
+  }
+}
+
+/* A short monitor: the top closes up, so more of the hour shows before scrolling. */
+@media screen and (max-height: 950px) and (min-width: 1100px) {
+  .dx-sheet-sec {
+    margin-top: 10px;
+  }
+
+  .dx-sheet-figs {
+    row-gap: 4px;
+  }
+
+  .dx-sheet-figs dd {
+    font-size: 0.9em;
+  }
 }
 
 .dx-sheet-bar .dx-crib-tools {
@@ -1061,7 +1084,7 @@
 /* The habits flow down three columns, so a two-line habit does not leave a hole beside it. */
 .dx-sheet-keep {
   display: block;
-  columns: 3;
+  columns: 2;
   column-gap: 40px;
 }
 
@@ -1135,17 +1158,13 @@
   }
 }
 
-@media screen and (max-width: 1099px) {
+@media screen and (max-width: 699px) {
   .dx-sheet-keep {
-    columns: 2;
+    columns: 1;
   }
 }
 
 @media screen and (max-width: 899px) {
-  .dx-sheet-keep {
-    columns: 1;
-  }
-
   .dx-sheet-cols {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1518,7 +1537,7 @@
 
   html.crib-mode .dx-sheet-s-remember,
   html.crib-mode .dx-sheet-s-asked {
-    font-size: 10.5pt;
+    font-size: 10.2pt;
   }
 
   html.crib-mode .dx-sheet-s-asked {

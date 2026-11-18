@@ -597,6 +597,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
   // What the clock says to be doing, in the bar that stays in view; pressing it brings that stretch into view.
   const nowBtn = h('button.dx-sheet-now', { type: 'button', hidden: true });
   const startBtn = h('button.btn', { type: 'button' });
+  const hint = h('span.dx-hint', null, 'Two A4 pages.');
   let current: (typeof stretches)[number] | undefined;
   nowBtn.addEventListener('click', () => current?.li.scrollIntoView({ block: 'center' }));
   function show(): void {
@@ -607,6 +608,8 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     sheet.classList.toggle('clocked', !!began);
     startBtn.textContent = began ? 'Reset the clock' : 'Start the clock';
     elapsed.hidden = !began;
+    // With the clock running the bar has more to hold: the hint makes way, so it stays one row.
+    hint.hidden = !!began;
     nowBtn.hidden = !current;
     if (current) nowBtn.textContent = `Now: ${current.s.title}, until ${current.to}`;
     if (began) elapsed.textContent = min >= length ? `${length} minutes are up` : `${min}:${String(secs % 60).padStart(2, '0')} of ${length}`;
@@ -633,7 +636,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     h(
       'div.dx-crib-bar.dx-sheet-bar', null,
       h('p.dx-back', null, h('a', { href: `#/d/${id}` }, `Back to ${design.name}`)),
-      h('p.dx-crib-tools', null, nowBtn, elapsed, startBtn, h('button.btn.primary', { type: 'button', onclick: () => window.print() }, 'Print'), h('span.dx-hint', null, 'Two A4 pages.')),
+      h('p.dx-crib-tools', null, nowBtn, elapsed, startBtn, h('button.btn.primary', { type: 'button', onclick: () => window.print() }, 'Print'), hint),
     ),
     sheet,
   );
