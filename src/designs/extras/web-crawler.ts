@@ -602,7 +602,7 @@ export const extras: Extras = {
           'Give each site one owner. Sites hash into 1,024 slots, and etcd maps slots to owners.',
           "Each machine keeps its sites' queues (about 15 GB) and seen fingerprints (4 GB) on local disk.",
           'The URL table moves to Cassandra or ScyllaDB. Pages stay in object storage.',
-          "Kafka, keyed by site, carries links to other machines' sites. The owner decides when to fetch them.",
+          "Links to another machine's sites go through Kafka, keyed by site. The owner decides when to fetch.",
         ],
       },
       {
@@ -627,7 +627,7 @@ export const extras: Extras = {
           'Ask one question back, redraw, then say what it costs.',
           'For news within an hour, poll feeds and sitemaps and give new links top priority.',
           'Polling 1,000 sites, 10 pages each, every 5 minutes is 33 a second, about 8 per cent of 400.',
-          "For opt-in, keep a verified list and drop other links and redirects. Stop if the list can't be read.",
+          "For opt-in, keep a verified list. Drop links and redirects to other sites. Stop if it can't be read.",
           'With far fewer sites, one machine may be enough again.',
         ],
       },
@@ -636,7 +636,7 @@ export const extras: Extras = {
         title: "Say how you'd run it",
         lines: [
           'Promise zero politeness violations, counted from the fetch log. One breach wakes someone.',
-          'So does a slot with no owner for 5 minutes, half the target rate for 15, or failing store writes.',
+          'So does a slot unowned for 5 minutes, under half the target rate for 15, or store writes failing.',
           'One dead machine wakes nobody: the others take its sites.',
           'Ship one site, then many, then a crawl that keeps going. Add machines when measurements say so.',
           'Buy Kafka, the databases and rendering. Build the scheduler and the URL rules.',
@@ -689,7 +689,7 @@ export const extras: Extras = {
           { q: 'A site with endless pages, such as a calendar?', a: "Every URL really is new, so the seen check can't help. Give each site a page budget and a depth cap." },
           { q: 'The same article at fifty URLs?', a: 'Hash the body to catch exact copies. For near copies use a 64-bit SimHash: fingerprints 3 bits or fewer apart count as copies.' },
           { q: 'How do you keep pages fresh?', a: "Start with fixed tiers: news hourly, the rest monthly. Later, halve a page's interval when it changes and lengthen it when it doesn't." },
-          { q: 'Pages built with JavaScript?', a: 'The first version skips them. Later, queue them for a sandboxed rendering service, bought for now.' },
+          { q: 'Pages built with JavaScript?', a: 'The first version skips them. Later, queue them for a sandboxed rendering service. Buy it for now.' },
           { q: 'Could it be turned against your own network?', a: 'Yes. Check every resolved address against private ranges, connect to that exact address, and check again on each redirect.' },
         ],
       },
@@ -697,9 +697,10 @@ export const extras: Extras = {
         about: 'About many machines',
         when: '22 to 30',
         items: [
-          { q: 'A shared queue, or one owner per site?', a: 'A shared queue for a one-off crawl. One owner per site for a crawl that never stops: each machine paces its own sites.' },
-          { q: 'Consistent hashing or a slot map?', a: "A slot map. A ring moves just as few sites, but each slot move is one explicit step with its own epoch, so the old owner's late writes fail." },
-          { q: 'Where does the data live at this size?', a: 'WARC batches of about 500 pages in object storage. URL rows come to 3 TB, or 9 TB with three copies.' },
+          { q: 'A shared queue, or one owner per site?', a: 'A shared queue for a one-off crawl. One owner per site for a crawl that never stops, so pacing needs no lock.' },
+          { q: 'Consistent hashing or a slot map?', a: "A slot map. A ring also moves few sites, but each slot move is one explicit step with its own epoch, so the old owner's late writes fail." },
+          { q: 'Why Cassandra or ScyllaDB?', a: 'Small upserts by key, and it grows by adding machines: 3 TB, or 9 TB with three copies. The cost is one table per query and no joins.' },
+          { q: "What if etcd can't be reached?", a: 'Machines pause. That is the price of one agreed answer on who owns each site.' },
         ],
       },
       {
@@ -717,7 +718,7 @@ export const extras: Extras = {
         when: '49 to 56',
         items: [
           { q: 'How would you know it is being rude?', a: 'Count overlapping requests, gaps that were too short, and fetches that robots.txt disallows. The target is zero.' },
-          { q: 'How do you know failover works?', a: 'Run a drill: kill a real machine, time how long its sites take to come back, and check no site saw two requests at once.' },
+          { q: 'How do you know failover works?', a: 'Run a drill: kill a real machine, time its sites coming back, and check none saw two requests at once.' },
           { q: 'What does it cost?', a: 'Storage is the cost that keeps growing: 20 TB a month compressed. People cost most, because the scheduler is custom code.' },
         ],
       },

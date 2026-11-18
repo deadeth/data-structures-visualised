@@ -583,7 +583,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     const m = /^(\d+) to (\d+)$/.exec(g.when ?? '');
     const el = h(
       'section', null,
-      h('h3', null, g.about, ...(g.when ? [h('span.dx-sheet-gwhen', null, g.when)] : [])),
+      h('h3', null, g.about, ...(g.when ? [' ', h('span.dx-sheet-gwhen', null, g.when)] : [])),
       h('dl.dx-sheet-asked', null, g.items.map((x) => h('div', null, h('dt', null, x.q), h('dd', null, x.a)))),
     );
     return { g, el, from: m ? Number(m[1]) : -1, to: m ? Number(m[2]) : -1 };
