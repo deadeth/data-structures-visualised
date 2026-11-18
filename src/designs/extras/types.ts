@@ -56,4 +56,14 @@ export interface Crib {
    * tend to come up in, in the hour's order. `when` is that stretch's minutes, as in `hour`.
    */
   asked: { about: string; when?: string; items: { q: string; a: string }[] }[];
+  /**
+   * Numbers the reader can type over, and what follows from them. Strings in `numbers` and `hour` name them as
+   * `{id}`; `resolve` in ./live.ts fills them in. Anything that reads those strings must read them resolved.
+   */
+  live?: {
+    /** The numbers he can change, with the page's own values. */
+    inputs: { id: string; value: number; min?: number; max?: number; whole?: boolean; label: string }[];
+    /** Everything that follows from them, already formatted for reading aloud. Keys are the derived ids. */
+    derive: (v: Record<string, number>) => Record<string, string>;
+  };
 }

@@ -25,6 +25,8 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
 - `screen-1920-clock-at-2-minutes.png`: the first view two minutes in, not scrolled. This is what
   a second monitor shows for most of the interview: he starts the clock as it begins.
 - `screen-1920-full.png`, `screen-1440-full.png`, `screen-390-full.png`: the whole page.
+- `screen-1440-numbers-changed.png`, `screen-390-numbers-changed.png`: after typing "5bn" pages a
+  month and a 200 KB page over the sheet's own numbers.
 - `print-page-1.png`, `print-page-2.png`: the two printed A4 pages.
 - Source: `/home/claude/data-structures-visualised/src/designs/extras/web-crawler.ts` (the `crib:` block at
   the end is the sheet; the rest of the file is the page's fuller interview notes it was written from).
@@ -34,6 +36,19 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
   `src/ui/design-extras.css`.
 
 ## Things that are deliberate
+
+- The candidate asked for the numbers to be editable "so they can be done real time": when the
+  interviewer gives a different scale he types over a number and reads the new sums. Six numbers
+  are fields in the run of the text, with a dotted underline and a faint tint: pages a month,
+  pages a second a machine, requests a second a site, page size, links a page, and the small
+  crawl's pages. The figures worked from them (in "Numbers to say", the three lines of "Do the
+  sums out loud" and the one-machine line in 22 to 30) recalculate on every keystroke, and a
+  changed figure gets a dotted underline. Every other line keeps the page's own numbers, and the
+  hint beside the heading says so once a number is changed. "Reset numbers" puts the page's
+  numbers back. On paper the fields are plain text.
+- Because a field shows its number, the sheet says "1 billion pages a month" and "1 million
+  pages", not "A billion" and "A million".
+- Rates are rounded as they would be said: 386 a second is "400".
 
 - Lines in the hour are capped at 100 characters, answers at 140. A test enforces it.
 - The change of brief has the rehearsal's minutes, 44 to 49, so the clock can point at it;

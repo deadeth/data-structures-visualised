@@ -1,4 +1,5 @@
 import type { Extras } from './types';
+import { bitRate, commas, duration, said, saidValue, shown, size, trim, words } from './live';
 
 /**
  * Interview extras for the web crawler.
@@ -569,9 +570,9 @@ export const extras: Extras = {
         short: 'Sums',
         title: 'Do the sums out loud',
         lines: [
-          'A million pages at 1 a second takes 11.6 days. At 10 a second, if the site allows, about 28 hours.',
-          "A million at 100 KB is 100 GB. Ask if it's a billion.",
-          "At 1 a second a site gives at most 86,400 a day. Sites set the pace, so it's a scheduling problem.",
+          '{smallPages} pages at {siteRate} a second takes {smallTime}. At {fastRate} a second, if the site allows, about {fastTime}.',
+          "{smallSaid} at {pageKBText} KB is {smallBytes}. Ask if it's a billion.",
+          "At {siteRateText} a second a site gives at most {perSiteDay} a day. Sites set the pace, so it's a scheduling problem.",
         ],
       },
       {
@@ -603,7 +604,7 @@ export const extras: Extras = {
         short: 'Machines',
         title: 'Grow it to many machines',
         lines: [
-          'First say what one machine carries: an assumed 50 pages a second, about 130 million a month.',
+          'First say what one machine carries: an assumed {perMachineText} pages a second, about {perMachineMonth} a month.',
           'Give each site one owner, not a shared queue with a lock per site. etcd maps 1,024 slots to owners.',
           "Each machine keeps its sites' queues (about 15 GB) and seen fingerprints (4 GB) on local disk.",
           'The URL table moves to Cassandra or ScyllaDB.',
@@ -664,13 +665,13 @@ export const extras: Extras = {
       },
     ],
     numbers: [
-      { figure: '400 a second', what: 'A billion pages a month. Build for 1,000 a second.' },
-      { figure: '20 machines', what: '1,000 a second, at about 50 a machine.' },
-      { figure: '86,400 a day', what: 'The most one site gives at 1 request a second.' },
-      { figure: '100 KB', what: 'A page. A billion a month is 100 TB, about 320 Mbit/s.' },
-      { figure: '20,000 a second', what: 'Seen checks, from 400 pages a second at 50 links each.' },
-      { figure: '80 GB', what: '10 billion URLs as 8-byte fingerprints.' },
-      { figure: '1,024 slots', what: 'Sites hash into them, about 51 to a machine.' },
+      { figure: '{rate} a second', what: '{pages} pages a month. Build for {build} a second.' },
+      { figure: '{machines} machines', what: '{build} a second, at about {perMachine} a machine.' },
+      { figure: '{perSiteDay} a day', what: 'The most one site gives at {siteRate} {requests} a second.' },
+      { figure: '{pageKB} KB', what: 'A page. {pagesSaid} a month is {monthBytes}, about {mbit}.' },
+      { figure: '{seenChecks} a second', what: 'Seen checks, from {rate} pages a second at {links} links each.' },
+      { figure: '{fingerprints}', what: '{known} URLs as 8-byte fingerprints.' },
+      { figure: '1,024 slots', what: 'Sites hash into them, about {slotsEach} to a machine.' },
       { figure: '30 seconds', what: "A machine's lease on its slots, renewed every 10." },
     ],
     remember: [
@@ -735,5 +736,47 @@ export const extras: Extras = {
         ],
       },
     ],
+    // The numbers he can type over as the interviewer changes them, and the sums that follow. Rates and counts are
+    // rounded as they would be said, and later sums start from the rounded figure, as they would out loud.
+    live: {
+      inputs: [
+        { id: 'pages', value: 1_000_000_000, min: 1000, max: 1e13, whole: true, label: 'Pages a month' },
+        { id: 'perMachine', value: 50, min: 1, max: 100_000, label: 'Pages a second one machine fetches' },
+        { id: 'siteRate', value: 1, min: 0.1, max: 10_000, label: 'Requests a second one site allows' },
+        { id: 'pageKB', value: 100, min: 0.1, max: 1e6, label: 'Size of a page in KB' },
+        { id: 'links', value: 50, min: 1, max: 100_000, whole: true, label: 'Links on a page' },
+        { id: 'smallPages', value: 1_000_000, min: 1, max: 1e12, whole: true, label: 'Pages in the one-site crawl' },
+      ],
+      derive: (v) => {
+        const MONTH = 2_592_000;
+        const DAY = 86_400;
+        const R = saidValue(v.pages / MONTH);
+        const B = saidValue(R * 2.5);
+        const M = Math.max(1, Math.ceil(B / v.perMachine));
+        return {
+          rate: commas(R),
+          pagesSaid: words(v.pages),
+          build: commas(B),
+          machines: commas(M),
+          perSiteDay: commas(Math.round(DAY * v.siteRate)),
+          requests: v.siteRate === 1 ? 'request' : 'requests',
+          monthBytes: size(v.pages * v.pageKB * 1000),
+          mbit: bitRate((R * v.pageKB * 8) / 1000),
+          seenChecks: said(R * v.links),
+          known: words(v.pages * 10),
+          fingerprints: size(v.pages * 10 * 8),
+          slotsEach: commas(Math.max(1, Math.floor(1024 / M))),
+          smallSaid: words(v.smallPages),
+          smallTime: duration(v.smallPages / v.siteRate),
+          fastRate: trim(v.siteRate * 10),
+          fastTime: duration(v.smallPages / (v.siteRate * 10)),
+          smallBytes: size(v.smallPages * v.pageKB * 1000),
+          perMachineMonth: words(v.perMachine * MONTH, 2),
+          pageKBText: shown(v.pageKB),
+          siteRateText: shown(v.siteRate),
+          perMachineText: shown(v.perMachine),
+        };
+      },
+    },
   },
 };

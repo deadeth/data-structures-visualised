@@ -2,6 +2,7 @@ import './design-extras.css';
 import { figures, h, tableRoles } from '../core/dom';
 import type { DesignEntry } from '../designs';
 import type { Crib, Extras } from '../designs/extras/types';
+import { defaults as liveDefaults, parseNumber, resolve, shown, texts, tokens } from '../designs/extras/live';
 import type { Design } from '../designs/types';
 
 /**
@@ -570,7 +571,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
   // A stretch costs its title and its lines, a longer line a little more; a group of answers its heading, and each
   // answer its question and about a row for every 60 characters.
   // A figure never parts from its unit at a line's end ("3 / TB").
-  const u = (t: string): string => t.replace(/(\d) (KB|MB|GB|TB|Mbit\/s|per cent)/g, '$1\u00a0$2');
+  const u = (t: string): string => t.replace(/(\d) (bytes|KB|MB|GB|TB|PB|EB|Mbit\/s|Gbit\/s|per cent)/g, '$1\u00a0$2');
   // A title's aside, in brackets at its end, is said more quietly than the title.
   const titled = (t: string): (string | HTMLElement)[] => {
     const a = /^(.*) (\([^)]*\))$/.exec(t);
@@ -579,16 +580,146 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
   // The running-behind note names the minute by which each move should have been made: the minutes are set
   // heavier, so they are found first.
   const lateItems = (t: string): (string | HTMLElement)[] => t.split(/(\b\d+\b)/).map((p, i) => (i % 2 ? h('b', null, p) : p));
+
+  // Live numbers: an input placeholder is a field he can type over, a derived one a span that follows it. Values
+  // are kept for the tab, like the clock.
+  const LIVE = `dsv.sheet.${id}.live`;
+  const inputs = crib.live?.inputs ?? [];
+  const base = liveDefaults(crib);
+  const values: Record<string, number> = { ...base };
+  try {
+    const kept = JSON.parse(sessionStorage.getItem(LIVE) ?? '{}') as Record<string, unknown>;
+    for (const x of inputs) {
+      const v = kept[x.id];
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) values[x.id] = v;
+    }
+  } catch {
+    // Nothing kept, or storage blocked: the page's own numbers.
+  }
+  const baseText = texts(crib, base);
+  const fields = new Map<string, HTMLInputElement[]>();
+  const outs: { id: string; el: HTMLElement }[] = [];
+  // A field as wide as its text: digits about 1ch, commas, points, spaces and narrow letters less.
+  const widthOf = (t: string): string => `${Math.max(1, [...t].reduce((n, c) => n + (/[0-9]/.test(c) ? 1 : /[,. il]/.test(c) ? 0.42 : /[mw]/.test(c) ? 1.45 : 0.95), 0)) + 0.35}ch`;
+  // Once the field is on the page, its text is measured in its own font, in ch so it scales with the type in print.
+  const ctx = document.createElement('canvas').getContext('2d');
+  const fit = (f: HTMLInputElement): void => {
+    if (!f.isConnected || !ctx) {
+      f.style.width = widthOf(f.value);
+      return;
+    }
+    const cs = getComputedStyle(f);
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const zero = ctx.measureText('0').width || 1;
+    f.style.width = `${(ctx.measureText(f.value || '0').width / zero + 0.1).toFixed(2)}ch`;
+  };
+  const fitAll = (): void => {
+    for (const list of fields.values()) for (const f of list) fit(f);
+  };
+  const unitAfter = /^ (bytes|KB|MB|GB|TB|PB|EB|Mbit\/s|Gbit\/s|per cent)/;
+  const rich = (t: string): (string | HTMLElement)[] => {
+    if (!crib.live) return [u(t)];
+    const now = texts(crib, values);
+    let after = false;
+    return tokens(t).map((k) => {
+      if ('text' in k) {
+        const piece = u(after ? k.text.replace(unitAfter, '\u00a0$1') : k.text);
+        after = false;
+        return piece;
+      }
+      after = true;
+      const def = inputs.find((x) => x.id === k.id);
+      if (!def) {
+        const el = h('span.dx-sheet-out', null, u(now[k.id] ?? `{${k.id}}`));
+        outs.push({ id: k.id, el });
+        return el;
+      }
+      const f = h('input.dx-sheet-in', { type: 'text', inputMode: 'decimal', autocomplete: 'off', 'aria-label': def.label, value: shown(values[def.id]) });
+      f.spellcheck = false;
+      f.style.width = widthOf(f.value);
+      fields.set(def.id, [...(fields.get(def.id) ?? []), f]);
+      return f;
+    });
+  };
+  const resetBtn = h('button.btn.quiet.dx-sheet-reset', { type: 'button', hidden: true }, 'Reset numbers');
+  /** Every derived figure and every field not being typed in, from the current values. */
+  function refresh(except?: HTMLInputElement): void {
+    const now = texts(crib, values);
+    const moved = inputs.some((x) => values[x.id] !== x.value);
+    for (const o of outs) {
+      o.el.textContent = u(now[o.id] ?? '');
+      o.el.classList.toggle('moved', moved && now[o.id] !== baseText[o.id]);
+    }
+    for (const [fid, list] of fields)
+      for (const f of list) {
+        if (f === except) continue;
+        f.value = shown(values[fid]);
+        fit(f);
+        f.removeAttribute('aria-invalid');
+      }
+    resetBtn.hidden = !moved;
+    hintText.textContent = moved ? 'Yours. Lines without an underline keep the page\u2019s numbers.' : 'Type over any underlined number.';
+    try {
+      if (moved) sessionStorage.setItem(LIVE, JSON.stringify(values));
+      else sessionStorage.removeItem(LIVE);
+    } catch {
+      // Storage can be blocked; the numbers still work until the page is left.
+    }
+  }
+  function wire(def: (typeof inputs)[number], f: HTMLInputElement): void {
+    let fresh = false;
+    f.addEventListener('focus', () => {
+      f.select();
+      fresh = true;
+    });
+    // A click that focuses the field would otherwise drop the selection just made.
+    f.addEventListener('mouseup', (e) => {
+      if (fresh) e.preventDefault();
+      fresh = false;
+    });
+    f.addEventListener('input', () => {
+      fresh = false;
+      fit(f);
+      let v = parseNumber(f.value);
+      if (def.whole) v = Math.round(v);
+      const ok = Number.isFinite(v) && v > 0 && (def.min === undefined || v >= def.min) && (def.max === undefined || v <= def.max);
+      if (ok) f.removeAttribute('aria-invalid');
+      else f.setAttribute('aria-invalid', 'true');
+      if (!ok) return;
+      values[def.id] = v;
+      refresh(f);
+    });
+    f.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === 'Escape') {
+        e.preventDefault();
+        f.blur();
+      }
+    });
+    f.addEventListener('blur', () => {
+      f.value = shown(values[def.id]);
+      fit(f);
+      f.removeAttribute('aria-invalid');
+    });
+  }
+  resetBtn.addEventListener('click', () => {
+    Object.assign(values, base);
+    refresh();
+  });
+  // Once a number is changed, the hint says what has and has not followed it: only the figures and sums worked from
+  // the inputs move; the other lines keep the page's own numbers.
+  const hintText = h('span', null, 'Type over any underlined number.');
+  const liveHint = crib.live ? h('p.dx-sheet-livehint', null, hintText, ' ', resetBtn) : null;
+
   const stretches = crib.hour.map((s) => {
     const m = /^(\d+) to (\d+)$/.exec(s.when);
     const li = h(
       'li', null,
       h(`p.dx-sheet-when${m ? '' : '.dx-sheet-any'}`, null, h('span', null, s.when)),
-      h('div', null, h('h3', null, ...titled(s.title)), h('ul', null, s.lines.map((t) => h('li', null, u(t))))),
+      h('div', null, h('h3', null, ...titled(s.title)), h('ul', null, s.lines.map((t) => h('li', null, ...rich(t))))),
     );
     return { s, li, from: m ? Number(m[1]) : -1, to: m ? Number(m[2]) : -1 };
   });
-  const hour = halves(stretches, (x) => 2.2 + x.s.lines.reduce((n, t) => n + 1 + (t.length > 62 ? 0.9 : 0), 0));
+  const hour = halves(stretches, (x) => 2.2 + x.s.lines.reduce((n, t) => n + 1 + (resolve(crib, t).length > 62 ? 0.9 : 0), 0));
   const groups = crib.asked.map((g) => {
     const m = /^(\d+) to (\d+)$/.exec(g.when ?? '');
     const el = h(
@@ -607,7 +738,9 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     return b;
   });
   // The numbers scroll away under the hour: one press brings them back.
-  const figs = h('dl.dx-sheet-figs', null, crib.numbers.map((n) => h('div', null, h('dt', null, u(n.figure)), h('dd', null, u(n.what)))));
+  const figs = h('dl.dx-sheet-figs', null, crib.numbers.map((n) => h('div', null, h('dt', null, ...rich(n.figure)), h('dd', null, ...rich(n.what)))));
+  for (const def of inputs) for (const f of fields.get(def.id) ?? []) wire(def, f);
+  refresh();
   const toNumbers = h('button.dx-sheet-jump-figs', { type: 'button' }, 'Numbers');
   toNumbers.addEventListener('click', () => figs.scrollIntoView({ block: 'center' }));
   // A phone has no room for the strip: the way back to the numbers sits with the bar's buttons.
@@ -689,7 +822,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
   sheet.append(
       h('header.dx-crib-head', null, h('h1', null, design.name, h('span.dx-crib-kind', null, ': cheat sheet'))),
       h('p.dx-sheet-idea', null, crib.idea),
-      sec('numbers', 'Numbers to say', figs),
+      sec('numbers', 'Numbers to say', ...(liveHint ? [liveHint] : []), figs),
       sec(
         'hour', 'The hour, by the minute',
         ...(crib.late ? [h('p.dx-sheet-late', null, ...lateItems(crib.late))] : []),
@@ -702,6 +835,9 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
       ),
   );
   run();
+  // Fields are measured once the sheet is on the page and its font has loaded.
+  requestAnimationFrame(fitAll);
+  void document.fonts?.ready.then(fitAll);
   return { el, stop: () => clearInterval(ticking) };
 }
 

@@ -1027,6 +1027,84 @@
   background: var(--rule-strong);
 }
 
+/* Live numbers: a field in the run of the sentence, in the sentence's own type, marked as editable by a dotted
+   underline and a faint tint; a solid ink outline while typing; a red dashed one while the text is not a number. */
+.dx-sheet-in {
+  display: inline-block;
+  box-sizing: content-box;
+  margin: 0;
+  padding: 0 0.12em;
+  border: 0;
+  border-radius: 2px;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  vertical-align: baseline;
+  text-align: center;
+  background-color: #eef2f8;
+  background-image: linear-gradient(to right, var(--ink-3) 55%, transparent 0);
+  background-size: 4px 1.5px;
+  background-repeat: repeat-x;
+  background-position: 0 100%;
+  cursor: text;
+}
+
+.dx-sheet-in:hover {
+  background-color: #e4e9f0;
+}
+
+.dx-sheet-in:focus {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+
+.dx-sheet-in[aria-invalid='true'] {
+  outline: 2px dashed var(--bad);
+  outline-offset: 1px;
+}
+
+/* A figure that moved from the page's own value: a quiet dotted underline, no colour. */
+.dx-sheet-out.moved {
+  text-decoration: underline dotted var(--ink-3);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.18em;
+}
+
+/* The hint sits at the right of the numbers' heading. */
+.dx-sheet-s-numbers {
+  position: relative;
+}
+
+.dx-sheet-livehint {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 1.95rem;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 0.92rem;
+}
+
+.dx-sheet-livehint .btn.quiet {
+  color: var(--ink);
+  min-height: 0;
+  padding: 0 8px;
+  font-size: 0.92rem;
+}
+
+@media screen and (max-width: 699px) {
+  .dx-sheet-livehint {
+    position: static;
+    flex-wrap: wrap;
+    height: auto;
+    margin: -2px 0 6px;
+  }
+}
+
 /* The hour as a strip of minutes under the bar's buttons: a press goes to that stretch. */
 .dx-sheet-jump {
   display: flex;
@@ -1918,6 +1996,21 @@
   html.crib-mode .dx-sheet-asked dt {
     font-size: 10pt;
     font-weight: 800;
+  }
+
+  /* Live numbers print as the text they hold: no field, tint or underline; the hint and reset stay on screen. */
+  html.crib-mode .dx-sheet-in {
+    padding: 0;
+    background: none;
+    outline: 0;
+  }
+
+  html.crib-mode .dx-sheet-out.moved {
+    text-decoration: none;
+  }
+
+  html.crib-mode .dx-sheet-livehint {
+    display: none;
   }
 
   html.crib-mode a {

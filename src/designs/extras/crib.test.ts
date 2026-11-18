@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import type { Extras } from './types';
+import type { Crib, Extras } from './types';
+import { resolve } from './live';
+
+/** A crib's strings as the reader sees them with the page's own numbers: placeholders filled. */
+const plain = (crib: Crib): Crib => {
+  const r = (t: string) => resolve(crib, t);
+  return { ...crib, hour: crib.hour.map((s) => ({ ...s, lines: s.lines.map(r) })), numbers: crib.numbers.map((n) => ({ figure: r(n.figure), what: r(n.what) })) };
+};
 
 /** Every extras file that carries a hand-written cheat sheet. */
 const files = import.meta.glob<{ extras: Extras }>('./*.ts', { eager: true });
 const sheets = Object.entries(files)
   .filter(([path, m]) => !path.endsWith('.test.ts') && m.extras?.crib)
-  .map(([path, m]) => ({ id: path.replace(/^\.\/|\.ts$/g, ''), extras: m.extras, crib: m.extras.crib! }));
+  .map(([path, m]) => ({ id: path.replace(/^\.\/|\.ts$/g, ''), extras: m.extras, crib: plain(m.extras.crib!) }));
 
 describe('cheat sheets', () => {
   it('the web crawler has one', () => {
