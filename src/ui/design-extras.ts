@@ -594,20 +594,29 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
   let began = read();
   let ticking = 0;
   const elapsed = h('span.dx-sheet-elapsed', { role: 'timer', 'aria-live': 'off' });
+  // What the clock says to be doing, in the bar that stays in view; pressing it brings that stretch into view.
+  const nowBtn = h('button.dx-sheet-now', { type: 'button', hidden: true });
   const startBtn = h('button.btn', { type: 'button' });
+  let current: (typeof stretches)[number] | undefined;
+  nowBtn.addEventListener('click', () => current?.li.scrollIntoView({ block: 'center' }));
   function show(): void {
     const secs = began ? Math.max(0, Math.floor((Date.now() - began) / 1000)) : 0;
     const min = Math.floor(secs / 60);
-    for (const x of stretches) x.li.classList.toggle('now', !!began && min >= x.from && min < x.to);
+    current = began ? stretches.find((x) => min >= x.from && min < x.to) : undefined;
+    for (const x of stretches) x.li.classList.toggle('now', x === current);
+    sheet.classList.toggle('clocked', !!began);
     startBtn.textContent = began ? 'Reset the clock' : 'Start the clock';
     elapsed.hidden = !began;
-    if (began) elapsed.textContent = min >= length ? `${length} minutes are up` : `${min}:${String(secs % 60).padStart(2, '0')} of ${length} minutes`;
+    nowBtn.hidden = !current;
+    if (current) nowBtn.textContent = `Now: ${current.s.title}, until ${current.to}`;
+    if (began) elapsed.textContent = min >= length ? `${length} minutes are up` : `${min}:${String(secs % 60).padStart(2, '0')} of ${length}`;
   }
   function run(): void {
     clearInterval(ticking);
     ticking = began ? window.setInterval(show, 1000) : 0;
     show();
   }
+  const sheet = h('div.dx-crib.dx-sheet');
   startBtn.addEventListener('click', () => {
     began = began ? 0 : Date.now();
     try {
@@ -618,17 +627,17 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     }
     run();
   });
-  run();
 
   const el = h(
     'article.dx-page.dx-crib-page.dx-sheet-page', null,
     h(
       'div.dx-crib-bar.dx-sheet-bar', null,
       h('p.dx-back', null, h('a', { href: `#/d/${id}` }, `Back to ${design.name}`)),
-      h('p.dx-crib-tools', null, elapsed, startBtn, h('button.btn.primary', { type: 'button', onclick: () => window.print() }, 'Print'), h('span.dx-hint', null, 'Two A4 pages.')),
+      h('p.dx-crib-tools', null, nowBtn, elapsed, startBtn, h('button.btn.primary', { type: 'button', onclick: () => window.print() }, 'Print'), h('span.dx-hint', null, 'Two A4 pages.')),
     ),
-    h(
-      'div.dx-crib.dx-sheet', null,
+    sheet,
+  );
+  sheet.append(
       h('header.dx-crib-head', null, h('h1', null, design.name, h('span.dx-crib-kind', null, ': cheat sheet'))),
       h('p.dx-sheet-idea', null, crib.idea),
       sec('numbers', 'Numbers to say', h('dl.dx-sheet-figs', null, crib.numbers.map((n) => h('div', null, h('dt', null, n.figure), h('dd', null, n.what))))),
@@ -642,8 +651,8 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
         'asked', 'If they ask',
         h('div.dx-sheet-cols', null, asked.map((part) => h('div.dx-sheet-groups', null, part.map((g) => h('section', null, h('h3', null, g.about), h('dl.dx-sheet-asked', null, g.items.map((x) => h('div', null, h('dt', null, x.q), h('dd', null, x.a))))))))),
       ),
-    ),
   );
+  run();
   return { el, stop: () => clearInterval(ticking) };
 }
 

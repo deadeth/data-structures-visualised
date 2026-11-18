@@ -883,25 +883,33 @@
   max-width: 1320px;
 }
 
+.dx-sheet h1 {
+  font-size: 1.6rem;
+}
+
+.dx-sheet {
+  padding-top: 22px;
+}
+
 .dx-sheet-idea {
-  margin-top: 12px;
-  padding: 9px 16px;
+  margin-top: 8px;
+  padding: 8px 16px;
   border-left: 4px solid var(--ink);
   background: #eef2f8;
-  font-size: 1.12rem;
+  font-size: 1.06rem;
   font-weight: 600;
   line-height: 1.4;
 }
 
 .dx-sheet-sec {
-  margin-top: 18px;
+  margin-top: 14px;
 }
 
 .dx-sheet-sec h2 {
   font-size: 1.2rem;
   font-weight: 780;
-  margin-bottom: 10px;
-  padding-bottom: 4px;
+  margin-bottom: 8px;
+  padding-bottom: 3px;
   border-bottom: 1.5px solid var(--ink);
 }
 
@@ -974,14 +982,53 @@
   color: var(--ink);
 }
 
-/* With the clock running: the stretch the interview should be in. */
+/* With the clock running: the stretch the interview should be in, in the colour of the thing being followed.
+   The others step back, in solid colours. */
 .dx-sheet-hour > li.now {
-  border-left-color: var(--ink);
-  background: #eef2f8;
+  border-left-width: 6px;
+  border-left-color: var(--key);
+  padding-left: 8px;
+  background: var(--key-soft);
+}
+
+.dx-sheet-hour > li.now .dx-sheet-when span {
+  border-color: var(--key);
+  background: var(--key);
+  color: #fff;
+}
+
+.dx-sheet.clocked .dx-sheet-hour > li:not(.now) {
+  color: var(--ink-2);
+}
+
+.dx-sheet.clocked .dx-sheet-hour > li:not(.now) .dx-sheet-when:not(.dx-sheet-any) span {
+  border-color: var(--ink-3);
+  background: var(--ink-3);
+}
+
+.dx-sheet-hour > li {
+  scroll-margin-top: 80px;
 }
 
 .dx-sheet-elapsed {
   font: 700 1rem var(--sans-data);
+  white-space: nowrap;
+}
+
+.dx-sheet-now {
+  padding: 5px 12px;
+  border: 0;
+  border-left: 6px solid var(--key);
+  background: var(--key-soft);
+  font: 700 1rem var(--sans);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dx-sheet-bar .dx-crib-tools {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 /* The bar stays in view, so the clock does. */
@@ -1402,8 +1449,17 @@
     background: none;
   }
 
-  html.crib-mode .dx-sheet-elapsed {
+  html.crib-mode .dx-sheet-elapsed,
+  html.crib-mode .dx-sheet-now {
     display: none;
+  }
+
+  html.crib-mode .dx-sheet.clocked .dx-sheet-hour > li {
+    color: #000;
+  }
+
+  html.crib-mode .dx-sheet {
+    padding-top: 0;
   }
 
   /* On paper the minutes sit on the title's line, so the lines below run the column's full width and wrap less. */
@@ -1462,7 +1518,7 @@
 
   html.crib-mode .dx-sheet-s-remember,
   html.crib-mode .dx-sheet-s-asked {
-    font-size: 10.2pt;
+    font-size: 10.5pt;
   }
 
   html.crib-mode .dx-sheet-s-asked {
