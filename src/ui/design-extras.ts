@@ -1,7 +1,7 @@
 import './design-extras.css';
 import { figures, h, tableRoles } from '../core/dom';
 import type { DesignEntry } from '../designs';
-import type { Extras } from '../designs/extras/types';
+import type { Crib, Extras } from '../designs/extras/types';
 import type { Design } from '../designs/types';
 
 /**
@@ -36,7 +36,7 @@ function actions(id: string, minutes: number): HTMLElement {
   return h(
     'p.dx-actions', null,
     h('a.dx-action.primary', { href: `#/d/${id}/rehearse` }, `Rehearse this in ${minutes} minutes`),
-    h('a.dx-action', { href: `#/d/${id}/crib` }, 'One-page crib'),
+    h('a.dx-action', { href: `#/d/${id}/crib` }, 'Cheat sheet'),
   );
 }
 
@@ -498,7 +498,7 @@ export async function mountRehearse(host: HTMLElement, entry: DesignEntry, desig
           'p.dx-nav', null,
           h('button.btn', { type: 'button', onclick: () => goTo(stages.length - 1) }, 'Back to the stages'),
           h('button.btn', { type: 'button', onclick: () => fresh() }, 'Start a fresh run'),
-          h('a.dx-action', { href: `${base}/crib` }, 'One-page crib'),
+          h('a.dx-action', { href: `${base}/crib` }, 'Cheat sheet'),
           h('a.dx-action', { href: base }, `Back to ${design.name}`),
         ),
       ),
@@ -544,12 +544,66 @@ export function cue(text: string, max = 120): string {
   return `${head.slice(0, sp > 60 ? sp : max)} …`;
 }
 
+/**
+ * A hand-written cheat sheet (Extras.crib): the interview by the clock, the figures to say, habits to keep and short
+ * answers to likely questions. Whole short sentences in large type, for a second screen; two A4 pages printed.
+ */
+function cribSheet(entry: DesignEntry, design: Design, crib: Crib): HTMLElement {
+  const id = design.id;
+  const hid = (k: string) => `${id}-sheet-${k}`;
+  const sec = (key: string, title: string, ...body: HTMLElement[]) => h(`section.dx-sheet-sec.dx-sheet-s-${key}`, { 'aria-labelledby': hid(key) }, h('h2', { id: hid(key) }, title), ...body);
+  // The hour in two columns read downwards, cut where the two come out nearest the same height (a stretch costs its
+  // title and its lines).
+  const cost = crib.hour.map((s) => 2 + s.lines.length);
+  const total = cost.reduce((a, b) => a + b, 0);
+  let cut = 1;
+  for (let k = 1, left = 0, best = Infinity; k < cost.length; k++) {
+    left += cost[k - 1];
+    if (Math.abs(total - 2 * left) < best) {
+      best = Math.abs(total - 2 * left);
+      cut = k;
+    }
+  }
+  const halves = [crib.hour.slice(0, cut), crib.hour.slice(cut)].filter((x) => x.length);
+  return h(
+    'article.dx-page.dx-crib-page.dx-sheet-page', null,
+    h(
+      'div.dx-crib-bar', null,
+      h('p.dx-back', null, h('a', { href: `#/d/${id}` }, `Back to ${design.name}`)),
+      h('p.dx-crib-tools', null, h('button.btn.primary', { type: 'button', onclick: () => window.print() }, 'Print'), h('span.dx-hint', null, 'Two A4 pages.')),
+    ),
+    h(
+      'div.dx-crib.dx-sheet', null,
+      h('header.dx-crib-head', null, h('h1', null, design.name, h('span.dx-crib-kind', null, ': cheat sheet')), h('p.dx-sheet-q', null, entry.question)),
+      h('p.dx-sheet-idea', null, crib.idea),
+      sec(
+        'hour', 'The hour, by the minute',
+        h('div.dx-sheet-cols', null, halves.map((part) => h('ol.dx-sheet-hour', null, part.map((s) => h('li', null, h('p.dx-sheet-when', null, s.when), h('div', null, h('h3', null, s.title), h('ul', null, s.lines.map((t) => h('li', null, t))))))))),
+      ),
+      h(
+        'div.dx-sheet-pair', null,
+        sec('numbers', 'Numbers to say', h('dl.dx-sheet-figs', null, crib.numbers.map((n) => h('div', null, h('dt', null, n.figure), h('dd', null, n.what))))),
+        sec('remember', 'Keep doing', h('ul.dx-sheet-keep', null, crib.remember.map((t) => h('li', null, t)))),
+      ),
+      sec('asked', 'If they ask', h('dl.dx-sheet-asked', null, crib.asked.map((x) => h('div', null, h('dt', null, x.q), h('dd', null, x.a))))),
+    ),
+  );
+}
+
 /** The crib: everything worth glancing at before the interview, on one or two printed A4 pages. */
 export async function mountCrib(host: HTMLElement, entry: DesignEntry, design: Design, extras?: Extras): Promise<() => void> {
   if (!extras) return notWritten(host, entry, 'Crib');
   const id = design.id;
   const root = document.documentElement;
   root.classList.add('crib-mode');
+  if (extras.crib) {
+    const sheet = cribSheet(entry, design, extras.crib);
+    host.append(sheet);
+    return () => {
+      root.classList.remove('crib-mode');
+      sheet.remove();
+    };
+  }
   const hid = (k: string) => `${id}-crib-${k}`;
   const sec = (key: string, title: string, ...body: HTMLElement[]) => h(`section.dx-crib-sec.dx-crib-sec-${key}`, { 'aria-labelledby': hid(key) }, h('h2', { id: hid(key) }, title), ...body);
   // The short sections, in order, split between two columns so the columns end level (about: a table row costs its

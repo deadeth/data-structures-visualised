@@ -877,6 +877,163 @@
   background: var(--ink-3);
 }
 
+/* ---- the cheat sheet: a hand-written crib (Extras.crib), for a second screen ------ */
+
+.dx-sheet-page {
+  max-width: 1240px;
+}
+
+.dx-sheet-q {
+  margin-top: 6px;
+  color: var(--ink-2);
+}
+
+.dx-sheet-idea {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-left: 4px solid var(--ink);
+  background: #eef2f8;
+  font-size: 1.12rem;
+  font-weight: 600;
+  line-height: 1.4;
+  max-width: 84ch;
+}
+
+.dx-sheet-sec {
+  margin-top: 26px;
+}
+
+.dx-sheet-sec h2 {
+  font-size: 1.2rem;
+  font-weight: 780;
+  margin-bottom: 12px;
+  padding-bottom: 4px;
+  border-bottom: 1.5px solid var(--ink);
+}
+
+/* The hour: two columns of stretches, each read downwards, each stretch with its minutes in the margin. */
+.dx-sheet-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px 36px;
+  align-items: start;
+}
+
+.dx-sheet-hour {
+  display: grid;
+  gap: 20px;
+  list-style: none;
+  padding: 0;
+}
+
+.dx-sheet-hour > li {
+  display: grid;
+  grid-template-columns: 4.7rem minmax(0, 1fr);
+  gap: 0 10px;
+  break-inside: avoid;
+}
+
+.dx-sheet-when {
+  font: 700 0.98rem var(--sans-data);
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.dx-sheet-hour h3 {
+  font-size: 1.08rem;
+  font-weight: 750;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+.dx-sheet-hour ul,
+.dx-sheet-keep {
+  display: grid;
+  gap: 5px;
+  list-style: none;
+  padding: 0;
+}
+
+.dx-sheet-hour ul li,
+.dx-sheet-keep li {
+  position: relative;
+  padding-left: 16px;
+  line-height: 1.42;
+}
+
+.dx-sheet-hour ul li::before,
+.dx-sheet-keep li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.6em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+
+.dx-sheet-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  gap: 0 36px;
+}
+
+.dx-sheet-figs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 28px;
+}
+
+.dx-sheet-figs dt {
+  font: 750 1.22rem var(--sans-data);
+  line-height: 1.25;
+}
+
+.dx-sheet-figs dd {
+  margin: 1px 0 0;
+  color: var(--ink-2);
+  line-height: 1.38;
+}
+
+.dx-sheet-asked {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 36px;
+}
+
+.dx-sheet-asked > div {
+  break-inside: avoid;
+}
+
+.dx-sheet-asked dt {
+  font-weight: 720;
+}
+
+.dx-sheet-asked dd {
+  margin: 2px 0 0;
+  line-height: 1.42;
+}
+
+@media screen and (max-width: 899px) {
+  .dx-sheet-cols,
+  .dx-sheet-pair,
+  .dx-sheet-asked {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dx-sheet-hour > li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media screen and (max-width: 479px) {
+  .dx-sheet-figs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* ---- narrower screens --------------------------------------------------------- */
 
 @media (max-width: 899px) {
@@ -1102,6 +1259,119 @@
 
   html.crib-mode .dx-crib-pushes ul li::before {
     background: #000;
+  }
+
+  /* The cheat sheet: page 1 is the hour and the numbers; page 2 the habits and the questions. */
+  html.crib-mode .dx-sheet-page {
+    max-width: none;
+  }
+
+  /* The question repeats the title: off the printed page, to leave the first page to the hour and the numbers. */
+  html.crib-mode .dx-sheet-q {
+    display: none;
+  }
+
+  html.crib-mode .dx-sheet {
+    font-size: 9.5pt;
+  }
+
+  html.crib-mode .dx-sheet-idea {
+    margin-top: 6pt;
+    padding: 4pt 8pt;
+    border-left: 2.5pt solid #000;
+    background: none;
+    font-size: 10.5pt;
+    max-width: none;
+  }
+
+  html.crib-mode .dx-sheet-sec {
+    margin-top: 8pt;
+  }
+
+  html.crib-mode .dx-sheet-sec h2 {
+    font-size: 11.5pt;
+    margin-bottom: 5pt;
+    padding-bottom: 1pt;
+    border-bottom: 1pt solid #000;
+    break-after: avoid;
+  }
+
+  html.crib-mode .dx-sheet-cols {
+    gap: 6pt 16pt;
+  }
+
+  html.crib-mode .dx-sheet-hour {
+    gap: 6pt;
+  }
+
+  html.crib-mode .dx-sheet-hour > li {
+    grid-template-columns: 40pt minmax(0, 1fr);
+    gap: 0 5pt;
+  }
+
+  html.crib-mode .dx-sheet-when {
+    font-size: 9pt;
+    color: #000;
+  }
+
+  html.crib-mode .dx-sheet-figs dd {
+    color: #000;
+  }
+
+  html.crib-mode .dx-sheet-hour h3 {
+    font-size: 10.5pt;
+    margin-bottom: 1.5pt;
+  }
+
+  html.crib-mode .dx-sheet-hour ul,
+  html.crib-mode .dx-sheet-keep {
+    gap: 1.5pt;
+  }
+
+  html.crib-mode .dx-sheet-hour ul li,
+  html.crib-mode .dx-sheet-keep li {
+    padding-left: 9pt;
+    line-height: 1.28;
+  }
+
+  html.crib-mode .dx-sheet-hour ul li::before,
+  html.crib-mode .dx-sheet-keep li::before {
+    background: #000;
+    width: 3pt;
+    height: 3pt;
+  }
+
+  html.crib-mode .dx-sheet-pair {
+    display: block;
+  }
+
+  html.crib-mode .dx-sheet-figs {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4pt 12pt;
+  }
+
+  html.crib-mode .dx-sheet-keep {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2pt 12pt;
+  }
+
+  html.crib-mode .dx-sheet-figs dt {
+    font-size: 11pt;
+  }
+
+  html.crib-mode .dx-sheet-figs dd,
+  html.crib-mode .dx-sheet-asked dd {
+    line-height: 1.28;
+  }
+
+  html.crib-mode .dx-sheet-asked {
+    gap: 9pt 18pt;
+    font-size: 10.5pt;
+  }
+
+  html.crib-mode .dx-sheet-s-remember {
+    break-before: page;
+    margin-top: 0;
   }
 
   html.crib-mode a {

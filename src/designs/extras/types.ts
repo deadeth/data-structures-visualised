@@ -28,4 +28,23 @@ export interface Extras {
   };
   /** A timed run-through: what to do in each stage. The rehearsal clock runs for the sum of the stage minutes. */
   rehearsal: { stage: string; minutes: number; prompt: string; cover: string[] }[];
+  /**
+   * A hand-written cheat sheet for the crib page, to glance at on a second screen or print. With one, the crib shows
+   * it in place of cue lines cut from the page's own text. Every line is a whole short sentence, written to be read in
+   * a glance: no line over 100 characters, none cut off.
+   */
+  crib?: Crib;
+}
+
+export interface Crib {
+  /** The one idea to hold on to, in a sentence or two. */
+  idea: string;
+  /** The interview in order: what to do in each stretch of the clock. */
+  hour: { when: string; title: string; lines: string[] }[];
+  /** The figures worth saying out loud, each with what it is and where it comes from. */
+  numbers: { figure: string; what: string }[];
+  /** Habits that are easy to drop under pressure. */
+  remember: string[];
+  /** Likely questions, each with an answer short enough to say in one breath. */
+  asked: { q: string; a: string }[];
 }
