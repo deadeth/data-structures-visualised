@@ -884,11 +884,11 @@
 }
 
 .dx-sheet h1 {
-  font-size: 1.6rem;
+  font-size: 1.35rem;
 }
 
 .dx-sheet {
-  padding-top: 22px;
+  padding-top: 14px;
 }
 
 .dx-sheet-idea,
@@ -911,9 +911,9 @@
 }
 
 .dx-sheet-sec h2 {
-  font-size: 1.45rem;
+  font-size: 1.25rem;
   font-weight: 780;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   padding-bottom: 3px;
   border-bottom: 1.5px solid var(--ink);
 }
@@ -926,7 +926,7 @@
 }
 
 .dx-sheet-figs dt {
-  font: 760 1.5rem var(--sans);
+  font: 760 1.3rem var(--sans);
   line-height: 1.25;
 }
 
@@ -1313,7 +1313,13 @@
     flex: 1 0 100%;
   }
 
+  /* Before the clock starts, starting it is the widest thing in the bar. */
+  .dx-sheet-page:not(.clocked) .dx-sheet-bar .btn.primary {
+    flex: 1 1 auto;
+  }
+
   .dx-sheet-bar .dx-crib-tools {
+    flex: 1 1 100%;
     justify-content: flex-start;
     gap: 8px;
   }
@@ -1699,6 +1705,7 @@
 
   html.crib-mode .dx-sheet {
     font-size: 9.5pt;
+    color: #000;
   }
 
   html.crib-mode .dx-sheet-idea {
@@ -1886,7 +1893,7 @@
   html.crib-mode .dx-sheet-groups h3 {
     margin-bottom: 4pt;
     padding: 0 0 1pt;
-    border-bottom: 0.75pt solid #000;
+    border-bottom: 1.5pt solid #000;
     background: none;
     font-size: 11.5pt;
     font-weight: 800;

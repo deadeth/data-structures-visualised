@@ -629,7 +629,6 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
   // The questions that belong to the stretch the clock is in.
   const answersBtn = h('button.btn.dx-sheet-answers', { type: 'button', hidden: true }, 'Its questions');
   const startBtn = h('button.btn', { type: 'button' });
-  const hint = h('span.dx-hint', null, 'Two A4 pages.');
   let current: (typeof stretches)[number] | undefined;
   let currentGroup: (typeof groups)[number] | undefined;
   nowBtn.addEventListener('click', () => current?.li.scrollIntoView({ block: 'start' }));
@@ -653,8 +652,6 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     startBtn.classList.toggle('quiet', !!began);
     startBtn.classList.toggle('primary', !began);
     elapsed.hidden = !began;
-    // With the clock running the bar has more to hold: the hint makes way, so it stays one row.
-    hint.hidden = !!began;
     nowBtn.hidden = !current;
     if (current) nowBtn.textContent = `Now: ${current.s.title}, until ${current.to}`;
     if (began) elapsed.replaceChildren(...(min >= length ? [`${length} minutes are up`] : [`${min}:${String(secs % 60).padStart(2, '0')}`, h('span.dx-sheet-of', null, ` of ${length}`)]));
@@ -681,7 +678,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     h(
       'div.dx-crib-bar.dx-sheet-bar', null,
       h('p.dx-back', null, h('a', { href: `#/d/${id}` }, `Back to ${design.name}`)),
-      h('p.dx-crib-tools', null, nowBtn, toNumbersPhone, answersBtn, elapsed, startBtn, h('button.btn.dx-sheet-print', { type: 'button', onclick: () => window.print() }, 'Print'), hint),
+      h('p.dx-crib-tools', null, nowBtn, toNumbersPhone, answersBtn, elapsed, startBtn, h('button.btn.dx-sheet-print', { type: 'button', title: 'Two A4 pages', onclick: () => window.print() }, 'Print')),
       h('nav.dx-sheet-jump', { 'aria-label': 'The hour' }, toNumbers, jumps),
     ),
     sheet,

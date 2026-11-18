@@ -40,6 +40,14 @@ for (const [w, hgt] of [[1920, 1080], [1440, 900], [390, 844]]) {
     writeFileSync(`${out}/text.txt`, await page.evaluate(() => document.querySelector('.dx-sheet')?.innerText ?? ''));
     await page.pdf({ path: `${out}/sheet.pdf`, format: 'A4', printBackground: true });
   }
+  if (w === 1920) {
+    // Two minutes in, not scrolled: what a second monitor shows as the interview starts.
+    await page.evaluate(() => sessionStorage.setItem('dsv.sheet.web-crawler', String(Date.now() - 2 * 60 * 1000)));
+    await page.reload({ waitUntil: 'networkidle0' });
+    await new Promise((r) => setTimeout(r, 1300));
+    await page.screenshot({ path: `${out}/screen-1920-clock-at-2-minutes.png` });
+    await page.evaluate(() => sessionStorage.removeItem('dsv.sheet.web-crawler'));
+  }
   await page.close();
 }
 await browser.close(); await server.close();

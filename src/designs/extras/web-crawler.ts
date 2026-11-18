@@ -617,7 +617,7 @@ export const extras: Extras = {
         lines: [
           "If they don't steer: a worker dying, a URL found twice, the limiter, a dead machine. 3 minutes each.",
           "A dead worker's lease ends and its URL is retried. Acknowledge after saving the page and links.",
-          'A retry can refetch a page. The data stays right: upserts by URL, and the newer fetch time wins.',
+          'Retries mean at least once. The data stays right: upserts by URL, and the newer fetch time wins.',
           'Two workers find the same URL? An atomic insert keeps the first. With one owner, there is no race.',
           'Limit each site with a local timer, and shared IP addresses with a Redis token bucket.',
           'If a machine dies or stalls, others take its slots and raise the epoch, so its late writes fail.',
@@ -659,7 +659,7 @@ export const extras: Extras = {
         title: 'Your questions',
         lines: [
           '“Where would you have taken this design differently?”',
-          '“What do you expect of a leader in design decisions?”',
+          '“What should leaders here bring to design decisions?”',
         ],
       },
     ],
@@ -679,7 +679,7 @@ export const extras: Extras = {
       'For each choice, say the problem it fixes, the alternative and what yours costs.',
       'Check in now and then: “Is this the level of detail you want?”',
       'Say what happens when each part fails.',
-      "On how you'd run it, keep each answer to two or three sentences, then offer to go further.",
+      "Asked how you'd run it, keep answers to two or three sentences, then offer to go further.",
     ],
     asked: [
       {
@@ -687,7 +687,7 @@ export const extras: Extras = {
         when: '8 to 16',
         items: [
           { q: 'Why a queue and not recursion?', a: 'Recursion is depth-first: a long chain overflows the stack, and a crash loses its place. A queue on disk avoids both and goes breadth-first.' },
-          { q: 'Is Postgres enough?', a: 'Yes for a million pages: 10 a second is about 500 seen checks a second. It can be the queue too, until writes outgrow one machine.' },
+          { q: 'Is Postgres enough?', a: 'Yes for a million pages: 10 pages a second is about 500 seen checks. It can be the queue too, until writes outgrow one machine.' },
           { q: 'How many workers?', a: 'Fetch rate times seconds per fetch: 10 a second at 1 second each is 10 workers. Add more while the rate rises. Stop if the site slows.' },
           { q: 'Threads or async?', a: 'Threads are simplest for 10 to 20 fetches at once. An event loop holds thousands of connections in one process, with parsing in others.' },
         ],
@@ -711,7 +711,7 @@ export const extras: Extras = {
         items: [
           { q: 'A shared queue, or one owner per site?', a: 'For a one-off crawl, a shared queue and a shared per-site limiter. For one that never stops, one owner per site, so pacing needs no lock.' },
           { q: 'Consistent hashing or a slot map?', a: "A slot map. Both move few sites, but a slot move is one explicit step with its own epoch, so the old owner's late writes fail." },
-          { q: 'Why Cassandra or ScyllaDB?', a: 'It suits small upserts by key and grows by adding machines. The table is 3 TB, 9 TB in three copies. The cost: a table per query, no joins.' },
+          { q: 'Why Cassandra or ScyllaDB?', a: 'Both suit small upserts by key and grow by adding machines. The table is 3 TB, 9 TB in three copies. The cost: a table per query, no joins.' },
           { q: "What if etcd can't be reached?", a: 'Machines pause, and someone is woken. Better that than two machines fetching one site.' },
         ],
       },

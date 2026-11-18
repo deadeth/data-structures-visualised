@@ -22,6 +22,8 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
 - `text.txt`: the sheet's words, in reading order.
 - `screen-1920-first-view.png`, `screen-1440-first-view.png`: what shows without scrolling on a monitor.
 - `screen-1440-clock-at-20-minutes.png`: scrolled to the hour, with the clock running.
+- `screen-1920-clock-at-2-minutes.png`: the first view two minutes in, not scrolled. This is what
+  a second monitor shows for most of the interview: he starts the clock as it begins.
 - `screen-1920-full.png`, `screen-1440-full.png`, `screen-390-full.png`: the whole page.
 - `print-page-1.png`, `print-page-2.png`: the two printed A4 pages.
 - Source: `/home/claude/data-structures-visualised/src/designs/extras/web-crawler.ts` (the `crib:` block at
@@ -68,7 +70,8 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
 - The running-behind note covers minutes 7, 18, 25 and 47 in one printed line; it is clipped on
   purpose, as a note to self, because a second line would push a stretch off page 1.
 - Before the clock starts, a monitor's first view is the idea, the numbers and the opening
-  stretches, which is what the first minutes need. Later stretches are one press away on the
+  stretches, which is what the first minutes need. The title, headings and figures are kept
+  small on screen to bring the hour up the page. Later stretches are one press away on the
   strip, and once the clock runs the "Now" pill goes to the current one.
 - "(short answers)" beside "Say how you'd run it" is the cue at the stretch; the habit under
   "Keep doing" gives the rule in full (two or three sentences, then offer to go further).
@@ -99,7 +102,9 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
 - "The new owner waits out the old lease, plus clock drift" is kept to one printed line to pay for
   the weakest-part line.
 - 86,400 a day is in the numbers and again in the sums, because it is said aloud in the sums.
-- Before the clock starts, "Start the clock" is the filled button and Print the plain one.
+- Before the clock starts, "Start the clock" is the filled button and Print the plain one. On a
+  phone it takes the rest of the bar's row.
+- "Retries mean at least once" names the guarantee an interviewer listens for.
 - The minute tags share one width, on paper and on a monitor, so the titles beside them start on
   one line down each column. On page 2 the groups' tags match them (8.5pt, 1.5pt outline).
 - On a phone the shell's search box is left off this page, so the sheet starts near the top.
