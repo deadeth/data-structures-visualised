@@ -562,7 +562,7 @@ export const extras: Extras = {
           "Ask what it's for, and whether it runs once or keeps going.",
           'Agree to obey robots.txt, wait 1 second between requests to a site, and publish a contact page.',
           'Leave out JavaScript, images, logins and indexing. Say so.',
-          'Give both designs a sentence: one machine with Postgres, or 20 that split the sites. Start small.',
+          'Give both designs a sentence: one machine with Postgres, or {machines} that split the sites. Start small.',
         ],
       },
       {
@@ -635,7 +635,7 @@ export const extras: Extras = {
         lines: [
           'Ask one question back, redraw, then say what it costs.',
           'For news within an hour, poll feeds and sitemaps and give new links top priority.',
-          'Polling 1,000 sites, 10 pages each, every 5 minutes is 33 a second, about 8 per cent of 400.',
+          'Polling 1,000 sites, 10 pages each, every 5 minutes is 33 a second. Reserve that: 8 per cent of 400.',
           "If sites must opt in, keep to a verified list, after redirects too. Stop if the list can't be read.",
           'With far fewer sites, one machine may be enough again.',
         ],
@@ -678,7 +678,7 @@ export const extras: Extras = {
       'Think out loud. If you need a moment, say what you are weighing.',
       'Say which numbers are assumptions.',
       'For each choice, say the problem it fixes, the alternative and what yours costs.',
-      'Check in now and then: “Is this the level of detail you want?”',
+      'Check in now and then: “Is this the right level?” At a fork: “Which way would you lean?”',
       'Say what happens when each part fails.',
       "When asked how you'd run it, give two or three sentences, then offer to go further.",
     ],

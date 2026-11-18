@@ -42,8 +42,9 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
   interviewer gives a different scale he types over a number and reads the new sums. Six numbers
   are fields in the run of the text, with a tint and a solid rule under them: pages a month,
   pages a second a machine, requests a second a site, page size, links a page, and the small
-  crawl's pages. The figures worked from them (in "Numbers to say", the three lines of "Do the
-  sums out loud" and the one-machine line in 22 to 30) recalculate on every keystroke, and a
+  crawl's pages. The figures worked from them (in "Numbers to say", the last line of 0 to 5, the
+  three lines of "Do the sums out loud" and the one-machine line in 22 to 30) recalculate on
+  every keystroke, and a
   changed figure gets a dotted rule and no tint, so it is told apart from a field. Every other
   line keeps the page's own numbers, and the
   hint beside the heading says so once a number is changed. "Reset numbers" puts the page's
@@ -56,6 +57,13 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
   idea at the top says the rest. "Is Postgres enough?" no longer repeats the 500.
 - "Draw six parts: a queue, workers, ... a store. Go breadth-first." lists all six, so he can
   count boxes against it.
+- "Reserve that: 8 per cent of 400" makes the news budget a decision, as the rehearsal has it.
+- The check-in habit carries the rehearsal's "which way would you lean?" for forks in the design.
+- The snapshot line says nothing of links the dead machine found for its own sites after the
+  snapshot: page 1 has no line for it, and the candidate knows to answer it aloud (they come
+  back on a refetch, or from the URL table).
+- On paper the hour's bullets are typed bullets, like the habits', so they sit on the text line.
+- On screen a field is at least 1.4em wide, so a one-digit number is easy to click.
 
 - Lines in the hour are capped at 100 characters, answers at 140. A test enforces it.
 - The change of brief has the rehearsal's minutes, 44 to 49, so the clock can point at it;

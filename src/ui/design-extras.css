@@ -1043,6 +1043,7 @@
   color: inherit;
   vertical-align: baseline;
   text-align: center;
+  min-width: 1.4em;
   background-color: #e2e9f5;
   background-image: linear-gradient(var(--rule-strong), var(--rule-strong));
   background-size: 100% 2px;
@@ -1962,6 +1963,7 @@
   }
 
   /* A typed bullet sits on the text's own line, so it cannot drift from it as a drawn dot can. */
+  html.crib-mode .dx-sheet .dx-sheet-hour ul li::before,
   html.crib-mode .dx-sheet .dx-sheet-keep li::before {
     content: '•';
     top: 0;
@@ -2009,6 +2011,7 @@
 
   /* Live numbers print as the text they hold: no field, tint or underline; the hint and reset stay on screen. */
   html.crib-mode .dx-sheet-in {
+    min-width: 0;
     padding: 0;
     background: none;
     outline: 0;
