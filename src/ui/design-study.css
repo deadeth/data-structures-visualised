@@ -112,13 +112,3 @@
   padding-left: 14px;
 }
 
-.study-shared {
-  display: block;
-  margin-top: 4px;
-  font-size: 0.82rem;
-  color: var(--ink-3);
-}
-
-.study-shared[hidden] {
-  display: none;
-}

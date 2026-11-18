@@ -41,13 +41,12 @@ export function studyCard(design: Design): HTMLElement | null {
   const count = h('p.study-count', { 'aria-live': 'polite' });
   const bar = h('div.study-bar', { role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': String(all.length), 'aria-label': 'Pages studied' }, h('span'));
   const unsaved = h('p.study-unsaved', { hidden: true }, 'Your ticks could not be saved in this browser, so they will last for this visit only.');
-  const rows: { href: string; box: HTMLInputElement; row: HTMLElement; shared: HTMLElement }[] = [];
+  const rows: { href: string; box: HTMLInputElement; row: HTMLElement }[] = [];
   /** Bring every box, the count and the bar into line with the store. */
   const refresh = () => {
     for (const r of rows) {
       r.box.checked = isDone(r.href);
       r.row.classList.toggle('done', r.box.checked);
-      r.shared.hidden = !linkedItems(course, r.href).length;
     }
     const n = rows.filter((r) => r.box.checked).length;
     const left = all.filter((i) => !isDone(i.href)).reduce((m, i) => m + i.minutes, 0);
@@ -67,7 +66,6 @@ export function studyCard(design: Design): HTMLElement | null {
         'ul.study-items', null,
         g.items.map((item) => {
           const box = h('input', { type: 'checkbox', id: `${id}-${serial++}`, 'aria-label': `Studied: ${item.label}` }) as HTMLInputElement;
-          const shared = h('span.study-shared', { hidden: true }, 'Shares its tick with the course');
           const row = h(
             'li.study-item', null,
             box,
@@ -75,10 +73,9 @@ export function studyCard(design: Design): HTMLElement | null {
               'div', null,
               h('p.study-title', null, h('label.study-kind', { for: box.id }, kindOf(item.href)), ' ', h('a', { href: item.href }, item.label), h('span.study-min', null, ` ${span(item.minutes)}`)),
               h('p.study-take', null, item.take),
-              shared,
             ),
           );
-          rows.push({ href: item.href, box, row, shared });
+          rows.push({ href: item.href, box, row });
           box.addEventListener('change', () => {
             const links = linkedItems(course, item.href);
             if (links.length) store.setItems(links, box.checked);
