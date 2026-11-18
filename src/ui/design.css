@@ -3099,3 +3099,117 @@ main:has(> .design) {
   background: var(--ink);
   color: #fff;
 }
+
+/* ---- the Audio button: recorded narration, on designs whose tour has clips (design-audio.ts) ---- */
+.hld-audio {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  margin-left: auto;
+  padding: 0 12px 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: none;
+  font: 650 0.9rem var(--sans);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.hld-audio + .hld-audio-el + .hld-speed,
+.hld-audio ~ .hld-speed {
+  margin-left: 0;
+}
+
+@media (hover: hover) {
+  .hld-audio:hover {
+    background: #e4eaf4;
+  }
+}
+
+.hld-audio .hld-audio-waves {
+  opacity: 0.35;
+}
+
+.hld-audio[aria-pressed='true'] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+
+.hld-audio[aria-pressed='true'] .hld-audio-waves {
+  opacity: 1;
+}
+
+/* Where the speeds are one button, the Audio button sits beside it at the row's end. */
+@media (max-width: 1099px) {
+  .hld-audio ~ .hld-speed-cycle {
+    margin-left: 0;
+  }
+}
+
+/* Narrower screens and phones: an icon like the buttons beside it, so the transport keeps to one row; its name stays for screen readers. */
+@media (max-width: 899px), (max-height: 500px) and (max-width: 1099px) {
+  .hld-audio {
+    flex: none;
+    width: 40px;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-s);
+    color: var(--ink);
+  }
+
+  .hld-audio-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* The narrowest phones: with the Audio button there, the transport's buttons give up a few pixels each to keep one row. */
+@media (max-width: 359px) {
+  .hld-transport:has(.hld-audio) .hld-icon {
+    width: 32px;
+  }
+
+  .hld-transport:has(.hld-audio) .hld-play {
+    min-width: 40px;
+    width: 40px;
+  }
+
+  .hld-transport:has(.hld-audio) .hld-quiet,
+  .hld-transport .hld-audio {
+    width: 34px;
+  }
+
+  .hld-transport:has(.hld-audio) .hld-speed-cycle {
+    min-width: 40px;
+  }
+}
+
+/* A phone on its side: light on the dark row. */
+@media (max-height: 500px) and (min-width: 600px) and (max-width: 1099px) {
+  .hld-transport .hld-audio {
+    margin-left: 0;
+    border-color: #8a99b0;
+    color: #fff;
+  }
+
+  .hld-transport .hld-audio[aria-pressed='true'] {
+    border-color: #fff;
+    background: #fff;
+    color: var(--ink);
+  }
+}
+
+@media (forced-colors: active) {
+  .hld-audio[aria-pressed='true'] {
+    border-color: Highlight;
+    background: Highlight;
+    color: HighlightText;
+  }
+}

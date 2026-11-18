@@ -5,6 +5,7 @@ import { extrasParts } from './design-extras';
 import { MODES, type Component, type Design, type Example, type Flow } from '../designs/types';
 import { walkthrough } from '../reading';
 import { studyCard } from './design-study';
+import { tourAudio } from './design-audio';
 
 const NS = 'http://www.w3.org/2000/svg';
 const SPEEDS = [0.5, 1, 2] as const;
@@ -581,7 +582,9 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   const cycleName = (s: number) => (still ? `${WAIT_NAMES[s]}. Change the time on each step` : `${s}×, ${SPEED_NAMES[s].toLowerCase()}. Change speed`);
   // The tour's keys, on show where there is room and a keyboard; they follow the site-wide shortcut switch.
   const keyHints = h('p.hld-keys', { 'aria-hidden': 'true' }, h('kbd', null, 'Space'), ' play ', h('kbd', null, '←'), h('kbd', null, '→'), ' step ', h('kbd', null, 'R'), ' replay');
-  const transport = h('div.hld-transport', null, h('div.hld-nav', null, restartBtn, backBtn, playBtn, nextBtn), counter, exploreBtn, keyHints, speedGroup, speedCycle);
+  // Recorded narration, where this tour has clips: an Audio button beside the speeds (design-audio.ts).
+  const narr = tourAudio(design.id, story?.id ?? 'main', design.tour, () => step);
+  const transport = h('div.hld-transport', null, h('div.hld-nav', null, restartBtn, backBtn, playBtn, nextBtn), counter, exploreBtn, keyHints, narr.button, narr.element, speedGroup, speedCycle);
   const head = h('div.hld-head', null, readout, transport);
   /** Shortcut hints follow the site-wide switch. */
   function syncKeys(): void {
@@ -863,6 +866,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   let dwellMs = 0;
   /** What was left of the wait at a step when the tour was paused. */
   let dwellLeft = 0;
+  /** Set once a step's wait has run out, while it may still wait for its narration to end. */
+  let dwellDone = false;
   /** The pause between a step starting and its trip, while the view glides into place. */
   let starting = 0;
   /** Set when the tour is paused during that glide: the trip then waits at its start. */
@@ -3778,6 +3783,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     clearTimeout(timer);
     timer = 0;
     dwellLeft = 0;
+    dwellDone = false;
     if (!playing) return;
     const s = design.tour[i];
     // The wait to read a step: about 4.5 seconds for every 200 characters, never under 3.5 seconds, at normal speed. The
@@ -3794,11 +3800,16 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
         status.textContent = `Paused at step ${i + 1}: the diagram is out of view.`;
         return;
       }
-      if (i < design.tour.length - 1) go(i + 1, false);
-      else {
-        pause(false);
-        status.textContent = 'End of the tour.';
-      }
+      // With narration on, the step also waits for its clip to end.
+      dwellDone = true;
+      narr.after(i, () => {
+        if (!alive || !playing || step !== i) return;
+        if (i < design.tour.length - 1) go(i + 1, false);
+        else {
+          pause(false);
+          status.textContent = 'End of the tour.';
+        }
+      });
     }, dwellMs);
   }
 
@@ -3915,6 +3926,8 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
       sync();
     }
     announce(i, manual);
+    // Sound only for the reader's own step control or a playing tour: never on arriving at a step's address.
+    narr.enter(i, playing || (manual && !whole));
     if (!selected && !picked) setUrl();
     if (moreOpen) bodyScroll();
   }
@@ -3922,6 +3935,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
   function pause(say = true): void {
     if (!playing) return;
     playing = false;
+    narr.pause();
     cancelGlance();
     if (timer) {
       dwellLeft = Math.max(0, dwellMs - (performance.now() - dwellAt));
@@ -3962,18 +3976,20 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     }
     sync(!starting);
     status.textContent = `Playing from step ${step + 1}.`;
+    narr.resume(step);
     if (starting) holdTrip = false;
     else if (trip) {
       trip.last = null;
       if (!raf) raf = requestAnimationFrame(tick);
       updateMarks();
-    } else dwell(step, dwellLeft > 0 ? dwellLeft : undefined);
+    } else dwell(step, dwellLeft > 0 ? dwellLeft : dwellDone ? 0 : undefined);
   }
 
   /** Run the current step's trip again, from its start. */
   function replayStep(): void {
     if (step < 0) return;
     hideToken();
+    narr.enter(step, true);
     run(step, true);
     sync();
     status.textContent = `Step ${step + 1} again.`;
@@ -3988,6 +4004,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
     camUnfade();
     const beforeY = window.scrollY;
     playing = false;
+    narr.stop();
     cancelAnimationFrame(raf);
     raf = 0;
     clearTimeout(timer);
@@ -4387,6 +4404,7 @@ export async function mountDesign(host: HTMLElement, design: Design, open?: { ki
 
   return () => {
     alive = false;
+    narr.destroy();
     cancelAnimationFrame(raf);
     cancelAnimationFrame(followRaf);
     clearTimeout(timer);
