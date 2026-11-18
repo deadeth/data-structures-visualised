@@ -684,7 +684,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
         ...(crib.late ? [h('p.dx-sheet-late', null, crib.late)] : []),
         h('div.dx-sheet-cols', null, hour.map((part) => h('ol.dx-sheet-hour', null, part.map((x) => x.li)))),
       ),
-      sec('remember', 'Keep doing', h('ul.dx-sheet-keep', null, crib.remember.map((t) => h('li', null, t)))),
+      sec('remember', 'Keep doing', h('div.dx-sheet-cols', null, halves(crib.remember, (t) => 1 + Math.ceil(t.length / 55)).map((part) => h('ul.dx-sheet-keep', null, part.map((t) => h('li', null, t)))))),
       sec(
         'asked', 'If they ask',
         h('div.dx-sheet-cols', null, asked.map((part) => h('div.dx-sheet-groups', null, part.map((x) => x.el)))),

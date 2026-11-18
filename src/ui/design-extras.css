@@ -950,7 +950,7 @@
   display: grid;
   grid-template-columns: 5.8rem minmax(0, 1fr);
   gap: 0 12px;
-  padding: 9px 8px 9px 10px;
+  padding: 14px 8px 10px 10px;
   border-left: 4px solid transparent;
   break-inside: avoid;
 }
@@ -1029,9 +1029,7 @@
 .dx-sheet-jump .dx-sheet-jump-figs {
   flex: 0 0 auto;
   padding: 0 12px;
-  border-color: var(--ink);
-  background: var(--ink);
-  color: #fff;
+  border: 1.5px solid var(--ink);
 }
 
 .dx-sheet-jump .dx-sheet-jump-any {
@@ -1049,7 +1047,7 @@
 }
 
 @media (hover: hover) {
-  .dx-sheet-jump button:not(.now):not(.dx-sheet-jump-figs):hover {
+  .dx-sheet-jump button:not(.now):hover {
     background: #e4eaf4;
   }
 }
@@ -1104,7 +1102,7 @@
   }
 
   .dx-sheet-hour > li {
-    padding-top: 11px;
+    padding-top: 14px;
     padding-bottom: 11px;
   }
 
@@ -1154,6 +1152,22 @@
   .dx-sheet-figs dt {
     font-size: 1.02rem;
     white-space: nowrap;
+  }
+}
+
+/* With the clock running the bar is full: on all but a wide monitor the way back makes room. */
+@media screen and (max-width: 1499px) {
+  .dx-sheet-page.clocked .dx-sheet-bar .dx-back {
+    display: none;
+  }
+
+  .dx-sheet-page.clocked .dx-sheet-bar .dx-crib-tools {
+    flex: 1 1 auto;
+    justify-content: flex-start;
+  }
+
+  .dx-sheet-page.clocked .dx-sheet-elapsed {
+    margin-left: auto;
   }
 }
 
@@ -1212,8 +1226,8 @@
 }
 
 .dx-sheet-hour h3 {
-  font-size: 1.14rem;
-  font-weight: 760;
+  font-size: 1.22rem;
+  font-weight: 780;
   line-height: 1.4;
   margin-bottom: 5px;
 }
@@ -1226,16 +1240,10 @@
   padding: 0;
 }
 
-/* The habits flow down three columns, so a two-line habit does not leave a hole beside it. */
+/* The habits: two lists side by side, each read downwards. */
 .dx-sheet-keep {
-  display: block;
-  columns: 2;
-  column-gap: 40px;
-}
-
-.dx-sheet-keep li {
-  break-inside: avoid;
-  margin-bottom: 8px;
+  gap: 8px;
+  align-content: start;
 }
 
 .dx-sheet-hour ul li,
@@ -1314,12 +1322,6 @@
 
   .dx-sheet {
     font-size: 1.15rem;
-  }
-}
-
-@media screen and (max-width: 699px) {
-  .dx-sheet-keep {
-    columns: 1;
   }
 }
 
@@ -1726,14 +1728,7 @@
   }
 
   html.crib-mode .dx-sheet-keep {
-    columns: 2;
-    column-gap: 18pt;
-  }
-
-  html.crib-mode .dx-sheet-keep li {
-    display: inline-block;
-    width: 100%;
-    margin-bottom: 1.5pt;
+    gap: 1.5pt;
   }
 
   html.crib-mode .dx-sheet-keep li {
@@ -1741,7 +1736,7 @@
   }
 
   html.crib-mode .dx-sheet-groups {
-    gap: 9pt;
+    gap: 12pt;
   }
 
   html.crib-mode .dx-sheet-groups h3 {
