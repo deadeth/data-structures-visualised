@@ -64,7 +64,7 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
   but still costs the site a visit.
 - The default order for the deep dive follows the notes: a worker dying, one URL found twice, the
   rate limiter, then a whole machine failing.
-- The running-behind note covers minutes 25 and 47 only, so that it stays one printed line.
+- The running-behind note covers minutes 18, 25 and 47, and stays one printed line.
 - The Postgres columns are the ones the notes give for the small design.
 - A group of questions is never split between the two columns, so on page 2 the columns end at
   different heights. That is accepted.
@@ -79,7 +79,25 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
   wider monitor keeps them in the margin.
 - "Any time" has no group of its own under "If they ask": its points are in the hour, and a
   one-question group would cost two lines on a full page.
-- On a phone the strip is left out for lack of room; the bar has a "Numbers" button in its place.
+- On a phone, before the clock starts, the strip is one row that scrolls sideways and the bar has
+  its own "Numbers" button. With the clock running the strip makes way for the "Now" pill, so the
+  bar stays two rows.
+- "When they change the brief" is "Any time" because an interviewer may change it early; "(often
+  44)" says where the rehearsal puts it. "4 minutes each" in the deep dives leaves room for it.
+- Two closing questions, not three: the rehearsal asks for two or three, and page 1 has no line.
+- The rehearsal's "say what breaks first" for each step up is the habit "For each choice, say the
+  problem it fixes, the alternative and what yours costs", so it is not repeated in each stretch.
+- "Obey robots.txt" and "publish a contact page" appear twice on purpose: agreed with the
+  interviewer at the start, and restated as the legal position at the end, as the rehearsal's
+  first and seventh stages both do.
+- "Replays Kafka from there" means from the offsets saved in the snapshot. A question of its own
+  would not fit page 2's right-hand column.
+- The numbers stay two rows of four on a monitor: eight across would leave each caption about
+  170px and wrap it to four lines, saving no height.
+- The current stretch is marked three ways (bar, fill, outline) so it is found from the corner of
+  the eye; it is meant to be the heaviest thing on the page.
+- On paper the hour's bullets have 1.8pt between them and 1.25 leading inside them; section
+  headings are 13.5pt and the question groups' headings 11.5pt.
 - "Say how you'd run it" lists what pages someone, as the notes' on-call list does; what waits for
   the morning (Kafka lag, repeat fetches) is left to the notes.
 - With the clock running, below 1500px wide, the "Back to" link leaves the bar to make room; "Reset"
@@ -102,7 +120,9 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
   Looser spacing would push a stretch onto page 2.
 - Settled wording, not to be reopened without a new reason: "At 10 a second, if the site allows"; "finds its lease gone and stops" (the notes' own
   account of a woken machine); "The data stays right"; "One breach wakes someone. So does..." (to
-  keep "page" for web pages); "It ends when the queue is empty" (naming the crawl costs a line).
+  keep "page" for web pages); "It ends when the queue is empty" (naming the crawl costs a line);
+  "A lock is for a rule across messages" (the notes' own distinction); "the limiter" in the deep
+  dives' first line (the full name takes it past 100 characters).
 
 ## What to report
 
@@ -113,7 +133,7 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
    quote the line and give the exact replacement; for layout, say what to change and at which size;
    for a missing point, give the line you would add and where, and what you would cut to make room
    (page 1 is full: no spare line in either column, so any added line needs a cut beside it;
-   page 2 has about four lines spare on the left and one on the right; "Keep doing" now has six
+   page 2 has about two lines spare on the left and one on the right; "Keep doing" now has six
    habits, three a side). The sheet must stay two A4 pages.
 3. Anything outside your categories that is plainly wrong, in one line each.
 

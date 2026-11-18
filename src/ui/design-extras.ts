@@ -569,12 +569,19 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
   }
   // A stretch costs its title and its lines, a longer line a little more; a group of answers its heading, and each
   // answer its question and about a row for every 60 characters.
+  // A figure never parts from its unit at a line's end ("3 / TB").
+  const u = (t: string): string => t.replace(/(\d) (KB|MB|GB|TB|Mbit\/s|per cent)/g, '$1\u00a0$2');
+  // A title's aside, in brackets at its end, is said more quietly than the title.
+  const titled = (t: string): (string | HTMLElement)[] => {
+    const a = /^(.*) (\([^)]*\))$/.exec(t);
+    return a ? [a[1], ' ', h('span.dx-sheet-aside', null, a[2])] : [t];
+  };
   const stretches = crib.hour.map((s) => {
     const m = /^(\d+) to (\d+)$/.exec(s.when);
     const li = h(
       'li', null,
       h(`p.dx-sheet-when${m ? '' : '.dx-sheet-any'}`, null, h('span', null, s.when)),
-      h('div', null, h('h3', null, s.title), h('ul', null, s.lines.map((t) => h('li', null, t)))),
+      h('div', null, h('h3', null, ...titled(s.title)), h('ul', null, s.lines.map((t) => h('li', null, u(t))))),
     );
     return { s, li, from: m ? Number(m[1]) : -1, to: m ? Number(m[2]) : -1 };
   });
@@ -584,7 +591,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     const el = h(
       'section', null,
       h('h3', null, g.about, ...(g.when ? [' ', h('span.dx-sheet-gwhen', null, g.when)] : [])),
-      h('dl.dx-sheet-asked', null, g.items.map((x) => h('div', null, h('dt', null, x.q), h('dd', null, x.a)))),
+      h('dl.dx-sheet-asked', null, g.items.map((x) => h('div', null, h('dt', null, x.q), h('dd', null, u(x.a))))),
     );
     return { g, el, from: m ? Number(m[1]) : -1, to: m ? Number(m[2]) : -1 };
   });
@@ -597,7 +604,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     return b;
   });
   // The numbers scroll away under the hour: one press brings them back.
-  const figs = h('dl.dx-sheet-figs', null, crib.numbers.map((n) => h('div', null, h('dt', null, n.figure), h('dd', null, n.what))));
+  const figs = h('dl.dx-sheet-figs', null, crib.numbers.map((n) => h('div', null, h('dt', null, u(n.figure)), h('dd', null, u(n.what)))));
   const toNumbers = h('button.dx-sheet-jump-figs', { type: 'button' }, 'Numbers');
   toNumbers.addEventListener('click', () => figs.scrollIntoView({ block: 'center' }));
   // A phone has no room for the strip: the way back to the numbers sits with the bar's buttons.

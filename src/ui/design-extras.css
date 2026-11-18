@@ -1005,6 +1005,16 @@
   font-size: 1.3rem;
 }
 
+.dx-sheet-hour > li.now h3 {
+  font-size: 1.32rem;
+}
+
+.dx-sheet-aside {
+  font-size: 0.86em;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
 .dx-sheet.clocked .dx-sheet-hour > li:not(.now) {
   color: var(--ink-3);
 }
@@ -1194,8 +1204,28 @@
   }
 }
 
+/* A phone or a narrow tablet: before the clock starts, the strip is one row that scrolls sideways, so any stretch
+   is a press away. With the clock running the bar says where to be, and the strip makes way for it. */
 @media screen and (max-width: 899px) {
   .dx-sheet-jump {
+    overflow-x: auto;
+    gap: 6px;
+    margin-top: 2px;
+    scrollbar-width: none;
+  }
+
+  .dx-sheet-jump::-webkit-scrollbar {
+    display: none;
+  }
+
+  .dx-sheet-jump button {
+    flex: 0 0 auto;
+    height: 36px;
+    padding: 0 11px;
+  }
+
+  .dx-sheet-jump .dx-sheet-jump-figs,
+  .dx-sheet-page.clocked .dx-sheet-jump {
     display: none;
   }
 
@@ -1660,7 +1690,7 @@
   }
 
   html.crib-mode .dx-sheet-sec h2 {
-    font-size: 12.5pt;
+    font-size: 13.5pt;
     margin-bottom: 4pt;
     padding-bottom: 1pt;
     border-bottom: 1.2pt solid #000;
@@ -1701,8 +1731,8 @@
   }
 
   html.crib-mode .dx-sheet-gwhen {
-    padding: 0 3pt;
-    border: 1pt solid #000;
+    padding: 0 4pt;
+    border: 1.5pt solid #000;
     border-radius: 3pt;
     font-size: 8.5pt;
     font-weight: 800;
@@ -1754,7 +1784,7 @@
   }
 
   html.crib-mode .dx-sheet-hour ul {
-    gap: 1pt;
+    gap: 1.8pt;
   }
 
   html.crib-mode .dx-sheet-hour > li + li {
@@ -1764,7 +1794,7 @@
   html.crib-mode .dx-sheet-hour ul li,
   html.crib-mode .dx-sheet-keep li {
     padding-left: 9pt;
-    line-height: 1.28;
+    line-height: 1.25;
   }
 
   html.crib-mode .dx-sheet-hour ul li::before,
@@ -1830,7 +1860,7 @@
     padding: 0 0 1pt;
     border-bottom: 0.75pt solid #000;
     background: none;
-    font-size: 12pt;
+    font-size: 11.5pt;
     font-weight: 800;
     color: #000;
   }

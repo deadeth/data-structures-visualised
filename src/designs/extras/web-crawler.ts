@@ -550,7 +550,7 @@ export const extras: Extras = {
 
   crib: {
     idea: 'Each site sets its own pace, whatever hardware you have. Speed comes from crawling many sites at once, so the hard part is scheduling: picking the next URL without sending a site more than it allows.',
-    late: 'Still on many sites at 25? Move to many machines. Still deep at 47? Finish that point, then say how you\'d run it.',
+    late: 'Still small at 18? Grow it. Still on sites at 25? Move to machines. Still deep at 47? Finish, then say how you\'d run it.',
     hour: [
       {
         when: '0 to 5',
@@ -560,7 +560,7 @@ export const extras: Extras = {
           'Ask whether it is one site or the whole web, how many pages, and how fresh they must be.',
           "Ask what it's for, and whether it runs once or keeps going.",
           'Agree to obey robots.txt, wait 1 second between requests to a site, and publish a contact page.',
-          'Leave out JavaScript pages, images and logins, and say so.',
+          'Leave out JavaScript, images, logins and indexing. Say so.',
           'Give each design one sentence: one machine with Postgres, or 20 that split the sites. Start small.',
         ],
       },
@@ -570,7 +570,7 @@ export const extras: Extras = {
         title: 'Do the sums out loud',
         lines: [
           'A million pages at 1 a second takes 11.6 days. At 10 a second, if the site allows, about 28 hours.',
-          'A million pages at 100 KB is 100 GB. Is that the scale?',
+          'A million pages at 100 KB is 100 GB. Or is it a billion?',
           'At 1 a second a site gives at most 86,400 pages a day, so sites set the pace, not the hardware.',
         ],
       },
@@ -615,26 +615,26 @@ export const extras: Extras = {
         short: 'Deep dives',
         title: 'Go deeper where they ask',
         lines: [
-          "If they don't steer, take a worker dying, a URL found twice, the rate limiter, then a dead machine.",
+          "If they don't steer: a worker dying, a URL found twice, the limiter, a dead machine. 4 minutes each.",
           "Acknowledge after saving the page and links. A dead worker's lease ends and its URL is retried.",
           'A page may be fetched twice. The data stays right: upserts by URL, and the newer fetch wins.',
           'Two workers find the same URL? An atomic insert keeps the first. Never check and then insert.',
           'A local timer paces each site. A Redis token bucket limits IP addresses that many sites share.',
           'If a machine dies or stalls, others take its slots and raise the epoch, so its late writes fail.',
           'The new owner waits out the old lease, plus a margin for clock drift, before its first fetch.',
-          'It restores each slot from a snapshot, then replays Kafka.',
+          "It loads each slot's snapshot and replays Kafka from there.",
           'If the old machine wakes, it finds its lease gone and stops.',
         ],
       },
       {
         when: 'Any time',
         short: 'Changes',
-        title: 'When they change the brief',
+        title: 'When they change the brief (often 44)',
         lines: [
           'Ask one question back, redraw, then say what it costs.',
           'For news within an hour, poll feeds and sitemaps and give new links top priority.',
           'Polling 1,000 sites, 10 pages each, every 5 minutes is 33 a second, about 8 per cent of 400.',
-          "For opt-in, keep a verified list. Stop if it can't be read. Follow no link or redirect off it.",
+          "If sites must opt in, keep to a verified list, redirects too. Stop if it can't be read.",
           'With far fewer sites, one machine may be enough again.',
         ],
       },
@@ -649,7 +649,7 @@ export const extras: Extras = {
           'Ship one site, then many, then a crawl that keeps going. Add machines when measurements say so.',
           'Buy Kafka, databases and rendering. Build the scheduler.',
           'At first one team of four to six owns it all. One named person answers for politeness.',
-          'Cover the legal side: obey robots.txt, publish a contact page, answer takedowns, no proxy rotation.',
+          'On the legal side: obey robots.txt, publish a contact page, answer takedowns, never rotate proxies.',
         ],
       },
       {
@@ -669,7 +669,7 @@ export const extras: Extras = {
       { figure: '100 KB', what: 'A page. A billion a month is 100 TB, or 320 Mbit/s.' },
       { figure: '20,000 a second', what: 'Seen checks, from 400 pages a second at 50 links each.' },
       { figure: '80 GB', what: '10 billion URLs as 8-byte fingerprints.' },
-      { figure: '1,024 slots', what: 'Sites hash into slots. About 51 slots a machine.' },
+      { figure: '1,024 slots', what: 'Sites hash into them, about 51 to a machine.' },
       { figure: '30 seconds', what: "A machine's lease on its slots, renewed every 10." },
     ],
     remember: [
@@ -696,6 +696,7 @@ export const extras: Extras = {
         when: '16 to 22',
         items: [
           { q: 'What gets crawled first?', a: 'Seeds first, then pages that many others link to. Priority queues feed the per-site queues, so priority and pacing stay separate.' },
+          { q: 'How long between requests to one site?', a: 'The largest of 1 second, its Crawl-delay and ten times the last response time. A fetch that took 0.84 seconds earns 8.4.' },
           { q: 'A site with endless pages, such as a calendar?', a: "Every URL really is new, so the seen check can't help. Give each site a page budget and a depth cap." },
           { q: 'The same article at fifty URLs?', a: 'Hash the body to catch exact copies. For near copies use a 64-bit SimHash: fingerprints 3 bits or fewer apart count as copies.' },
           { q: 'How do you keep pages fresh?', a: "Start with fixed tiers: news hourly, the rest monthly. Later, halve a page's interval when it changes and lengthen it when it doesn't." },
@@ -707,9 +708,9 @@ export const extras: Extras = {
         about: 'About many machines',
         when: '22 to 30',
         items: [
-          { q: 'A shared queue, or one owner per site?', a: 'A shared queue and a shared per-site limiter for a one-off crawl. One owner per site for a crawl that never stops, so pacing needs no lock.' },
-          { q: 'Consistent hashing or a slot map?', a: "A slot map. A ring moves few sites too, but a slot move is one explicit step with its own epoch, so the old owner's late writes fail." },
-          { q: 'Why Cassandra or ScyllaDB?', a: 'Small upserts by key, and it grows by adding machines. Its 3 TB is 9 TB in three copies. The cost: one table per query, no joins.' },
+          { q: 'A shared queue, or one owner per site?', a: 'For a one-off crawl, a shared queue and a shared per-site limiter. For one that never stops, one owner per site, so pacing needs no lock.' },
+          { q: 'Consistent hashing or a slot map?', a: "A slot map. Both move few sites, but a slot move is one explicit step with its own epoch, so the old owner's late writes fail." },
+          { q: 'Why Cassandra or ScyllaDB?', a: 'It suits small upserts by key and grows by adding machines. 3 TB is 9 TB in three copies. The cost: a table per query, no joins.' },
           { q: "What if etcd can't be reached?", a: 'Machines pause. That is the price of one agreed answer on who owns each site.' },
         ],
       },
@@ -718,7 +719,7 @@ export const extras: Extras = {
         when: '30 to 49',
         items: [
           { q: 'How would you build a shared rate limiter?', a: 'A Redis token bucket per IP address. A Lua script takes a token in one step. If Redis is down, use a slow fixed rate, never unlimited.' },
-          { q: 'Queues or distributed locks?', a: "A queue's lease covers one message. A lock means one fetch at a time per site. One owner per site needs no lock, only a lease on its slots." },
+          { q: 'Queues or distributed locks?', a: "A queue's lease covers one message. A lock is for a rule across messages: one fetch per site. One owner per site needs only a slot lease." },
           { q: 'One URL crashes the worker every time?', a: "Mark it dead after three attempts. Parse in a sandbox so a crash can't take the fetcher down." },
           { q: 'Why not a Bloom filter?', a: "It's 12 GB, not 80. But 1 per cent false positives silently skip up to 100 million new pages. Fingerprints wrongly skip about three." },
         ],
