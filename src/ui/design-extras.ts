@@ -592,7 +592,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
   // The hour as a strip of its minutes, in the bar that stays in view: one press to any stretch, and with the clock
   // running the one the interview should be in is marked.
   const jumps = stretches.map((x) => {
-    const b = h('button', { type: 'button', 'aria-label': `${x.s.when}: ${x.s.title}`, title: x.s.title }, x.s.when);
+    const b = h(`button${x.from < 0 ? '.dx-sheet-jump-any' : ''}`, { type: 'button', 'aria-label': `${x.s.when}: ${x.s.title}`, title: x.s.title }, x.s.when);
     b.addEventListener('click', () => x.li.scrollIntoView({ block: 'start' }));
     return b;
   });
@@ -600,6 +600,9 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
   const figs = h('dl.dx-sheet-figs', null, crib.numbers.map((n) => h('div', null, h('dt', null, n.figure), h('dd', null, n.what))));
   const toNumbers = h('button.dx-sheet-jump-figs', { type: 'button' }, 'Numbers');
   toNumbers.addEventListener('click', () => figs.scrollIntoView({ block: 'center' }));
+  // A phone has no room for the strip: the way back to the numbers sits with the bar's buttons.
+  const toNumbersPhone = h('button.btn.dx-sheet-figs-phone', { type: 'button' }, 'Numbers');
+  toNumbersPhone.addEventListener('click', () => figs.scrollIntoView({ block: 'center' }));
 
   // The clock: started by hand as the interview starts, kept for the tab so a reload does not lose it.
   const KEY = `dsv.sheet.${id}`;
@@ -643,7 +646,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     hint.hidden = !!began;
     nowBtn.hidden = !current;
     if (current) nowBtn.textContent = `Now: ${current.s.title}, until ${current.to}`;
-    if (began) elapsed.textContent = min >= length ? `${length} minutes are up` : `${min}:${String(secs % 60).padStart(2, '0')} of ${length}`;
+    if (began) elapsed.replaceChildren(...(min >= length ? [`${length} minutes are up`] : [`${min}:${String(secs % 60).padStart(2, '0')}`, h('span.dx-sheet-of', null, ` of ${length}`)]));
   }
   function run(): void {
     clearInterval(ticking);
@@ -667,7 +670,7 @@ function cribSheet(design: Design, crib: Crib): { el: HTMLElement; stop: () => v
     h(
       'div.dx-crib-bar.dx-sheet-bar', null,
       h('p.dx-back', null, h('a', { href: `#/d/${id}` }, `Back to ${design.name}`)),
-      h('p.dx-crib-tools', null, nowBtn, answersBtn, elapsed, startBtn, h('button.btn.primary', { type: 'button', onclick: () => window.print() }, 'Print'), hint),
+      h('p.dx-crib-tools', null, nowBtn, toNumbersPhone, answersBtn, elapsed, startBtn, h('button.btn.primary', { type: 'button', onclick: () => window.print() }, 'Print'), hint),
       h('nav.dx-sheet-jump', { 'aria-label': 'The hour' }, toNumbers, jumps),
     ),
     sheet,

@@ -987,6 +987,7 @@
   border-left-width: 6px;
   border-left-color: var(--key);
   padding-left: 8px;
+  padding-right: 16px;
   background: var(--key-soft);
   outline: 2px solid var(--key);
   outline-offset: -2px;
@@ -1031,6 +1032,14 @@
   border-color: var(--ink);
   background: var(--ink);
   color: #fff;
+}
+
+.dx-sheet-jump .dx-sheet-jump-any {
+  border-style: dashed;
+}
+
+.dx-sheet-figs-phone {
+  display: none;
 }
 
 .dx-sheet-jump button.now {
@@ -1094,6 +1103,11 @@
     line-height: 1.75;
   }
 
+  .dx-sheet-hour > li {
+    padding-top: 11px;
+    padding-bottom: 11px;
+  }
+
   .dx-sheet-hour > li > div > ul {
     clear: left;
   }
@@ -1126,6 +1140,14 @@
   .dx-sheet-jump {
     display: none;
   }
+
+  .dx-sheet-figs-phone {
+    display: inline-block;
+  }
+
+  .dx-sheet-hour > li.now {
+    padding-right: 8px;
+  }
 }
 
 @media screen and (max-width: 519px) {
@@ -1145,7 +1167,21 @@
 
   .dx-sheet-hour > li,
   .dx-sheet-groups section {
-    scroll-margin-top: 120px;
+    scroll-margin-top: 112px;
+  }
+
+  .dx-sheet-bar .btn {
+    height: 36px;
+    padding: 0 9px;
+    font-size: 0.95rem;
+  }
+
+  .dx-sheet-of {
+    display: none;
+  }
+
+  .dx-sheet-now {
+    flex: 1 0 100%;
   }
 
   .dx-sheet-bar .dx-crib-tools {
@@ -1270,6 +1306,10 @@
 @media screen and (min-width: 1700px) {
   .dx-sheet-page {
     max-width: 1520px;
+  }
+
+  .dx-sheet-hour ul {
+    max-width: 62ch;
   }
 
   .dx-sheet {
@@ -1595,6 +1635,10 @@
   }
 
   html.crib-mode .dx-sheet-gwhen {
+    padding: 0 3pt;
+    border: 1pt solid #000;
+    border-radius: 3pt;
+    font-size: 8.5pt;
     font-weight: 800;
   }
 
@@ -1678,7 +1722,7 @@
   }
 
   html.crib-mode .dx-sheet-s-asked {
-    margin-top: 10pt;
+    margin-top: 12pt;
   }
 
   html.crib-mode .dx-sheet-keep {
@@ -1687,6 +1731,8 @@
   }
 
   html.crib-mode .dx-sheet-keep li {
+    display: inline-block;
+    width: 100%;
     margin-bottom: 1.5pt;
   }
 
