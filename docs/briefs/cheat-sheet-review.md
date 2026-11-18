@@ -34,7 +34,8 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
 ## Things that are deliberate
 
 - Lines in the hour are capped at 100 characters, answers at 140. A test enforces it.
-- "Any time" marks a stretch the interviewer can start whenever they like; it takes no minutes of its own.
+- The change of brief has the rehearsal's minutes, 44 to 49, so the clock can point at it;
+  "(or sooner)" in its title is there because an interviewer may change the brief early.
 - On paper the minute tags sit on the title's line and are outlined, not filled, so a printer that
   leaves out backgrounds does not lose them.
 - The sheet says "machine" throughout for what the design page calls a node.
@@ -75,16 +76,15 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
   of answers for the current stretch, whose heading is filled too. Each group's heading carries
   its stretch's minutes.
 - The strip starts with a "Numbers" button, which brings the numbers back into view from anywhere.
-- Below 1700px wide the minute tags sit on the title's line, as on paper, so lines wrap less; a
-  wider monitor keeps them in the margin.
-- "Any time" has no group of its own under "If they ask": its points are in the hour, and a
-  one-question group would cost two lines on a full page.
+- On a monitor the minute tags sit on the title's line, as on paper, so lines wrap less and tag,
+  title and bullets share one left edge.
+- The change of brief has no group of its own under "If they ask": its points are in the hour,
+  and a one-question group would cost two lines on a full page.
 - On a phone, before the clock starts, the strip is one row that scrolls sideways and the bar has
   its own "Numbers" button. With the clock running the strip makes way for the "Now" pill, so the
   bar stays two rows.
-- "When they change the brief" is "Any time" because an interviewer may change it early; "(often
-  44)" says where the rehearsal puts it. "3 minutes each" puts the four deep dives at 30 to 42,
-  naming the weakest part at 42 to 44, and the change of brief at 44 to 49, as the rehearsal has it.
+- "3 minutes each" puts the four deep dives at 30 to 42 and naming the weakest part at 42 to 44,
+  before the change of brief at 44 to 49, as the rehearsal has it.
 - Naming the weakest part is the last line of the deep dives, where the rehearsal puts it, and
   is not also a habit. The sixth habit is the rehearsal's rule for the last stage: two or three
   sentences an answer.
@@ -92,8 +92,11 @@ jargon where a plain word works. No "Bold term: explanation" list items. No em d
   the weakest-part line.
 - 86,400 a day is in the numbers and again in the sums, because it is said aloud in the sums.
 - Before the clock starts, "Start the clock" is the filled button and Print the plain one.
-- The minute tags share one width (on paper, and on a monitor below 1700px), so the titles beside
-  them start on one line down each column.
+- The minute tags share one width, on paper and on a monitor, so the titles beside them start on
+  one line down each column. On page 2 the groups' tags match them (8.5pt, 1.5pt outline).
+- On a phone the shell's search box is left off this page, so the sheet starts near the top.
+- "With one owner, there is no race" closes the duplicate-URL line as the notes do; "atomic
+  insert" already says not to check and then insert.
 - Two closing questions, not three: the rehearsal asks for two or three, and page 1 has no line.
 - The rehearsal's "say what breaks first" for each step up is the habit "For each choice, say the
   problem it fixes, the alternative and what yours costs", so it is not repeated in each stretch.

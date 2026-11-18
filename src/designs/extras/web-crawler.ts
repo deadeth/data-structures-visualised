@@ -561,7 +561,7 @@ export const extras: Extras = {
           "Ask what it's for, and whether it runs once or keeps going.",
           'Agree to obey robots.txt, wait 1 second between requests to a site, and publish a contact page.',
           'Leave out JavaScript, images, logins and indexing. Say so.',
-          'Give each design one sentence: one machine with Postgres, or 20 that split the sites. Start small.',
+          'Give both designs a sentence: one machine with Postgres, or 20 that split the sites. Start small.',
         ],
       },
       {
@@ -611,15 +611,15 @@ export const extras: Extras = {
         ],
       },
       {
-        when: '30 to 49',
+        when: '30 to 44',
         short: 'Deep dives',
         title: 'Go deeper where they ask',
         lines: [
           "If they don't steer: a worker dying, a URL found twice, the limiter, a dead machine. 3 minutes each.",
           "A dead worker's lease ends and its URL is retried. Acknowledge after saving the page and links.",
-          'A page may be fetched twice. The data stays right: upserts by URL, and the newer fetch wins.',
-          'Two workers find the same URL? An atomic insert keeps the first. Never check and then insert.',
-          'A local timer paces each site. A Redis token bucket limits IP addresses that many sites share.',
+          'A retry can refetch a page. The data stays right: upserts by URL, and the newer fetch wins.',
+          'Two workers find the same URL? An atomic insert keeps the first. With one owner, there is no race.',
+          'Limit each site with a local timer, and shared IP addresses with a Redis token bucket.',
           'If a machine dies or stalls, others take its slots and raise the epoch, so its late writes fail.',
           'The new owner waits out the old lease, plus clock drift.',
           "It loads each slot's snapshot and replays Kafka from there.",
@@ -628,14 +628,14 @@ export const extras: Extras = {
         ],
       },
       {
-        when: 'Any time',
+        when: '44 to 49',
         short: 'Changes',
-        title: 'When they change the brief (often 44)',
+        title: 'When they change the brief (or sooner)',
         lines: [
           'Ask one question back, redraw, then say what it costs.',
           'For news within an hour, poll feeds and sitemaps and give new links top priority.',
           'Polling 1,000 sites, 10 pages each, every 5 minutes is 33 a second, about 8 per cent of 400.',
-          "If sites must opt in, keep to a verified list, redirects too. Stop if it can't be read.",
+          "If sites must opt in, keep to a verified list, redirects too. If the list can't be read, stop.",
           'With far fewer sites, one machine may be enough again.',
         ],
       },
@@ -697,7 +697,7 @@ export const extras: Extras = {
         when: '16 to 22',
         items: [
           { q: 'What gets crawled first?', a: 'Seeds first, then pages that many others link to. Priority queues feed the per-site queues, so priority and pacing stay separate.' },
-          { q: 'How long between requests to one site?', a: 'The largest of 1 second, its Crawl-delay and ten times the last response time. A fetch that took 0.84 seconds earns 8.4.' },
+          { q: 'How long between requests to one site?', a: 'The largest of 1 second, its Crawl-delay and ten times the last response time. After a fetch of 0.84 seconds, wait 8.4.' },
           { q: 'A site with endless pages, such as a calendar?', a: "Every URL really is new, so the seen check can't help. Give each site a page budget and a depth cap." },
           { q: 'The same article at fifty URLs?', a: 'Hash the body to catch exact copies. For near copies use a 64-bit SimHash: fingerprints 3 bits or fewer apart count as copies.' },
           { q: 'How do you keep pages fresh?', a: "Start with fixed tiers: news hourly, the rest monthly. Later, halve a page's interval when it changes and lengthen it when it doesn't." },
@@ -711,13 +711,13 @@ export const extras: Extras = {
         items: [
           { q: 'A shared queue, or one owner per site?', a: 'For a one-off crawl, a shared queue and a shared per-site limiter. For one that never stops, one owner per site, so pacing needs no lock.' },
           { q: 'Consistent hashing or a slot map?', a: "A slot map. Both move few sites, but a slot move is one explicit step with its own epoch, so the old owner's late writes fail." },
-          { q: 'Why Cassandra or ScyllaDB?', a: 'It suits small upserts by key and grows by adding machines. 3 TB is 9 TB in three copies. The cost: a table per query, no joins.' },
+          { q: 'Why Cassandra or ScyllaDB?', a: 'It suits small upserts by key and grows by adding machines. The table is 3 TB, 9 TB in three copies. The cost: a table per query, no joins.' },
           { q: "What if etcd can't be reached?", a: 'Machines pause, and someone is woken. That is the price of one agreed answer on who owns each site.' },
         ],
       },
       {
         about: 'About the deep dives',
-        when: '30 to 49',
+        when: '30 to 44',
         items: [
           { q: 'How would you build a shared rate limiter?', a: 'A Redis token bucket per IP address. A Lua script takes a token in one step. If Redis is down, use a slow fixed rate, never unlimited.' },
           { q: 'Queues or distributed locks?', a: "A queue's lease covers one message. A lock is for a rule across messages: one fetch per site. One owner per site needs only a slot lease." },

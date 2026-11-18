@@ -1140,9 +1140,9 @@
   scroll-margin-top: 140px;
 }
 
-/* A monitor of ordinary width: the minutes sit on the title's line, as on paper, so the lines below run the
-   column's full width and wrap less. A wide monitor keeps them in the margin. */
-@media screen and (min-width: 900px) and (max-width: 1699px) {
+/* A monitor: the minutes sit on the title's line, as on paper, so the lines below run the column's full width
+   and wrap less, and tag, title and bullets share one left edge. */
+@media screen and (min-width: 900px) {
   .dx-sheet-hour > li {
     display: block;
   }
@@ -1251,6 +1251,18 @@
   .dx-sheet-figs dt {
     font-size: 1.02rem;
     white-space: nowrap;
+  }
+}
+
+/* A phone: room between one number's caption and the next number, and the shell's search box makes way so the
+   sheet starts near the top of the screen. */
+@media screen and (max-width: 899px) {
+  .dx-sheet-figs {
+    row-gap: 10px;
+  }
+
+  html.crib-mode .sidebar .search {
+    display: none;
   }
 }
 
