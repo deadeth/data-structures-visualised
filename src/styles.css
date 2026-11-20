@@ -181,7 +181,72 @@ select {
   font-size: 0.82rem;
   font-weight: 500;
   color: var(--ink-3);
-  margin-bottom: 4px;
+}
+
+/* A group's label is a button that folds its list. */
+.nav-fold {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: calc(100% + 10px);
+  min-height: 30px;
+  margin: 0 0 4px -10px;
+  padding: 3px 8px 3px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nav-fold:hover {
+  background: #e4e9f0;
+}
+
+.nav-fold:hover .nav-label {
+  color: var(--ink);
+}
+
+.nav-fold[aria-expanded='false'] {
+  margin-bottom: 0;
+}
+
+/* The chevron points down when the list is open and right when it is folded. */
+.nav-chevron {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-right: 3px;
+  border-right: 2px solid var(--ink-3);
+  border-bottom: 2px solid var(--ink-3);
+  transform: translateY(-2px) rotate(45deg);
+}
+
+.nav-fold[aria-expanded='false'] .nav-chevron {
+  transform: rotate(-45deg);
+}
+
+/* A folded group that holds the page on screen: its label takes the weight the hidden link had. */
+.nav-group.has-current > .nav-fold[aria-expanded='false'] .nav-label {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.nav-group.has-current > .nav-fold[aria-expanded='false'] .nav-label::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--ink);
+  vertical-align: 1px;
+}
+
+.nav-group + .nav-group:has(> .nav-fold[aria-expanded='false']) {
+  margin-top: 6px;
 }
 
 .site-nav a,
@@ -1681,7 +1746,8 @@ td.num {
   }
 
   .site-nav a,
-  .site-nav .soon {
+  .site-nav .soon,
+  .nav-fold {
     min-height: 40px;
   }
 }

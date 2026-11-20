@@ -29,9 +29,54 @@ function link(path: string, label: string, title?: string): HTMLAnchorElement {
 
 // Group labels are not headings: they would come before each page's h1. Each list is named by its label instead.
 const nav = h('nav.site-nav', { 'aria-label': 'Data structures' });
+/**
+ * Each group folds: its label is a button that shows or hides the list under it.
+ * The groups folded shut are kept in localStorage as dsv.nav.closed, a JSON list of group ids.
+ * A folded group that holds the page on screen stays shut, and its label says so.
+ */
+const NAV_CLOSED = 'dsv.nav.closed';
+const closedGroups = (): Set<string> => {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(NAV_CLOSED) ?? '[]');
+    return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  } catch {
+    return new Set();
+  }
+};
+const navFolds: { group: HTMLElement; list: HTMLElement; here: HTMLElement }[] = [];
+/** Marks each group that holds the current page, so a folded one still shows where the reader is. */
+function markGroups(): void {
+  for (const f of navFolds) {
+    const holds = !!f.list.querySelector('[aria-current="page"]');
+    f.group.classList.toggle('has-current', holds);
+    f.here.textContent = holds ? ', holds this page' : '';
+  }
+}
 const navGroup = (label: string, items: HTMLElement[]) => {
   const id = `nav-${label.toLowerCase().replace(/[^a-z]+/g, '-')}`;
-  return h('div.nav-group', null, h('p.nav-label', { id }, label), h('ul', { 'aria-labelledby': id }, items));
+  const list = h('ul', { id: `${id}-list`, 'aria-labelledby': id }, items);
+  const here = h('span.visually-hidden');
+  const fold = h('button.nav-fold', { type: 'button', 'aria-expanded': 'true', 'aria-controls': `${id}-list` }, h('span.nav-label', { id }, label), here, h('span.nav-chevron', { 'aria-hidden': 'true' }));
+  const show = (open: boolean) => {
+    fold.setAttribute('aria-expanded', String(open));
+    list.hidden = !open;
+  };
+  fold.addEventListener('click', () => {
+    const open = list.hidden !== false;
+    show(open);
+    const closed = closedGroups();
+    if (open) closed.delete(id);
+    else closed.add(id);
+    try {
+      localStorage.setItem(NAV_CLOSED, JSON.stringify([...closed]));
+    } catch {
+      // Storage can be blocked; the group still folds for this visit.
+    }
+  });
+  if (closedGroups().has(id)) show(false);
+  const group = h('div.nav-group', null, fold, list);
+  navFolds.push({ group, list, here });
+  return group;
 };
 // The course has its own link above the menu; where the sidebar folds into a bar (design pages) it moves into the menu instead (course.css).
 const courseLink = h('a.side-course', { href: '#/course' }, h('span.side-course-name', null, 'Course'), h('span.side-course-sub', null, 'A study plan, with your progress'));
@@ -192,6 +237,7 @@ onUnlock(() => {
   list.replaceChildren(...designItems());
   const path = location.hash.replace(/^#/, '') || '/';
   for (const [p, a] of navLinks) if (list.contains(a) && (p === path || path.startsWith(`${p}/`))) a.setAttribute('aria-current', 'page');
+  markGroups();
 });
 /** Opens, without asking, any locked page whose password this tab has already given. */
 const saved = unlockSaved();
@@ -249,6 +295,7 @@ async function route(typing = false): Promise<void> {
     if (p === path || (p !== '/p' && path.startsWith(`${p}/`))) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   }
+  markGroups();
   const onCourse = path === '/course' || path.startsWith('/course/');
   for (const a of [courseLink, navCourse.querySelector('a')!]) {
     if (onCourse) a.setAttribute('aria-current', 'page');
