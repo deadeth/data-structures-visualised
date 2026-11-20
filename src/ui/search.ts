@@ -6,9 +6,10 @@ import { slug } from './design-page';
 import { READING_FILES, plain } from '../reading';
 import type { Block, Reading } from '../reading/types';
 import { loadCourse } from '../course';
+import { PRACTICES } from '../practice';
 
 interface Doc {
-  kind: 'Term' | 'Component' | 'Connection' | 'Tour step' | 'Decision' | 'Interview question' | 'Structure' | 'Reading' | 'Walkthrough' | 'Section' | 'Course' | 'Course module';
+  kind: 'Term' | 'Component' | 'Connection' | 'Tour step' | 'Decision' | 'Interview question' | 'Structure' | 'Reading' | 'Walkthrough' | 'Section' | 'Course' | 'Course module' | 'Practice';
   title: string;
   /** Other names that should find this entry. */
   also: string[];
@@ -115,6 +116,31 @@ function build(): Promise<Doc[]> {
       const name = plain(p.title);
       docs.push({ kind: r.kind === 'concept' ? 'Reading' : 'Walkthrough', title: name, also: p.sections.map((s) => plain(s.title)), text: [plain(p.summary), ...p.sections.flatMap((s) => s.blocks.map(blockText))].join(' '), href: base, where: r.kind === 'concept' ? `Reading: ${(p as Reading & { group?: string }).group ?? 'system design'}` : 'Reading: design walkthrough' });
       for (const s of p.sections) docs.push({ kind: 'Section', title: plain(s.title), also: [name], text: s.blocks.map(blockText).join(' '), href: `${base}/${encodeURIComponent(s.id)}`, where: `${name}: section`, from: name });
+    }
+    // Pairing practice pages: one entry for the page, one for each of its parts (stages).
+    for (const e of PRACTICES) {
+      const p = e.page;
+      const base = `#/p/${e.id}`;
+      const name = plain(p.title);
+      docs.push({
+        kind: 'Practice',
+        title: name,
+        also: ['pairing', 'java', ...p.parts.map((pt) => plain(pt.title))],
+        text: [p.summary, ...p.brief, ...p.ask.flatMap((a) => [a.q, a.why, a.assume]), ...p.followUps.flatMap((f) => [f.q, ...f.a]), ...p.mistakes].map(plain).join(' '),
+        href: base,
+        where: `Pairing practice: about ${p.minutes} minutes to stage ${p.core}`,
+      });
+      for (const pt of p.parts) {
+        docs.push({
+          kind: 'Practice',
+          title: plain(pt.title),
+          also: [name, ...pt.tests],
+          text: [pt.ask, ...pt.explain, ...(pt.lines ?? []).map((l) => `${l.code} ${l.note}`), pt.say, ...pt.pitfalls].map(plain).join(' '),
+          href: `${base}/${encodeURIComponent(pt.id)}`,
+          where: `${name}: stage ${pt.stage}`,
+          from: name,
+        });
+      }
     }
     // The course and its modules, once the course is written. A module is found by its items' titles too.
     const course = await loadCourse().catch(() => null);
@@ -337,7 +363,7 @@ export async function mountSearch(host: HTMLElement, query: string, returning = 
     // Results are grouped by where they live, best match first within each group, and the groups in the order of their best match.
     // An entry whose title is exactly the search comes first, whatever kind it is: the SimHash page above MinHash and near-duplicates.
     const exact = (d: Doc) => fold(d.title) === words.join(' ');
-    const groupOf = (d: Doc) => (exact(d) ? 'Exact matches' : d.kind === 'Term' ? 'Glossary' : d.kind === 'Structure' ? 'Data structures' : d.kind === 'Reading' || d.kind === 'Walkthrough' || d.kind === 'Section' ? 'Reading' : d.kind === 'Course' || d.kind === 'Course module' ? 'Course' : 'System design');
+    const groupOf = (d: Doc) => (exact(d) ? 'Exact matches' : d.kind === 'Term' ? 'Glossary' : d.kind === 'Structure' ? 'Data structures' : d.kind === 'Reading' || d.kind === 'Walkthrough' || d.kind === 'Section' ? 'Reading' : d.kind === 'Course' || d.kind === 'Course module' ? 'Course' : d.kind === 'Practice' ? 'Pairing practice' : 'System design');
     const groups = new Map<string, Doc[]>();
     if (hits.some((x) => exact(x.d))) groups.set('Exact matches', []);
     for (const { d } of hits) {

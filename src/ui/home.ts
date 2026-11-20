@@ -3,7 +3,8 @@ import { costHtml, h, scrollRegion, tableRoles } from '../core/dom';
 import { Recorder } from '../core/recorder';
 import type { OpDef } from '../core/types';
 import { DESIGNS } from '../designs';
-import { CONCEPTS, WALKTHROUGHS } from '../reading';
+import { CONCEPTS, WALKTHROUGHS, plain } from '../reading';
+import { PRACTICES } from '../practice';
 import { Stage } from './stage';
 import { courseCard } from './course-card';
 import { legend } from './structure-page';
@@ -102,6 +103,20 @@ export async function mountHome(host: HTMLElement): Promise<() => void> {
         h(
           'ul.reading-list', null,
           reads.map((r) => h('li', null, h('a', { href: r.href, title: r.summary }, h('span.reading-title', null, r.title), h('span.reading-kind', null, `${r.kind} · ${r.minutes} min`)))),
+        ),
+      ),
+    );
+  }
+  // Pairing practice pages, when any are written: small coding tasks in Java, a stage at a time.
+  if (PRACTICES.length) {
+    page.append(
+      h(
+        'section.reading-section', { 'aria-labelledby': 'home-practice' },
+        h('h2', { id: 'home-practice' }, 'Practise: pairing tasks in Java'),
+        h('p', null, 'Small coding tasks of the kind set in a pair-programming interview. Paste the starter into an editor, start the clock and build it a stage at a time. ', h('a', { href: '#/p' }, 'How to use these'), '.'),
+        h(
+          'ul.reading-list', null,
+          PRACTICES.map((e) => h('li', null, h('a', { href: `#/p/${e.id}`, title: plain(e.page.summary) }, h('span.reading-title', null, e.page.title), h('span.reading-kind', null, `About ${e.page.minutes} min to stage ${e.page.core} · ${e.page.parts.length} stages`)))),
         ),
       ),
     );

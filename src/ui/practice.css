@@ -1,0 +1,1078 @@
+/*
+ * Pairing practice pages: text, code and a tool bar. Structure comes from rules, weight and space; colour keeps its
+ * one meaning on this site (ADR 0003), so the page uses almost none. Code uses the shared .tok-* classes.
+ */
+
+.pp {
+  --pp-col: 48rem;
+  --pp-bar-h: 64px;
+}
+
+.pp-head {
+  max-width: var(--pp-col);
+  margin-bottom: 18px;
+}
+
+.pp-kicker {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink-3);
+  margin-bottom: 8px;
+}
+
+.pp-kicker a {
+  color: var(--ink-2);
+}
+
+.pp-facts {
+  margin-top: 10px;
+  font: 600 0.95rem/1.4 var(--sans-data);
+  color: var(--ink-2);
+}
+
+/* ---- the tool bar: always in reach, never over the words it scrolls past ---- */
+
+.pp-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin: 0 calc(-1 * clamp(18px, 4vw, 56px)) 22px;
+  padding: 10px clamp(18px, 4vw, 56px);
+  background: var(--paper);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.pp-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+}
+
+.pp-bar-files {
+  display: flex;
+  gap: 8px;
+}
+
+.pp-tool {
+  height: 40px;
+}
+
+.pp-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.pp-switch input {
+  appearance: none;
+  flex: none;
+  position: relative;
+  width: 40px;
+  height: 24px;
+  margin: 0;
+  border: 1.5px solid var(--ink);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.pp-switch input::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--ink-2);
+}
+
+.pp-switch input:checked {
+  background: var(--ink);
+}
+
+.pp-switch input:checked::before {
+  left: 19px;
+  background: #fff;
+}
+
+.pp-switch input:focus-visible {
+  outline: 3px solid var(--path);
+  outline-offset: 2px;
+}
+
+.pp-switch label {
+  cursor: pointer;
+}
+
+.pp-clock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.pp-time-box {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 8.5em;
+  line-height: 1.2;
+}
+
+.pp-time {
+  font: 700 1.05rem/1.2 var(--sans-data);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pp-clock:not(.is-running):not(.is-over) .pp-time {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+/* Over time: said in words, with a calm double rule under the time, not a colour. */
+.pp-over {
+  font-size: 0.82rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.pp-over:empty {
+  display: none;
+}
+
+.pp-clock.is-over .pp-time {
+  text-decoration: underline double var(--ink-2);
+  text-underline-offset: 0.2em;
+}
+
+.pp-status {
+  flex: 1 1 12rem;
+  min-width: 0;
+  font-size: 0.86rem;
+  line-height: 1.3;
+  color: var(--ink-2);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+@media (max-width: 599px) {
+  .pp-status {
+    flex-basis: 100%;
+    order: 5;
+    -webkit-line-clamp: unset;
+  }
+
+  .pp-status:empty {
+    display: none;
+  }
+}
+
+/* ---- layout: contents beside the text on a wide screen, above it on anything narrower ---- */
+
+.pp-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+
+.pp-body {
+  min-width: 0;
+  max-width: var(--pp-col);
+}
+
+.pp-toc {
+  max-width: var(--pp-col);
+  padding: 10px 8px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+.pp-toc-h {
+  padding: 0 8px 4px;
+  font-size: 0.85rem;
+  font-weight: 650;
+  color: var(--ink-3);
+}
+
+.pp-toc-list a {
+  display: grid;
+  grid-template-columns: 4.6em minmax(0, 1fr);
+  column-gap: 6px;
+  align-items: baseline;
+  min-height: 40px;
+  padding: 8px;
+  border-radius: 7px;
+  text-decoration: none;
+  line-height: 1.35;
+  color: var(--ink-2);
+}
+
+.pp-toc-n {
+  font: 600 0.85rem var(--sans-data);
+  color: var(--ink-3);
+}
+
+.pp-toc-title {
+  font-weight: 600;
+}
+
+.pp-toc-core,
+.pp-toc-ext {
+  grid-column: 2;
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+
+.pp-toc-core {
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.pp-toc-list li.is-core a {
+  box-shadow: inset 3px 0 0 var(--ink);
+}
+
+.pp-toc-list a:hover {
+  background: #e4e9f0;
+  color: var(--ink);
+}
+
+.pp-toc-list a[aria-current] {
+  background: #e4e9f0;
+  color: var(--ink);
+}
+
+.pp-toc-list a[aria-current] .pp-toc-title {
+  font-weight: 750;
+}
+
+/* From 1400px: below that, the contents beside would squeeze the code and traces under their 48rem. */
+@media (min-width: 1400px) {
+  .pp-layout {
+    grid-template-columns: minmax(0, var(--pp-col)) 15rem;
+    column-gap: 48px;
+    align-items: start;
+  }
+
+  .pp-toc {
+    order: 2;
+    position: sticky;
+    top: calc(var(--pp-bar-h) + 20px);
+    max-height: calc(100vh - var(--pp-bar-h) - 40px);
+    overflow-y: auto;
+    border: 0;
+    background: none;
+    padding: 0;
+  }
+
+  .pp-toc-list a {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pp-toc-core,
+  .pp-toc-ext {
+    grid-column: 1;
+  }
+
+  .pp-body {
+    order: 1;
+  }
+}
+
+/* ---- text ------------------------------------------------------------------- */
+
+.pp-section,
+.pp-part {
+  scroll-margin-top: calc(var(--pp-bar-h) + 12px);
+}
+
+.pp-section {
+  padding-top: 18px;
+}
+
+.pp-section + .pp-section,
+.pp-parts + .pp-section {
+  margin-top: 26px;
+  border-top: 1px solid var(--rule);
+}
+
+.pp h2 {
+  font-size: 1.55rem;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  margin: 6px 0 12px;
+}
+
+.pp h2:focus {
+  outline: none;
+}
+
+.pp h2:focus-visible {
+  outline: 3px solid var(--path);
+}
+
+.pp-body p,
+.pp-list,
+.pp-guide p {
+  line-height: 1.62;
+}
+
+.pp-body p + p,
+.pp-guide .pp-section p + p {
+  margin-top: 12px;
+}
+
+.pp-body code,
+.pp-guide code,
+.pp-ask-table code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: #e8ecf2;
+  padding: 0.08em 0.32em;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+
+.pp-list {
+  padding-left: 1.4em;
+  list-style: disc;
+}
+
+.pp-list.ordered {
+  list-style: decimal;
+}
+
+.pp-list li + li {
+  margin-top: 6px;
+}
+
+.pp-list li::marker {
+  color: var(--ink-3);
+}
+
+.pp-intro {
+  color: var(--ink-2);
+  margin-bottom: 12px;
+}
+
+/* ---- "Ask first": three columns on a wide screen, cards on a phone ---- */
+
+.pp-ask-table {
+  table-layout: fixed;
+}
+
+.pp-ask-table thead th:nth-child(1) {
+  width: 30%;
+}
+
+.pp-ask-table thead th:nth-child(2) {
+  width: 38%;
+}
+
+.pp-table {
+  width: 100%;
+  font-family: var(--sans);
+  border-collapse: collapse;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+}
+
+.pp-table th,
+.pp-table td {
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--rule);
+}
+
+.pp-table thead th {
+  background: #f0f3f7;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.pp-table tbody th {
+  font-weight: 700;
+}
+
+.pp-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+@media (max-width: 599px) {
+  .pp-table {
+    border: 0;
+    background: none;
+  }
+
+  .pp-table tbody tr {
+    margin-bottom: 10px;
+    border: 1px solid var(--rule) !important;
+    border-radius: var(--radius-s);
+    background: var(--surface);
+  }
+
+  .pp-table tbody th {
+    font-size: 1rem;
+  }
+
+  .pp-table tbody tr > * {
+    border-bottom: 0;
+  }
+
+  .pp-table td {
+    margin-top: 8px !important;
+  }
+}
+
+/* ---- code ---------------------------------------------------------------------- */
+
+.pp-code {
+  margin: 10px 0 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.pp-code-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-height: 40px;
+  padding: 4px 6px 4px 12px;
+  border-bottom: 1px solid var(--rule);
+  background: #f0f3f7;
+  font-size: 0.86rem;
+}
+
+.pp-code-title {
+  font-weight: 700;
+  color: var(--ink-2);
+  margin-right: auto;
+}
+
+.pp-code-sub {
+  font-weight: 400;
+}
+
+.pp-code.no-title .pp-code-head {
+  display: none;
+}
+
+.pp-code.no-title:has(.pp-pre[role='region']) .pp-code-head {
+  display: flex;
+  min-height: 0;
+  padding: 4px 12px;
+}
+
+/* The cue appears only while the block scrolls sideways (scrollRegion gives it a role then). */
+.pp-scroll-hint {
+  display: none;
+  order: 3;
+  flex-basis: 100%;
+  padding-bottom: 2px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.pp-scroll-hint::after {
+  content: ' \2192';
+}
+
+.pp-code:has(.pp-pre[role='region']) .pp-scroll-hint {
+  display: inline;
+}
+
+.pp-trace-box:has(.pp-trace-wrap[role='region']) .pp-scroll-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.86rem;
+}
+
+.pp-pre {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  font: 400 0.8125rem/1.6 var(--mono);
+  white-space: pre;
+  tab-size: 4;
+}
+
+.pp-body .pp-pre code {
+  font: inherit;
+  background: none;
+  padding: 0;
+  overflow-wrap: normal;
+}
+
+/* While it scrolls, a shadow at the right edge says there is more. */
+.pp-pre[role='region'],
+.pp-trace-wrap[role='region'] {
+  background:
+    linear-gradient(to right, var(--surface) 30%, rgb(255 255 255 / 0)) left / 24px 100% no-repeat local,
+    linear-gradient(to left, var(--surface) 30%, rgb(255 255 255 / 0)) right / 24px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgb(15 27 45 / 0.16), rgb(15 27 45 / 0)) left / 10px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgb(15 27 45 / 0.16), rgb(15 27 45 / 0)) right / 10px 100% no-repeat scroll;
+}
+
+.pp-pre:focus-visible {
+  outline-offset: -3px;
+}
+
+.pp-pre.pseudo {
+  background-color: #f8fafc;
+}
+
+.btn.pp-copy {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 0.86rem;
+  border-width: 1px;
+}
+
+.pp-whole {
+  margin: -6px 0 16px;
+}
+
+.pp-whole > summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 40px;
+  padding: 9px 4px 0;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.pp-whole-t {
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 0.2em;
+}
+
+.pp-whole > summary:hover .pp-whole-t {
+  text-decoration-color: currentColor;
+}
+
+.pp-whole-n {
+  font: 400 0.9rem var(--sans-data);
+  color: var(--ink-2);
+}
+
+.pp-whole[open] > .pp-code {
+  margin-top: 4px;
+}
+
+/* ---- practice mode ---- */
+
+.btn.pp-reveal {
+  margin: 4px 0 14px;
+}
+
+.pp-hidden-note {
+  margin: 2px 0 8px;
+  color: var(--ink-2);
+  font-size: 0.95rem;
+}
+
+/* ---- a part ------------------------------------------------------------------- */
+
+.pp-parts {
+  margin-top: 30px;
+}
+
+.pp-part {
+  padding: 22px 0 8px;
+  border-top: 3px solid var(--ink);
+}
+
+.pp-part + .pp-part {
+  margin-top: 34px;
+}
+
+.pp-part-head h2 {
+  margin-top: 4px;
+}
+
+.pp-stage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  font-size: 0.9rem;
+}
+
+.pp-stage-n {
+  font: 750 0.9rem var(--sans-data);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pp-stage-note {
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.pp-h3 {
+  font-size: 1.08rem;
+  margin: 22px 0 8px;
+}
+
+.pp-ask {
+  margin: 4px 0 6px;
+  padding: 12px 16px;
+  border-left: 4px solid var(--ink);
+  background: var(--surface);
+  border-radius: 0 var(--radius-s) var(--radius-s) 0;
+  font-size: 1.06rem;
+}
+
+.pp-ask-who,
+.pp-say-who {
+  margin-bottom: 4px;
+  font-size: 0.78rem !important;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.pp-test-list {
+  display: grid;
+  gap: 4px;
+}
+
+.pp-test-list li {
+  padding-left: 5ch;
+  text-indent: -5ch;
+  font: 400 0.84rem/1.5 var(--mono);
+}
+
+.pp-test-list li::before {
+  content: 'TEST ';
+  font-weight: 700;
+  color: var(--ink-3);
+}
+
+.pp-lines {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.pp-lines dt,
+.pp-lines dd {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.pp-lines dt {
+  max-width: 24rem;
+  background: #f8fafc;
+  border-right: 1px solid var(--rule);
+}
+
+.pp-lines dd {
+  line-height: 1.5;
+  font-size: 0.97rem;
+}
+
+.pp-lines > :nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.pp-body .pp-line-code {
+  display: block;
+  overflow-x: auto;
+  white-space: pre;
+  font: 400 0.8125rem/1.6 var(--mono);
+  background: none;
+  padding: 0;
+  overflow-wrap: normal;
+}
+
+@media (max-width: 599px) {
+  .pp-lines {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pp-lines dt {
+    max-width: none;
+    border-right: 0;
+    border-bottom: 0;
+    padding-bottom: 4px;
+  }
+
+  .pp-lines > :nth-last-child(2) {
+    border-bottom: 0;
+  }
+
+  /* One line of code may wrap on a phone, rather than hide its end. */
+  .pp-body .pp-line-code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* The trace: its caption outside the frame that scrolls, so a phone shows it whole. */
+.pp-trace-box {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.pp-body .pp-trace-cap {
+  margin: 0;
+  padding: 10px 12px 8px;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  font-weight: 650;
+  border-bottom: 1px solid var(--rule);
+}
+
+.pp-trace-wrap {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.pp-trace {
+  width: 100%;
+  border-collapse: collapse;
+  font: 400 0.9rem/1.45 var(--sans-data);
+  font-variant-numeric: tabular-nums;
+}
+
+.pp-trace th,
+.pp-trace td {
+  padding: 7px 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.pp-trace thead th {
+  background: #f0f3f7;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.pp-trace tbody th {
+  font-weight: 600;
+}
+
+/* Words wrap; short values stay on one line. The frame scrolls only when the values alone cannot fit. */
+.pp-trace .prose {
+  white-space: normal;
+  min-width: 9em;
+}
+
+/* In a trace every cell is data: code keeps its face but loses the chip, so a wide trace fits. */
+.pp-body .pp-trace code {
+  background: none;
+  padding: 0;
+  font-size: 0.92em;
+}
+
+/* Column names are words: they may wrap ("Turn after"). */
+.pp-trace thead th {
+  white-space: normal;
+  vertical-align: bottom;
+}
+
+.pp-trace.many th,
+.pp-trace.many td {
+  padding: 7px 7px;
+}
+
+.pp-trace.many th:first-child,
+.pp-trace.many td:first-child {
+  padding-left: 12px;
+}
+
+.pp-table th,
+.pp-table td {
+  white-space: normal;
+}
+
+.pp-table tbody tr + tr > *,
+.pp-trace tbody tr + tr > * {
+  border-top: 0;
+}
+
+.pp-trace tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.pp-body .pp-trace-note {
+  margin: 0;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--rule);
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+
+.pp-say {
+  margin: 22px 0 6px;
+  padding: 12px 16px;
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: #f7f9fb;
+}
+
+.pp-missing {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+/* ---- follow-ups ---- */
+
+.pp-fu-tools {
+  display: flex;
+  gap: 6px;
+  margin: -4px 0 8px -10px;
+}
+
+.pp-fus {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+.pp-fu + .pp-fu {
+  border-top: 1px solid var(--rule);
+}
+
+.pp-fu > summary {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  min-height: 44px;
+  padding: 10px 14px;
+  font-weight: 650;
+  line-height: 1.4;
+  cursor: pointer;
+  list-style: none;
+}
+
+.pp-fu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.pp-fu > summary::before {
+  content: '+';
+  flex: none;
+  width: 1em;
+  font: 700 1rem var(--mono);
+  color: var(--ink-2);
+}
+
+.pp-fu[open] > summary::before {
+  content: '\2212';
+}
+
+.pp-fu > summary:hover {
+  background: #f0f3f7;
+}
+
+.pp-fu-a {
+  padding: 0 14px 12px calc(14px + 1em + 10px);
+}
+
+.pp-unverified {
+  margin-top: 36px;
+}
+
+/* ---- the guide ---------------------------------------------------------------- */
+
+.pp-guide .pp-section {
+  max-width: var(--pp-col);
+}
+
+.pp-guide .pp-section > p,
+.pp-guide .pp-section > .pp-list {
+  margin-bottom: 12px;
+}
+
+.pp-gtable {
+  margin: 14px 0 18px;
+}
+
+.pp-guide .pp-gtable-cap {
+  font-weight: 650;
+  margin-bottom: 6px;
+}
+
+.pp-callout {
+  margin: 16px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--ink);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+.pp-callout-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.pp-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.pp-guide .pp-section:has(.pp-cards) {
+  max-width: none;
+}
+
+.pp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  text-decoration: none;
+}
+
+.pp-card:hover {
+  border-color: var(--ink);
+}
+
+.pp-card-title {
+  font-weight: 750;
+  font-size: 1.08rem;
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 0.18em;
+}
+
+.pp-card-summary {
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.pp-card-facts {
+  margin-top: auto;
+  font: 600 0.88rem/1.4 var(--sans-data);
+  color: var(--ink-2);
+}
+
+/* The phone's strip: hidden until the bar has scrolled away. Fixed, so showing it moves nothing on the page. */
+.pp-mini {
+  display: none;
+}
+
+/* ---- phones ---------------------------------------------------------------------- */
+
+@media (max-width: 599px) {
+  .pp-bar {
+    position: static;
+    padding-top: 8px;
+    padding-bottom: 10px;
+  }
+
+  .pp.bar-away .pp-mini {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 56px;
+    padding: 0 18px;
+    background: var(--paper);
+    border-bottom: 1px solid var(--rule);
+    box-shadow: 0 2px 6px rgb(15 27 45 / 0.08);
+  }
+
+  .pp-mini-time {
+    margin-right: auto;
+    font: 700 1rem var(--sans-data);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .pp-mini.is-over .pp-mini-time {
+    text-decoration: underline double var(--ink-2);
+    text-underline-offset: 0.2em;
+  }
+
+  .pp-mini .pp-tool {
+    padding: 0 12px;
+  }
+
+  .pp-bar-row {
+    gap: 8px 10px;
+  }
+
+  .pp-tool,
+  .pp-bar .btn {
+    padding: 0 11px;
+  }
+
+  .pp-clock {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .pp-time-box {
+    align-items: flex-start;
+    margin-right: auto;
+  }
+
+  .pp-pre {
+    padding: 10px 12px;
+  }
+
+  .pp-ask,
+  .pp-say {
+    padding: 10px 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pp * {
+    scroll-behavior: auto;
+  }
+}
+
+/* A guide table stacked on a phone keeps its first column's name too: there it is data, not the row's title. */
+@media (max-width: 599px) {
+  .pp-gtable table.stack tbody th::before {
+    content: attr(data-label);
+    display: block;
+    font: 400 0.86rem/1.4 var(--sans-data);
+    color: var(--ink-2);
+  }
+}

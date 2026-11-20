@@ -10,7 +10,8 @@ import { mountHome } from './ui/home';
 import { mountStructure } from './ui/structure-page';
 import './ui/reading.css';
 import './ui/course.css';
-import { CONCEPTS, CONCEPT_GROUPS } from './reading';
+import { CONCEPTS, CONCEPT_GROUPS, plain } from './reading';
+import { PRACTICES } from './practice';
 import { LOCKED, lockedEntry } from './locked/manifest';
 import { isOpen, mountLock, onUnlock, unlockSaved } from './locked/unlock';
 
@@ -51,6 +52,8 @@ const designItems = () => [
 ];
 const designNav = navGroup('System designs', designItems());
 nav.append(designNav);
+// Pairing practice: the guide, then each page by title (in the guide's order once it names one).
+nav.append(navGroup('Pairing practice', [h('li', null, link('/p', 'How to use these', 'Pairing practice: how to use these pages')), ...PRACTICES.map((p) => h('li', null, link(`/p/${p.id}`, p.page.title, plain(p.page.summary))))]));
 // Concept pages, to read rather than watch: one list, with each group named inside it.
 if (CONCEPTS.length) {
   const groups = CONCEPT_GROUPS.filter((g) => CONCEPTS.some((c) => c.group === g));
@@ -200,6 +203,8 @@ const searchScroll = new Map<string, number>();
 let shown = '';
 /** The reading page module once loaded, and the page it shows, so a change of section scrolls instead of drawing the page again. */
 let readingMod: typeof import('./ui/reading-page') | null = null;
+/** The practice page module once loaded, so a change of part on the page shown scrolls instead of drawing it again. */
+let practiceMod: typeof import('./ui/practice-page') | null = null;
 
 async function route(typing = false): Promise<void> {
   // A locked design's address: wait for the quiet unlock first, so an open tab never flashes the form.
@@ -222,6 +227,13 @@ async function route(typing = false): Promise<void> {
     routing = false;
     return;
   }
+  // A pairing practice address: the guide (`/p`), a page (`/p/<id>`), or a page at one part (`/p/<id>/<part>`).
+  const pm = /^\/p(?:\/([a-z0-9-]+)(?:\/([^/]+))?)?$/.exec(path);
+  const pmPart = pm?.[2] ? decodeURIComponent(pm[2]) : undefined;
+  if (pm?.[1] && practiceMod && !typing && teardown && practiceMod.goToPart(pm[1], pmPart)) {
+    routing = false;
+    return;
+  }
   const design0 = /^\/d\//.test(path) && !rd;
   if (design0 !== folds) {
     folds = design0;
@@ -233,7 +245,8 @@ async function route(typing = false): Promise<void> {
   teardown = null;
   main.replaceChildren();
   for (const [p, a] of navLinks) {
-    if (p === path || path.startsWith(`${p}/`)) a.setAttribute('aria-current', 'page');
+    // The practice guide (`/p`) is marked only on its own address, not under every practice page.
+    if (p === path || (p !== '/p' && path.startsWith(`${p}/`))) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   }
   const onCourse = path === '/course' || path.startsWith('/course/');
@@ -280,6 +293,13 @@ async function route(typing = false): Promise<void> {
       readingMod = r;
       document.title = `${r.readingTitle(readKey) ?? 'Page not found'} | Data structures, visualised`;
       return r.mountReading(main, readKey, readSection);
+    });
+  } else if (pm) {
+    document.title = 'Pairing practice | Data structures, visualised';
+    mount = import('./ui/practice-page').then(async (pp) => {
+      practiceMod = pp;
+      document.title = `${(await pp.practiceTitle(pm[1])) ?? 'Page not found'} | Data structures, visualised`;
+      return pp.mountPractice(main, pm[1], pmPart);
     });
   } else if (dm && chosen) {
     // Extras that fail to load leave the design page as it was, without them.
