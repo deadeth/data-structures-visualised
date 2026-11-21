@@ -4,65 +4,64 @@ const page: Practice = {
   id: 'currency-converter',
   title: 'Currency converter',
   summary:
-    "Write `convert(amount, from, to)` over a rate provider that charges for every call and is sometimes down. It starts as arithmetic with `BigDecimal`; by stage 3 it is testing what your service does when its supplier is slow, costly or unavailable.",
+    "Write `convert(amount, from, to)` over a rate provider that charges for every call and is sometimes down: round once to the target currency's minor units, reuse a rate for 60 seconds, and serve the last one, flagged stale, for up to 10 minutes of outage.",
   minutes: 40,
   core: 3,
+  testing: {
+    intro:
+      'The code is short: you write 57 lines by the end of stage 3. What counts is how you handle what the brief leaves out, where you put the state, and how you work against the clock.',
+    points: [
+      'You ask how to round, and whether an old rate may be served when the provider is down, before you type: the brief answers neither.',
+      'You get both limits right to the millisecond with the supplied clock: reused at 59,999, fetched again at 60,000, served stale at 600,000, refused at 600,001.',
+      'You store each rate with the time it was fetched, not its expiry, so the outage in stage 3 needs a retry loop and one catch block, and no second map.',
+    ],
+  },
+  use: 'Drill "Ask first" and stages 1 to 3 until they take 40 minutes with no page, passing each stage\'s tests before you start the next. Stages 4 and 5 and the last ten minutes are things to say: code them only if there is time left.',
   brief: [
     '"Write a currency conversion service. `convert(amount, from, to)` returns the amount in the target currency. Exchange rates come from a third-party provider, which is stubbed for you. Assume the provider charges per call and is sometimes slow or down. Money is `BigDecimal`, never `double`."',
-    'The first two sentences are one multiplication. The fourth is the task. "Charges per call" becomes a cache in stage 2, and "sometimes down" becomes the decision in stage 3: what your callers get when you cannot get a rate. Ask about both before you type.',
   ],
   given: [
-    '`MINOR_UNITS`, a map from currency code to decimal places: GBP 2, USD 2, EUR 2, JPY 0, KWD 3. It is also the list of currencies you support. Any other code is unknown.',
-    '`RateProvider`, with one method: `rate(from, to)` is how many units of `to` one unit of `from` buys. So you multiply the amount by it. Every call is charged.',
-    'Two unchecked exceptions the provider throws. `ProviderDownException`: it is down or timed out, and trying again may work. `UnknownPairException`: it does not quote that pair, and trying again will not help. They are separate types so that you can retry one and not the other.',
-    '`Clock`, with `millis()`, and `FakeClock`, which starts at 0 and moves only when a test calls `advance(ms)`. Read time from the clock you are given and nowhere else.',
-    '`FakeProvider`, a table of quotes. `calls()` counts every call, failed ones included. `failNext(n)` makes the next n calls throw `ProviderDownException`. `holdCalls(gate)` makes calls wait on a latch for the concurrency stage.',
-    'In your part of the file, already written: `record Conversion(BigDecimal amount, BigDecimal rate, long rateAgeMillis, boolean stale)`, which is what `convert` returns, and `RateUnavailableException(message, cause)` for stage 3. Use them as they are.',
-    '`CurrencyConverter` with both constructors done and four fields stored: the provider, the clock, `ttlMillis` (60,000 by default) and `staleLimitMillis` (600,000). `convert` is a stub that throws `UnsupportedOperationException`. No later stage changes a signature.',
-    'The tests of all five stages. Each test gets a new clock, provider and converter. The provider quotes GBP/USD 1.2534, USD/GBP 0.7978, GBP/JPY 191.237 and USD/KWD 0.30712 unless the test calls `quotes(...)`. Every expectation ends in ` calls N`, the number of provider calls so far, so the cost of your code is checked in every test.',
-    'Wildcard imports for `java.math`, `java.util` and `java.util.concurrent`. You add no import in any stage. Set `STAGE` and run `main`: with the starter untouched, all four stage 1 tests fail and nothing crashes.',
+    '`MINOR_UNITS`: decimal places for GBP 2, USD 2, EUR 2, JPY 0, KWD 3. Any other code is unknown.',
+    '`RateProvider.rate(from, to)`: the units of `to` that one `from` buys, so you multiply. It throws `ProviderDownException` (retry) or `UnknownPairException` (never retry).',
+    '`FakeClock`, which starts at 0 and moves only on `advance(ms)`, and `FakeProvider`, which counts every call.',
+    '`record Conversion(amount, rate, rateAgeMillis, stale)`, `RateUnavailableException` and both constructors, storing `ttlMillis` 60,000 and `staleLimitMillis` 600,000. Only `convert` is a stub.',
+    'All 18 tests and every import. Each expectation ends in ` calls N`, the provider calls so far: read it first when a test fails.',
   ],
   ask: [
     {
       q: 'How should I round, and to how many places?',
-      why: 'JPY has no minor unit and KWD has three, so "two decimal places" is wrong for two of the five currencies in the table. The rounding mode decides which way an exact half goes, and so who keeps the fraction.',
-      assume: "Round once, at the end, to the target currency's minor units from `MINOR_UNITS`, half to even.",
-    },
-    {
-      q: 'How fresh does a rate have to be?',
-      why: 'The answer is the time to live of the cache, and it sets what you pay: at 60 seconds, at most one call a minute for each pair, however many conversions arrive.',
-      assume: '60 seconds, passed to the constructor so a test can use 1 second.',
+      why: 'JPY has no minor unit and KWD has three, so "two decimal places" is wrong for two of the five currencies. The mode decides who keeps an exact half.',
+      assume: "Round once, at the end, to the target currency's minor units, half to even.",
     },
     {
       q: 'If the provider is down, may I answer with the last rate I have, and how old may it be?',
-      why: 'It is a business decision between refusing customers and quoting an old price. It also decides the return type: if old rates are served, the result has to say how old.',
-      assume: "Yes, for up to 10 minutes, with the result flagged stale and carrying the rate's age so the caller can refuse it. Past 10 minutes the conversion fails.",
+      why: 'It is a business decision between refusing customers and quoting an old price, and it decides the return type: a served old rate has to say how old it is.',
+      assume: 'Yes, for up to 10 minutes, flagged stale with its age so the caller can refuse it. Past that, fail.',
     },
     {
-      q: 'What counts as bad input, and how should it fail?',
-      why: 'A negative amount is a refund in some systems and a bug in others. The answer fixes the first lines of `convert`, and whether a bad request can cost a provider call.',
-      assume:
-        '`IllegalArgumentException` for a null or negative amount and for a null or unknown code, before any provider call. Codes are case-sensitive, so `gbp` is unknown. Zero is allowed. The same currency on both sides returns the amount unchanged, with no call.',
+      q: 'How fresh does a rate have to be?',
+      why: 'It is the time to live of the cache and sets what you pay: at 60 seconds, at most one call a minute for each pair.',
+      assume: '60 seconds, passed to the constructor so a test can use 1 second.',
     },
     {
       q: 'Which failures should I retry, and how many times?',
-      why: 'Every attempt is charged. Retrying a provider that timed out can work. Retrying a pair it does not quote spends three calls on an answer that cannot change.',
-      assume: 'Retry `ProviderDownException` only, 3 attempts in all, with no wait between them in this exercise. Never retry `UnknownPairException`.',
+      why: 'Every attempt is charged. A timeout can pass on the next try; a pair the provider does not quote never will.',
+      assume: 'Retry `ProviderDownException` only, 3 attempts in all, with no wait in this exercise.',
     },
     {
-      q: 'Does the provider quote every pair?',
-      why: 'If it does not, you need a rule for deriving a rate: 1 over the opposite quote, or two quotes multiplied through a common currency. Each derived rate is extra calls and extra precision to look after.',
-      assume: 'No. Use the direct quote when there is one, then the inverse, then go through USD.',
+      q: 'What counts as bad input, and how should it fail?',
+      why: 'A negative amount is a refund in some systems and a bug in others, and the answer decides whether a bad request can cost a provider call.',
+      assume:
+        '`IllegalArgumentException` for a null or negative amount and a null or unknown code, before any call. `gbp` is unknown, zero is allowed, and the same currency both sides returns the amount unchanged.',
     },
     {
-      q: 'Will this be called from many threads?',
-      why: 'A plain map is fine on one thread. With many, a cold cache lets every thread miss at once, and each one pays for the same rate.',
-      assume: "One thread to start with. I'll make the cache safe, with one fetch for each pair, once the rest works.",
+      q: 'Can I start with one thread and a provider that quotes every pair?',
+      why: 'Each is a later stage: an unquoted pair needs a derived rate, and many threads on a cold cache each pay for the same rate.',
+      assume: "Yes to both. Once the core works I'll derive missing pairs, then make the cache safe with one fetch for each pair.",
     },
   ],
   outline: `convert(amount, from, to):
-  refuse a missing or negative amount
-  refuse a currency that is missing or not in the table
+  refuse a missing or negative amount, or an unknown currency
   same currency both sides: the amount as given, rate 1
   read the clock once
   try to get a fresh rate for the pair: answer, not stale
@@ -98,6 +97,7 @@ lookup: the direct quote; or 1 over the opposite quote;
         'same currency returns the amount without a call',
         'null, negative and unknown inputs are rejected',
       ],
+      regions: ['convert', 'require-known'],
       pseudocode: `convert(amount, from, to):
   if amount is missing or below zero: refuse
   if from or to is missing or not in the table: refuse
@@ -108,35 +108,12 @@ lookup: the direct quote; or 1 over the opposite quote;
   round converted once, half to even,
     to the minor units of the target currency
   answer converted, the rate, age 0, not stale`,
-      regions: ['convert', 'require-known'],
-      explain: [
-        'Do all the arithmetic in `BigDecimal` and round exactly once, on the last line. `multiply` is exact: the scales add, so `10.00` times `1.2534` is `12.534000` with nothing lost. `setScale` is then the only place a digit is dropped, and it drops to the target currency\'s places from `MINOR_UNITS`: 2 for USD, 0 for JPY, 3 for KWD. The obvious alternative is `double`, and it is wrong in a way no exception reports: `Math.round(1.005 * 100) / 100.0` is 1.0, not 1.01. Build every `BigDecimal` from a string.',
-        'The mode is `HALF_EVEN`. It changes one case only, an exact half, and sends it to the neighbour whose last digit is even: `1.12500` goes down to 1.12 and `1.13500` goes up to 1.14. `HALF_UP` gives 1.13 and 1.14. The code uses half to even because halves then go down as often as up. Take the 100 amounts 1.005, 1.015 and so on to 1.995: they sum to 150.000. Rounded half up they sum to 150.50, half a penny gained on every one. Rounded half to even they sum to 150.00. Anything that is not an exact half rounds the same under both.',
-        '`convert` returns a `Conversion`: the amount, the rate used, the rate\'s age in milliseconds and a stale flag. The starter fixed that type before any code was written, and you should be ready to defend it when asked "why not just return a `BigDecimal`?". By stage 3 the answer can rest on a rate that is ten minutes old, and a bare number cannot say so. Fixing the type now means stage 3 changes no signature and no earlier test. In this stage you fill in the rate, 0 and `false`.',
-        'Check before you spend. Both guards run before the provider is touched, so a bad request costs no call, and the test expects `calls 0`. The same currency returns early with the amount exactly as given, `10.00` back as `10.00`, and rate `BigDecimal.ONE`. `signum() < 0` rejects negatives and lets zero through.',
-        'Type it in this order: the amount guard, `requireKnown` and its two calls, the same-currency return, then the three lines of arithmetic. Each conversion costs one provider call. That is the problem stage 2 exists to fix.',
-      ],
-      lines: [
-        {
-          code: 'if (amount == null || amount.signum() < 0) {',
-          note: '`signum()` is the sign as -1, 0 or 1, so this reads "negative" with no second `BigDecimal` to compare against. Zero passes.',
-        },
-        {
-          code: '.setScale(MINOR_UNITS.get(to), RoundingMode.HALF_EVEN);',
-          note: 'The one place rounding happens. The mode is not optional: `setScale(2)` with no mode throws `ArithmeticException` as soon as a digit would be lost, which is the first conversion.',
-        },
-        {
-          code: 'return new Conversion(amount, BigDecimal.ONE, 0, false);',
-          note: 'Same currency: the amount as given, rate 1, and no call. Without this line the fake provider is asked for GBP/GBP and throws `UnknownPairException`.',
-        },
-        {
-          code: 'if (currency == null || !MINOR_UNITS.containsKey(currency)) {',
-          note: 'The null check has to come first. A map made by `Map.of` throws `NullPointerException` from `containsKey(null)`, and the test wants `IllegalArgumentException`.',
-        },
-      ],
+      choice:
+        'Do all the arithmetic in `BigDecimal`, built from strings, and round once, on the last line. `multiply` is exact (`10.00` times `1.2534` is `12.534000`), so `setScale(MINOR_UNITS.get(to), RoundingMode.HALF_EVEN)` is the only place a digit is dropped: 2 places for USD, 0 for JPY, 3 for KWD. `double` is wrong and nothing reports it: `Math.round(1.005 * 100) / 100.0` is 1.0. `HALF_EVEN` sends an exact half to the even neighbour, where `HALF_UP` would make `1.12500` 1.13. Both guards run before the provider, so a bad request costs no call, and `signum() < 0` lets zero through.',
+      say: "I'll keep everything in BigDecimal and round once, at the end, to the target currency's minor units, half to even so the halves don't all go one way.",
       trace: {
         caption:
-          'The product column is exact and only the result is rounded. JPY loses all five decimals. The two halves go opposite ways: `1.12500` down to 1.12, `1.13500` up to 1.14. The last two rows cost no call.',
+          'Only the result is rounded: JPY loses all five decimals, and the two halves go opposite ways. The last two rows cost no call.',
         head: ['Call', 'Provider call', 'Exact product', 'Result', 'Calls so far'],
         rows: [
           ['convert 10.00 GBP to JPY', 'rate(GBP, JPY) = 191.237', '`1912.37000`', '`1912`', '1'],
@@ -146,14 +123,13 @@ lookup: the direct quote; or 1 over the opposite quote;
           ['convert 10.00 GBP to GBP', 'none', 'none', '`10.00`, rate 1', '4'],
           ['convert -0.01 GBP to USD', 'none', 'none', 'threw IllegalArgumentException', '4'],
         ],
-        note: 'One converter, with a provider quoting GBP/USD 1.2534, GBP/JPY 191.237, GBP/EUR 1.125 and USD/EUR 1.135. Rows 3 and 4 are the test "a half rounds to the even neighbour". Rows 1 and 2 are two of the three conversions in "each currency rounds to its minor units".',
+        note: 'Rows 3 and 4 are the test "a half rounds to the even neighbour".',
       },
-      say: "I'll keep everything in BigDecimal and round once, at the end, to the target currency's minor units, half to even so the halves don't all go one way. I'm returning a small result record and not a bare amount, because later the caller will need to know which rate was used and how old it was.",
       pitfalls: [
-        'Using `double` anywhere, including `new BigDecimal(0.1)`: nothing throws, and a result is a penny out, as with `Math.round(1.005 * 100) / 100.0` giving 1.0.',
         'Rounding every currency to 2 places: the first test prints `12.53 1912.37 3.07` where it expects `12.53 1912 3.071`.',
-        'Leaving the rounding mode out of `setScale`: the first two tests print `threw ArithmeticException`.',
-        'Calling the provider before the guards: the bad-input test reports `calls 5` where it expects `calls 0`, and GBP to GBP throws `UnknownPairException` because the fake has no such quote.',
+        'Leaving the mode out of `setScale`: the first two tests print `threw ArithmeticException`.',
+        'Calling `containsKey` before the null check: a `Map.of` map throws `NullPointerException` on a null key, and the test wants `IllegalArgumentException`.',
+        'Calling the provider before the guards: the bad-input test reports `calls 5` where it expects `calls 0`, and GBP to GBP throws `UnknownPairException`.',
       ],
     },
     {
@@ -166,6 +142,7 @@ lookup: the direct quote; or 1 over the opposite quote;
         'rate is fetched again at exactly the ttl',
         'reverse pair is a separate entry',
       ],
+      regions: ['pair-and-cached-rate', 'cache', 'convert', 'apply', 'fresh-rate', 'fetch'],
       pseudocode: `the converter also holds:
   a map from (from, to) to (rate, time fetched)
 
@@ -189,35 +166,12 @@ apply(amount, to, entry, now, stale):
   round amount times the entry's rate, as in stage 1
   answer it with the rate, the stale flag,
     and age = now minus the time fetched`,
-      regions: ['pair-and-cached-rate', 'cache', 'convert', 'apply', 'fresh-rate', 'fetch'],
-      explain: [
-        'The decision is what the map holds. The key is the ordered pair and the value is the rate with **the time it was fetched**, not the time it expires. One timestamp then answers three things: whether the rate is fresh (this stage), whether it is too old to serve at all (stage 3), and its age for the result. An expiry time answers only the first. Both are records. `Pair` gets `equals` and `hashCode` for free, which is what makes it usable as a `HashMap` key, and it cannot be built wrong by a typo in a separator the way a `"GBP/USD"` string key can.',
-        'A rate is fresh while `now - fetchedAt < ttlMillis`. At 59,999 ms it is reused; at 60,000 it is fetched again. An expired entry is not removed. The next successful fetch writes over it, and until then it stays in the map, because stage 3 will need it.',
-        'Read the clock once at the top of `convert` and pass `now` down. The freshness check, the new entry\'s timestamp and the age in the result then all describe one instant. Use the clock you were given: with `System.currentTimeMillis()` the tests cannot move time and nothing ever expires.',
-        'What changed since stage 1: the arithmetic moved into `apply`, and `convert` ends in three lines that build the pair, read the clock and call `apply(amount, to, freshRate(pair, now), now, false)`. `apply` takes the stale flag as an argument already, so stage 3 calls it with `true` and changes nothing inside. `fetch` is one line around the provider. It looks pointless now. It is where stage 3 puts the retry loop and stage 4 puts the routes, and `freshRate` is untouched by both.',
-        'Cost: one `HashMap` lookup for each conversion, and one entry for each pair ever asked for, which is at most 20 with five currencies. The price of caching is in the trace: at 59,999 ms the provider already quotes 1.30 and the caller is still given 12.53.',
-      ],
-      lines: [
-        {
-          code: 'if (cached != null && now - cached.fetchedAt() < ttlMillis) {',
-          note: 'Strictly less than, so "exactly the time to live" is expired. With `<=` the test "rate is fetched again at exactly the ttl" gets `12.53 age 1000 stale false calls 1` where it expects `13.00 age 0 stale false calls 2`.',
-        },
-        {
-          code: 'private record Pair(String from, String to) {}',
-          note: 'The ordered pair as a key. A record compares by its fields, so two `Pair`s with the same codes are the same key, and GBP/USD is a different key from USD/GBP.',
-        },
-        {
-          code: 'long now = clock.millis();',
-          note: 'The only reading of the clock in a conversion. Everything below takes `now` as an argument.',
-        },
-        {
-          code: 'now - r.fetchedAt(), stale);',
-          note: 'The age in the result is worked out here from the stored fetch time. A hit a millisecond before expiry reports `age 59999`.',
-        },
-      ],
+      choice:
+        'Key the map by the ordered pair and store the rate with **the time it was fetched**, not the time it expires: one timestamp then gives freshness now, the stale limit in stage 3 and the age in the result. Make both records, so `Pair` has `equals` and `hashCode` and works as a `HashMap` key. Fresh is `now - cached.fetchedAt() < ttlMillis`, strictly less, so at exactly 60,000 ms it is fetched again. Read the clock once in `convert` and pass `now` down. Leave an expired entry in the map, because stage 3 serves it, and keep `fetch` as its own one-line method, because the retry loop goes there.',
+      say: "I'll key the cache by the ordered pair and store the rate with the time I fetched it, not an expiry time, because I'll want its age later.",
       trace: {
         caption:
-          'Row 4 is the cost of caching: the provider already quotes 1.30 and the answer is still 12.53. One millisecond later the entry has expired, and the same call costs a second provider call and returns 13.00.',
+          'Row 4 is the cost of caching: the provider already quotes 1.30 and the answer is still 12.53. One millisecond later the same call costs a second provider call and returns 13.00.',
         head: ['t (ms)', 'Event', 'Cache lookup', 'Result', 'Calls', 'Cache after'],
         rows: [
           ['0', 'convert 10.00 GBP to USD', 'miss', '`12.53 age 0`', '1', 'GBP/USD = 1.2534 @0'],
@@ -227,14 +181,12 @@ apply(amount, to, entry, now, stale):
           ['60000', 'convert 10.00 GBP to USD', 'age 60000 >= ttl, expired', '`13.00 age 0`', '2', 'GBP/USD = 1.30 @60000'],
           ['60000', 'convert 10.00 USD to GBP', 'miss', '`7.98 age 0`', '3', '+ USD/GBP = 0.7978 @60000'],
         ],
-        note: 'One converter with the default 60,000 ms time to live. Rows 1 and 2 are the test "rate is reused a millisecond before the ttl". The test "rate is fetched again at exactly the ttl" does what rows 3 to 5 do, with a time to live of 1,000 ms. The last row is the second conversion in "reverse pair is a separate entry".',
+        note: 'The default 60,000 ms time to live. The test "rate is fetched again at exactly the ttl" does rows 3 to 5 with 1,000 ms.',
       },
-      say: "I'll key the cache by the ordered pair and store the rate with the time I fetched it, not an expiry time, because I'll want its age later. Fresh means strictly younger than the time to live, so at exactly 60 seconds I fetch again.",
       pitfalls: [
-        'Trusting two passes out of three: with no cache at all, "rate is fetched again at exactly the ttl" and "reverse pair is a separate entry" both pass. Only "rate is reused a millisecond before the ttl" shows a cache is there.',
-        'Keying the map by an unordered pair, or by `from` alone: 10.00 USD to GBP is answered with the GBP/USD rate, and the test prints `12.53 calls 1` where it expects `7.98 calls 2`.',
-        'Calling `System.currentTimeMillis()` in place of the injected clock: advancing the fake clock does nothing, no entry expires, and two of the three tests fail, one of them on the age alone.',
-        'Storing an expiry time, or deleting an entry once it has expired: this stage passes, and stage 3 then has no age to report and no last rate to fall back on.',
+'Trusting two passes out of three: with no cache at all, only "rate is reused a millisecond before the ttl" fails.',
+        'Writing `<=` at the time to live: "rate is fetched again at exactly the ttl" gets `12.53 age 1000 stale false calls 1` where it expects `13.00 age 0 stale false calls 2`.',
+        'Keying by an unordered pair, or by `from` alone: USD to GBP is answered with the GBP/USD rate, `12.53 calls 1` where the test expects `7.98 calls 2`.',
       ],
     },
     {
@@ -249,6 +201,7 @@ apply(amount, to, entry, now, stale):
         'past the stale limit the conversion fails',
         'down with nothing cached fails after 3 calls',
       ],
+      regions: ['retry-limit', 'convert', 'fetch'],
       pseudocode: `convert(amount, from, to):
   the checks and the same-currency answer, as before
   now = read the clock, once
@@ -268,35 +221,12 @@ fetch(pair):
       (real code would wait here, longer each time)
   throw the last failure
   (an unknown pair is not caught: it leaves at once)`,
-      regions: ['retry-limit', 'convert', 'fetch'],
-      explain: [
-        'Up to here the task was arithmetic and a map. **This is the stage it was set for**: your supplier fails, and you decide what your own callers get. There are three possible answers. Fail every conversion. Serve the old rate and say nothing. Serve the old rate and say so. This code takes the third, and "stale" has an exact meaning in it: the rate is past its 60-second time to live, a refresh was tried 3 times and failed, and this is the last rate the provider did give. An expired rate is never served just because it is there. `convert` always tries to refresh first.',
-        'There are two time limits and their boundaries differ. The time to live is exclusive: a rate is fresh while its age is under 60,000 ms, and at exactly 60,000 it is fetched again. The stale limit is inclusive: an old rate may be served while its age is at most 600,000 ms, and at 600,001 the conversion fails. So from 60 seconds to 10 minutes a rate is served only when the provider is down, and after 10 minutes not at all. Age runs from the last successful fetch. A failed refresh leaves the entry untouched, so an outage cannot make an old rate look newer.',
-        "The result carries the rate's age because whether an old rate will do is the caller's decision, not the converter's. A screen showing an indicative price can show it with \"rate from 61 seconds ago\". A payment can read `stale` and refuse. Both use the same method. This is where stage 1's return type earns its place: `stale` and `rateAgeMillis` were already in `Conversion`, so no signature and no earlier test changes. With a bare `BigDecimal` you would now be choosing between a new method and a stale answer nobody can detect.",
-        '`fetch` makes up to 3 attempts and catches `ProviderDownException` only. `UnknownPairException` is not caught, so it leaves on the first attempt: the provider will not start quoting the pair because you asked again, and each attempt is charged. After the third failure `fetch` rethrows the last one. `convert` catches it and looks in the cache, which already is the store of last good rates, so there is no second map. If nothing usable is there it throws `RateUnavailableException` with the pair in the message and the original failure as the cause.',
-        'The cost shows in the trace. Nothing remembers that the provider is down, so every conversion during an outage makes 3 failed calls before it answers: the count goes 1, 4, then 5, 8, 11. There is no wait between attempts either; a comment marks where real code would back off. Say both aloud. The fix for the first is a circuit breaker, and it is the usual follow-up.',
-      ],
-      lines: [
-        {
-          code: 'for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {',
-          note: 'Three attempts in all: counting from 1 needs `<=`. With `<` there are 2 attempts, and four of the five tests fail, three of them only on the call count.',
-        },
-        {
-          code: '} catch (ProviderDownException e) {',
-          note: 'Name the one failure that can recover. Catching `RuntimeException` here would retry an unknown pair 3 times and report it as "try later". No test would notice.',
-        },
-        {
-          code: 'if (last == null || now - last.fetchedAt() > staleLimitMillis) {',
-          note: 'The null check covers "down with nothing cached". `>` makes the limit inclusive, the opposite sense to the `<` of the time to live: at exactly 600,000 ms the rate is still served.',
-        },
-        {
-          code: '"no usable rate for " + from + "/" + to, e);',
-          note: 'The pair goes in the message and the `ProviderDownException` goes in as the cause, so whoever reads the log sees which pair failed and why.',
-        },
-      ],
+      choice:
+        "Serve the old rate and say so; the alternatives are failing every conversion or quoting an old price in silence. `convert` always tries to refresh first, and only after `fetch` has failed 3 times does it read `cache.get(pair)`. **The two limits have opposite boundaries**: the time to live is exclusive (`< ttlMillis`, so 60,000 ms fetches again) and the stale limit inclusive (`> staleLimitMillis` fails, so 600,000 is served and 600,001 throws). Age runs from the last successful fetch, because a failed refresh leaves the entry alone. `fetch` catches `ProviderDownException` only: `UnknownPairException` leaves on the first attempt, since every attempt is charged.",
+      say: "This is a business decision and I'd confirm it: if the provider's still down after three attempts I serve the last rate for up to 10 minutes, flagged stale with its age, and the caller decides.",
       trace: {
         caption:
-          'Every answer during an outage costs 3 failed calls: 1 to 4, 5 to 8, 8 to 11. Age is counted from the last successful fetch, at t = 61000, and one millisecond separates a stale answer at age 600000 from a failure at 600001.',
+          'Every answer during an outage costs 3 failed calls: 1 to 4, 5 to 8, 8 to 11. Age counts from the last successful fetch, at t = 61000, and one millisecond separates a stale answer from a failure.',
         head: ['t (ms)', 'Event', 'Inside', 'Result', 'Calls'],
         rows: [
           ['0', 'convert 10.00 GBP to USD', 'miss, fetching', '`12.53 age 0 stale false`', '1'],
@@ -308,14 +238,13 @@ fetch(pair):
           ['661001', 'provider down for next 3 calls', '', '', ''],
           ['661001', 'convert', 'expired (age 600001); 3 attempts fail; age 600001 vs limit 600000', 'threw RateUnavailableException', '11'],
         ],
-        note: 'One converter with the default limits, converting 10.00 GBP to USD each time. Rows 1 to 4 are the test "down provider serves a stale rate, then a fresh one". The two limit tests reach ages 600000 and 600001 on a new converter by advancing the clock from 0.',
+        note: 'Rows 1 to 4 are the test "down provider serves a stale rate, then a fresh one".',
       },
-      say: "This one's a business decision and I'd confirm it: if the provider's down I'll serve the last rate for up to 10 minutes, flagged stale and with its age, so the caller decides whether that's good enough. I retry only the failure that can recover, three attempts in all, and I never retry an unknown pair.",
       pitfalls: [
-        'Reading `last.fetchedAt()` with nothing cached: "down with nothing cached fails after 3 calls" reports `threw NullPointerException` where it expects `threw RateUnavailableException`.',
+        'Reading `last.fetchedAt()` with nothing cached: "down with nothing cached fails after 3 calls" reports `threw NullPointerException`.',
         'Writing `attempt < MAX_ATTEMPTS` from 1: "two failures then a success is fresh" prints `threw RateUnavailableException`, and three more tests are one call short.',
         'Using `>=` for the stale limit because the time to live used `<`: "stale rate is served at exactly the stale limit" prints `threw RateUnavailableException`.',
-        'Catching `RuntimeException` in the retry loop: all five tests still pass, an unquoted pair costs 3 paid calls, and the caller is told to try again later for a pair that will never work.',
+        'Catching `RuntimeException` in the retry loop: all five tests still pass, and an unquoted pair costs 3 paid calls where it should cost 1.',
       ],
     },
     {
@@ -328,6 +257,7 @@ fetch(pair):
         'cross rate goes through usd and is cached',
         'intermediate amount is not rounded',
       ],
+      regions: ['base-currency', 'fetch', 'lookup'],
       pseudocode: `fetch(pair): as before, but each attempt is lookup(from, to)
 
 lookup(from, to):
@@ -342,35 +272,17 @@ directOrInverse(from, to):
   if it does not quote that pair:
     answer 1 divided by its rate for (to, from),
       to 34 significant digits`,
-      regions: ['base-currency', 'fetch', 'lookup'],
-      explain: [
-        'Derive a rate, not an amount. `lookup` returns one rate for the pair that was asked for, with every digit it has, and the single rounding in `apply` stays the only one. The obvious alternative converts the amount leg by leg and rounds in the middle. Take 7 JPY to EUR with JPY/USD at 0.0066 and USD/EUR at 0.92. Leg by leg, 7 JPY is 0.0462 USD, which rounds to 0.05 USD, which is 0.0460 EUR, which rounds to 0.05. As one rate, 0.0066 times 0.92 is 0.006072, 7 times that is 0.042504, and the answer is 0.04.',
-        'The inverse is a division, and `BigDecimal` division needs to be told when to stop. `BigDecimal.ONE.divide(x)` with one argument throws `ArithmeticException` when the result has no exact decimal form, and 1 over 0.75 has none. `MathContext.DECIMAL128` gives 34 significant digits. Those digits are doing work: 300.00 GBP at 1 over 0.75 should be 400.00 USD, and it is with 34 digits. Cut the inverse to 1.3333 and it is 399.99.',
-        'The order is direct, then inverse, then through USD, where each of the two legs may itself be direct or inverse. Direct comes first because a quoted rate is the provider\'s price for that pair. When one side is already USD there is no third route, so the `UnknownPairException` is rethrown. It is still never retried.',
-        'What changed since stage 3: one line of `fetch`, which now calls `lookup` where it called the provider, plus the two new methods and the `BASE` constant. The cache, the retry loop and the stale path are untouched. The retry wraps the whole lookup, so a `ProviderDownException` on any leg starts the route again. The derived rate is stored under the pair that was asked for, and `Conversion.rate` reports it: 187.65375 for GBP to JPY from 1.25 and 150.123.',
-        'Cost, in paid calls: 2 for an inverse, 4 for a cross rate (the direct quote, its inverse, then two legs), and up to 6 when both legs need inverting. A pair with no route costs 4 calls and throws `UnknownPairException`. Only the asked pair is cached, so a second GBP to JPY costs nothing, and GBP to JPY and GBP to EUR each pay for their own GBP/USD leg.',
+      verbal: [
+        "I'd derive one rate for the pair and never convert the amount in steps, so the only rounding is still the last line.",
+        "I'd try the direct quote, then 1 over the opposite quote to 34 digits, then two legs through USD multiplied exactly.",
+        'An inverse costs 2 paid calls and a cross rate 4 to 6, and the derived rate is cached under the pair I was asked for.',
       ],
-      lines: [
-        {
-          code: 'return lookup(pair.from(), pair.to());',
-          note: 'The only line of `fetch` that changed. Everything above `fetch` still sees one rate for one pair.',
-        },
-        {
-          code: 'return BigDecimal.ONE.divide(provider.rate(to, from),',
-          note: 'The arguments are swapped on purpose: `to, from` asks for the opposite quote. The next line passes the `MathContext`; without it this throws on the first rate such as 0.75.',
-        },
-        {
-          code: 'if (from.equals(BASE) || to.equals(BASE)) {',
-          note: 'With USD on one side, "through USD" is the pair that has just failed in both directions. Without this guard the code asks for it twice more and pays for both calls. No test notices.',
-        },
-        {
-          code: '.multiply(directOrInverse(BASE, to));',
-          note: 'An exact product of the two legs with no `setScale`. Rounding here is the mistake the third test is written to catch.',
-        },
-      ],
+      choice:
+        "`lookup` returns one rate for the asked pair with every digit it has, so the `setScale` in `apply` stays the only rounding; converting leg by leg rounds in the middle, and the trace shows that giving 0.05 where the answer is 0.04. The inverse is a division, and `BigDecimal.ONE.divide(x)` with one argument throws `ArithmeticException` on 1 over 0.75, so pass `MathContext.DECIMAL128` for 34 digits. With USD already on one side there is no third route, so the `UnknownPairException` is rethrown. One line of `fetch` changes, and the retry now wraps the whole `lookup`.",
+      say: "Direct quote first, then one over the opposite quote, then through US dollars, and nothing is rounded until the end.",
       trace: {
         caption:
-          'The rate column keeps every digit and only the result is rounded. The two comparison rows show what early rounding costs: 0.05 where the answer is 0.04, and 399.99 where it is 400.00. The last row is a pair with no route: 4 paid calls, then the failure, with no retry.',
+          'Only the result is rounded. The two comparison rows show what early rounding costs: 0.05 for 0.04, and 399.99 for 400.00. The last row has no route: 4 paid calls, then the failure, with no retry.',
         head: ['Event', 'Provider calls, in order', 'Rate used', 'Result', 'Calls'],
         rows: [
           ['only USD/GBP 0.75; convert 300.00 GBP to USD', 'rate(GBP, USD) unknown; rate(USD, GBP) = 0.75, inverted', '`1.333333333333333333333333333333333`', '`400.00`', '2'],
@@ -381,13 +293,11 @@ directOrInverse(from, to):
           ['for comparison: inverse at 4 decimal places', '1.3333; 300.00 x 1.3333', '', '`399.99`', ''],
           ['nothing quoted; convert 10.00 GBP to EUR', 'rate(GBP, EUR) unknown; rate(EUR, GBP) unknown; rate(GBP, USD) unknown; rate(USD, GBP) unknown', '', 'threw UnknownPairException', '4'],
         ],
-        note: 'Each row starts a new converter and provider except row 3. Rows 2 and 3 are the test "cross rate goes through usd and is cached" and row 4 is "intermediate amount is not rounded". The two comparison rows are arithmetic, not runs of this code. No test covers the last row.',
+        note: 'Each row is a new converter except row 3. The comparison rows are arithmetic, not runs. No test covers the last row.',
       },
-      say: "I'll derive one rate for the pair and not convert the amount in steps, so nothing is rounded until the end. Direct quote first, then one over the inverse to 34 digits, then through US dollars, and I cache the derived rate under the pair I was asked for.",
       pitfalls: [
         'Dividing with no `MathContext`: "inverse pair is used when the direct one is missing" prints `threw ArithmeticException`.',
-        'Rounding the inverse to a few places to make it look tidy: the same test prints `13.33 399.99` where it expects `13.33 400.00`.',
-        'Converting to USD, rounding to cents, then converting again: 7 JPY becomes 0.05 EUR where the answer is 0.04, and "intermediate amount is not rounded" fails.',
+        'Rounding the inverse to a few places: the same test prints `13.33 399.99` where it expects `13.33 400.00`.',
         'Catching `UnknownPairException` in the retry loop "to be safe": a pair with no route then costs 12 paid calls where it cost 4, and no test fails.',
       ],
     },
@@ -401,6 +311,7 @@ directOrInverse(from, to):
         'an expired rate is refreshed by one call',
         'two pairs at once make one call each',
       ],
+      regions: ['cache', 'fresh-rate', 'convert'],
       pseudocode: `the map becomes one that is safe for many threads
 
 freshRate(pair, now):
@@ -417,35 +328,19 @@ convert, when the provider is down:
   stale = last is 60 s old or more
     (another thread may have loaded it a moment ago)
   answer apply(amount, to, last, now, stale)`,
-      regions: ['cache', 'fresh-rate', 'convert'],
-      explain: [
-        "The decision is where \"look, then load\" becomes one step. In stage 4's `freshRate` a thread reads the map, finds nothing and goes to fetch. A hundred threads all do the read before any of them has stored a rate, so the stage 4 code made 100 provider calls on a cold cache. A thread-safe map alone does not help: each `get` and each `put` is safe, and the gap between them is still there. `cache.compute(pair, fn)` on a `ConcurrentHashMap` closes the gap. It runs `fn` for that key while other `compute` calls on the same key wait, so the first thread fetches and the other 99 then find a fresh entry and return it. One call.",
-        'It has to be `compute`, not `computeIfAbsent`, which runs its function only when the key has no entry. An expired rate is still an entry, so it would never be refreshed. `compute` hands the function the old entry and lets it decide. When the function throws, `compute` passes the exception on and leaves the old entry as it was, which is exactly what the stale path in `convert` needs: `cache.get(pair)` still finds the last good rate.',
-        "Two alternatives are worth naming aloud. `synchronized` on `convert` is correct, is the least code and passes all three tests, but one slow GBP/USD fetch then blocks every other pair, cache hits included. A map of `CompletableFuture`s, where the first caller starts the fetch and the rest wait on its future with a timeout, is what production wants and is too much to type here. `compute` sits between them, and it has a cost of its own: every caller of a pair waits while one thread makes up to 3 slow attempts, including callers who would have been happy with a stale rate.",
-        '**This stage was changed after its tests first passed, because a race was found.** Take a cold cache and a provider that is down for exactly 3 calls. Thread A loads, fails 3 times, leaves `compute` and heads for the stale path. Before A reads `cache.get(pair)`, thread B loads and succeeds. A finds B\'s brand-new rate. The first version passed `true` there, as stages 3 and 4 do, so A returned a rate fetched an instant earlier flagged stale with age 0. In 300 runs of that scenario, 149 produced one such answer. The fix is one line on the stale path, `boolean stale = now - last.fetchedAt() >= ttlMillis;`, which applies the same rule as the fresh path: stale means at least 60 seconds old, whoever loaded the rate. After the fix, none of 300 runs produced it: in 150 all 100 threads got a fresh 12.53, and in 150 it was 99 fresh and one `RateUnavailableException`, which is right when A looks before anyone has loaded. Every run made 4 provider calls.',
-        'No deterministic test covers that fix. Which outcome you get depends on which thread reaches the map first, and the fake clock and the latch cannot force the order. So the three tests of this stage all use a healthy provider, and the fix rests on reading the code and on that 300-run experiment. If you are asked how you know stage 5 is right, say that: the call counts are tested, the failing-load case is reasoned and measured, not tested.',
+      verbal: [
+        "A thread-safe map isn't enough, because the check and the fetch have to be one atomic step for each pair.",
+        "I'd use `compute` on a `ConcurrentHashMap`, so one thread fetches while the others asking for that pair wait and then find the fresh rate.",
+        'The cost is that every caller of that pair waits through up to 3 slow attempts, with no timeout.',
       ],
-      lines: [
-        {
-          code: 'private final Map<Pair, CachedRate> cache = new ConcurrentHashMap<>();',
-          note: 'The one-at-a-time promise comes from this class. `HashMap` has a `compute` too, and on a `HashMap` nothing stops two threads running it together.',
-        },
-        {
-          code: 'return cache.compute(pair, (key, old) ->',
-          note: '`old` is the current entry, or null when there is none. Whatever the function returns becomes the entry and is also what `compute` returns.',
-        },
-        {
-          code: 'old != null && now - old.fetchedAt() < ttlMillis',
-          note: 'The same freshness test as stage 2, now made inside the atomic step. The 99 threads that waited run it, see the new entry and keep it.',
-        },
-        {
-          code: 'boolean stale = now - last.fetchedAt() >= ttlMillis;',
-          note: 'The race fix. `>=` here is the exact opposite of the `<` above, so every entry is fresh by one test or stale by the other, and never both.',
-        },
-      ],
+      caveat:
+        'The stale-flag fix has no deterministic test: a new rate went out flagged stale in 149 of 300 runs of the race before it, and in none of 300 after.',
+      choice:
+        "`cache.compute(pair, fn)` on a `ConcurrentHashMap` runs `fn` for a key while other `compute` calls on that key wait, which closes the gap that `get` then `put` leaves even on a thread-safe map. `computeIfAbsent` won't do, because an expired rate is still an entry and would never be refreshed. When `fn` throws, the old entry stays, and the stale path still finds it. That path now sets `stale = now - last.fetchedAt() >= ttlMillis`, the exact opposite of the fresh test, because another thread may have loaded a new rate since this fetch failed.",
+      say: "I'm using compute so that the check and the load are one atomic step for each pair, and one thread loads while the rest wait.",
       trace: {
         caption:
-          'Read the calls column. The stage 4 code pays 100 and then 99; the stage 5 code pays 1 each time. In the two scenarios where a load fails, the answers differ from run to run, the calls do not, and no answer is flagged stale at age 0.',
+          'The stage 4 code pays 100 calls and then 99; the stage 5 code pays 1 each time. Rows 6 and 7 are one scenario run twice, with a load that fails: the answers differ, the calls do not, and no answer is flagged stale at age 0.',
         head: ['Code', 'Scenario, 100 threads', 'Answers', 'Provider calls', 'Loader ran on'],
         rows: [
           ['stage 4', 'cold cache, GBP to USD', '100 × `12.53 age 0 stale false`', '100', '100 threads'],
@@ -455,16 +350,12 @@ convert, when the provider is down:
           ['stage 5', 'new converter; 50 threads GBP to USD, 50 USD to GBP', '50 × `12.53 age 0 stale false`, 50 × `7.98 age 0 stale false`', '2', 'thread 1 (GBP/USD), thread 2 (USD/GBP)'],
           ['stage 5', 'new converter, cold; provider down for 3 calls', '99 × `12.53 age 0 stale false`, 1 × threw RateUnavailableException', '4', 'thread 1 (3 failures), thread 98 (success)'],
           ['stage 5', 'the same scenario, another run', '100 × `12.53 age 0 stale false`', '4', 'thread 1 (3 failures), thread 100 (success)'],
-          ['stage 5', 'new converter, rate cached at t = 0; at t = 61000 provider down for 3 calls', '100 × `12.53 age 0 stale false`', '5', 'thread 1 (3 failures), thread 100 (success)'],
-          ['stage 5', 'the same scenario, another run', '99 × `12.53 age 0 stale false`, 1 × `12.53 age 61000 stale true`', '5', 'thread 1 (3 failures), thread 100 (success)'],
         ],
-        note: 'Taken from the stage 5 file as it stands now, and the stage 4 file for the first two rows, each with a temporary print in the loader. Threads are numbered 1 to 100 in the order they were started; which thread loads varies between runs. Rows 3 to 5 are the three tests. No test covers rows 6 to 9. In row 9 the thread whose load failed read the map before another thread had refreshed it, so it served the old rate, correctly flagged; in row 8 it read afterwards.',
+        note: 'Rows 3 to 5 are the three tests; no test covers rows 6 and 7. Which thread loads varies between runs.',
       },
-      say: "A thread-safe map isn't enough here, because the check and the load have to be one atomic step for each pair. I'll use compute on a ConcurrentHashMap so one thread loads and the rest wait for its result. The cost is that the waiters block while the provider is slow.",
       pitfalls: [
-        'Swapping in `ConcurrentHashMap` and keeping `get` then `put`: nothing throws, every answer is right, and the first test reports `calls 100` where it expects `calls 1`.',
-        'Using `computeIfAbsent`: the cold-cache test passes and an expired rate is never refreshed, so "an expired rate is refreshed by one call" reports `calls 1` and four tests from stages 2 and 3 fail with it.',
-        'Declaring `convert` `synchronized` and stopping: all 18 tests pass, and in production one slow fetch holds up every conversion of every pair.',
+        'Swapping in `ConcurrentHashMap` and keeping `get` then `put`: every answer is right, and the first test reports `calls 100` where it expects `calls 1`.',
+        'Declaring `convert` `synchronized` and stopping: all 18 tests pass, and one slow fetch holds up every conversion of every pair.',
         'Leaving `true` on the stale path: all 18 tests pass, and now and then a rate loaded a moment ago by another thread goes out flagged stale with age 0.',
       ],
     },
@@ -472,135 +363,64 @@ convert, when the provider is down:
   followUps: [
     {
       q: 'How did you test expiry and failure without sleeping?',
-      a: [
-        'The clock and the provider are both passed in. The fake clock moves only when a test advances it, and the fake provider counts calls and fails on demand.',
-        'That lets me test each limit at the exact millisecond: 59,999 and 60,000 for the time to live, 600,000 and 600,001 for the stale limit.',
-        "For threads I use latches with a bounded wait, and I'd run the test a couple of hundred times before I trusted it.",
-      ],
+      a: "Both the clock and the provider are passed in, so a test moves time itself and makes the provider fail on demand, and each limit is checked at its exact millisecond. For threads I use latches with a bounded wait, and I'd run that test a couple of hundred times before trusting it.",
+    },
+    {
+      q: 'Why does `convert` return a record and not a `BigDecimal`?',
+      a: "Because by stage 3 the answer can rest on a rate that's ten minutes old, and a bare number can't say so. With the rate's age and a stale flag in the result, a price display can show it and a payment can refuse it, and the outage changed no signature.",
     },
     {
       q: 'Why half to even, and who keeps the rounding remainder?',
-      a: [
-        'Half to even sends an exact half to the even neighbour, so over many conversions the halves go down as often as up and neither side gains.',
-        "On any one conversion somebody still keeps a fraction of a penny. I'd want that decided and written down, and the difference posted to a rounding account so the books balance.",
-        "If the product or a regulator names a mode, I use theirs. Whichever it is, it's set in one place and used everywhere.",
-      ],
-    },
-    {
-      q: 'Why not always derive the rate through USD, even when there is a direct quote?',
-      a: [
-        "Because the direct quote is the provider's price for that pair, and two quotes multiplied together are a different number.",
-        "Each leg carries its own spread, so GBP to USD times USD to EUR won't in general equal a quoted GBP to EUR.",
-        "So I derive only when there's no direct quote, and I'd record on the result that the rate was derived. The cost is more to fetch: 20 ordered pairs for five currencies, against 4 rates from one base.",
-      ],
+      a: "Halves then go down as often as up: the 100 amounts 1.005, 1.015 and so on to 1.995 sum to 150.00 that way and to 150.50 rounded half up. Somebody still keeps a fraction of a penny each time, so I'd want that decided and posted to a rounding account. If the product or a regulator names a mode, I use theirs.",
     },
     {
       q: 'The provider is down for an hour. What does this code do?',
-      a: [
-        'For the first 10 minutes every pair it has seen is answered with a stale rate. After that every conversion fails.',
-        'The weakness is cost. Nothing remembers that the provider is down, so each conversion makes 3 failed calls before it answers.',
-        "I'd add a circuit breaker: after a few failures stop calling for a short while and go straight to the stale rate, then let one trial call through. I'd also wait between retries, longer each time and with jitter.",
-      ],
+      a: "For 10 minutes every pair it has seen is answered stale, then every conversion fails. Nothing remembers the provider is down, so each conversion pays for 3 failed calls with no wait between them. I'd add a [circuit breaker](#/p/circuit-breaker) that goes straight to the stale rate, and backoff with jitter and a timeout on each call.",
+    },
+    {
+      q: 'Why not always derive the rate through USD?',
+      a: "Because a direct quote is the provider's price for that pair, and each leg of a cross rate carries its own spread, so two quotes multiplied won't in general equal it. I derive only when there's no direct quote. Only the asked pair is cached, so GBP to JPY and GBP to EUR each pay for their own GBP/USD leg.",
+    },
+    {
+      q: 'What would you change before this went to production?',
+      a: "The money model first: a buying and a selling rate for each pair with a spread or a fee, and currency as a type such as `java.util.Currency`, with minor units loaded from the ISO 4217 table. Then the gaps: a zero rate throws `ArithmeticException` when inverted, and 1.005 GBP to GBP comes back as 1.005, unchecked against the minor units. The cache never evicts, which is fine at 20 pairs.",
     },
     {
       q: 'How would you use several providers?',
-      a: [
-        "I'd put them behind the same `RateProvider` interface as one provider that tries each in order, with a timeout and a breaker for each.",
-        "It fails over when a provider is down or too slow. The stale rate stays as the last resort, after all of them have failed.",
-        "The cost is that providers disagree by a little, so I'd record which one each rate came from, and I wouldn't switch a customer between them in the middle of one purchase.",
-      ],
+      a: "Behind the same `RateProvider` interface, as one provider that tries each in order with a timeout and a breaker for each; the stale rate stays the last resort. Providers disagree by a little, so I'd record which one each rate came from and never switch a customer between them in the middle of one purchase.",
     },
     {
-      q: 'At 10,000 conversions a second, would you still fetch when a request arrives?',
-      a: [
-        "No. Rates change far more slowly than requests arrive, so I'd fetch every rate on a timer, every few seconds, into one snapshot in memory and serve every request from that.",
-        'Provider cost then follows the timer and not the traffic, and no request waits on the provider.',
-        'The cost is paying for pairs nobody asks for. The staleness rule stays: if the refresh keeps failing, the snapshot is served flagged, up to the same 10-minute limit.',
-      ],
-    },
-    {
-      q: 'And with several instances of the service?',
-      a: [
-        'Left alone, each instance fetches for itself: N times the cost, and N slightly different rates for the same pair at the same moment.',
-        "I'd have one fetcher publish each snapshot, with an id and a time, to a shared store or a topic, and every instance reads that.",
-        'The cost is one more moving part, so each instance keeps its last snapshot and applies the stale limit to it if the feed stops.',
-      ],
+      q: 'At 10,000 conversions a second on several instances, would you still fetch when a request arrives?',
+      a: "No: rates change far more slowly than requests arrive, so one fetcher loads every rate on a timer, every few seconds, and publishes a snapshot that each instance serves from memory. Provider cost follows the timer, not the traffic, and every instance quotes the same rate. The cost is paying for pairs nobody asks for, and the 10-minute limit still applies if the feed stops.",
     },
     {
       q: 'A customer disputes a conversion next month. What did you need to store?',
-      a: [
-        'With the transaction: the rate, which provider it came from, when it was fetched, whether it was stale or derived and from which legs, the rounding mode and the unrounded amount.',
-        '`Conversion` already carries the rate, its age and the stale flag. Production adds the source and an id.',
-        "Without those I can't show the customer how the number was reached, and I can't check it myself.",
-      ],
+      a: "With the transaction: the rate, which provider it came from, when it was fetched, whether it was stale or derived and from which legs, the rounding mode and the unrounded amount. `Conversion` already carries the rate, its age and the stale flag; production adds the source and an id.",
     },
     {
       q: 'A customer sees a quote, then pays twenty seconds later. Which rate are they charged?',
-      a: [
-        "The one they were shown. I'd never convert again at payment time with whatever the cache holds by then.",
-        'So a quote becomes a stored record: an id, the pair, the rate, both amounts and an expiry of, say, 30 seconds. The payment names the quote id and uses its rate.',
-        'After the expiry the payment is refused and the customer is quoted again. The cost is a quote store, and the business carries any movement in the rate for those 30 seconds.',
-      ],
+      a: "The one they were shown, never whatever the cache holds at payment time. A quote becomes a stored record with an id, the rate, both amounts and an expiry of, say, 30 seconds, and the payment names the quote id. After the expiry it is refused and quoted again, and the business carries any movement in the rate until then.",
     },
     {
       q: 'What is wrong with `compute` in production?',
-      a: [
-        "It holds every caller of a pair while one thread loads, through up to 3 slow attempts, and a waiting caller can't give up or take the stale rate.",
-        "I'd store a `CompletableFuture` for each pair. The first caller starts the fetch, and the rest wait on the same future with a timeout and fall back to the last rate.",
-        "That's more code, and a failed future has to be removed or the failure is cached. I'd also add a stress test to the build, because the race I fixed in this version is covered by an experiment and not by a test.",
-      ],
+      a: "It holds every caller of a pair through up to 3 slow attempts, and a waiter can't give up or take the stale rate. I'd keep a `CompletableFuture` for each pair, so callers wait with a timeout, and remove a failed one so the failure isn't cached. On a real clock another thread's fetch time can also be later than my `now`, giving a slightly negative age.",
     },
-  ],
-  mistakes: [
-    'Starting on the cache before the four stage 1 tests pass. The first ten minutes go on the scale, the rounding mode and the null check, and none of it gets easier with a map on top.',
-    'Using `double` to get one test green and meaning to change it later. The brief said never, and every expected string has to be checked again once you switch.',
-    'Redesigning the result. `Conversion` and both constructors are fixed in the starter, and a changed signature breaks tests in every stage.',
-    'Building the inverse and USD routes before the stale path works. Stage 3 is what counts as done; stages 4 and 5 are extras.',
-    'Adding a sleep, a backoff schedule or a circuit breaker to stage 3. One comment where the wait would go, said aloud, takes five seconds and is what the tests allow.',
-    'Guessing at a failing boundary test. Every expectation ends in ` calls N`: read the count first, because it says whether the cache was hit, refreshed or skipped.',
   ],
   see: [
-    {
-      href: '#/s/cache-strategies',
-      label: 'Cache read and write strategies',
-      why: 'A miss, the fill and the hit that follows, one step at a time. Stage 2 is the read half of cache-aside with a provider in place of the database.',
-    },
-    {
-      href: '#/c/caching/ttl-stampede',
-      label: 'Caching: TTLs, jitter and stampedes',
-      why: "Stage 5's hundred threads on one expired key, drawn as a sequence: the first request fetches and the rest join the call in flight.",
-    },
-    {
-      href: '#/s/retries-breaker',
-      label: 'Retries, backoff and circuit breakers',
-      why: "What stage 3's retry loop leaves out: waiting longer between attempts, and a breaker that stops paying for calls to a provider that is down.",
-    },
-    {
-      href: '#/c/resilience-patterns/degradation',
-      label: 'Resilience patterns: fallbacks',
-      why: 'Serving the last known rate, marked with its age, is a fallback. This section sets it beside calls that must have none.',
-    },
-  ],
-  simplified: [
-    'Nothing tests that a pair with no route fails without retrying. That test was dropped to keep the starter short. The behaviour is in the stage 4 trace: 4 calls, `UnknownPairException`, no retry.',
-    'No deterministic test covers the stage 5 race fix. It was checked by reading the code and by 300 runs of one scenario before and after.',
-    'One rate for each pair. Real foreign exchange has a buying and a selling rate, and a spread or a fee on top.',
-    'Currencies are strings checked against a five-entry map, not `java.util.Currency`, and the minor units are typed in. The real table comes from ISO 4217.',
-    'Retries are immediate: no backoff, no jitter, no timeout on a call. There is no circuit breaker, so a provider that is down costs 3 calls for every conversion.',
-    'The cache never evicts. It grows to one entry for each pair asked for, at most 20 here.',
-    'Cross rates go through one fixed base, USD. Only the asked pair is cached and the legs are not, so two cross rates that share a leg each pay for it.',
-    'A cached rate is used for any amount. There are no quote ids, no quote expiry and no audit trail.',
-    'A same-currency amount is returned as given and is not checked against the minor units: 1.005 GBP to GBP returns 1.005.',
-    'A zero rate from the provider is not handled. Inverting it would throw `ArithmeticException`.',
-    'In stage 5 callers wait while a slow load runs, with no timeout. The stale flag also compares this thread\'s `now` with a fetch time another thread may have stamped. With one fake clock they agree; with a real clock the age could come out slightly negative, and that is not handled.',
+    { href: '#/s/cache-strategies', label: 'Cache read and write strategies' },
+    { href: '#/c/caching/ttl-stampede', label: 'Caching: TTLs, jitter and stampedes' },
+    { href: '#/s/retries-breaker', label: 'Retries, backoff and circuit breakers' },
+    { href: '#/c/resilience-patterns/degradation', label: 'Resilience patterns: fallbacks' },
+    { href: '#/p/circuit-breaker', label: 'Practice: circuit breaker' },
   ],
   unverified: [
-    'The minor units in the table (JPY 0, KWD 3, the others 2) are the starter\'s values, and that ISO 4217 is where the real table comes from is general knowledge. Neither was checked against the standard.',
-    'That some products or regulators require a particular rounding mode: general knowledge, not checked against a source.',
-    'That a direct quote and a rate derived through USD differ because each leg carries its own spread: how foreign exchange is usually described, not checked against a source or shown by this code, which has one rate for each pair.',
-    'About `ConcurrentHashMap.compute`: that it runs one function at a time for a key, and that a function that throws leaves the entry unchanged, were both seen in runs here (one call under 100 threads; the stale path finding the old entry after a failed load). That a plain `HashMap` gives no such promise is from memory of the JDK documentation.',
-    'The follow-up answers (a circuit breaker, several providers behind one interface, a timer-driven snapshot, one fetcher for many instances, stored quotes with an expiry, a rounding account, per-key futures) are common designs described from memory. None was built or run here, and the 30-second quote expiry is an example figure.',
-    'The race counts in stage 5 (149 of 300 runs before the fix, none after) come from one experiment on one machine and depend on timing. A repeat of the same experiment gave 156 of 300 before the fix and none after.',
+    "Minor units (JPY 0, KWD 3, the others 2) are the starter's values, and ISO 4217 as the source of the real table is general knowledge: neither was checked against the standard.",
+    'Regulators or products requiring a rounding mode, and a rounding account for remainders: general knowledge, not checked.',
+    'Each leg of a cross rate carrying its own spread: how foreign exchange is usually described, not checked and not shown by this code.',
+    '`ConcurrentHashMap.compute` running one function at a time for a key, and leaving the entry alone when the function throws: both seen in runs here, not checked against the JDK documentation.',
+    'The follow-up designs (circuit breaker, backoff with jitter, several providers, a timer-driven snapshot from one fetcher, stored quotes, a future for each pair, buying and selling rates, `java.util.Currency`) are from memory; none was built here, and the 30-second quote expiry is an example figure.',
+    'The stage 5 race counts (149 of 300 runs before the fix, none after) are one experiment on one machine; a repeat gave 156 of 300 before and none after.',
+    'A slightly negative age on a real clock is reasoned from the stage 5 code, not seen in a run.',
   ],
 };
 

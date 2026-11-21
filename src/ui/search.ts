@@ -117,16 +117,25 @@ function build(): Promise<Doc[]> {
       docs.push({ kind: r.kind === 'concept' ? 'Reading' : 'Walkthrough', title: name, also: p.sections.map((s) => plain(s.title)), text: [plain(p.summary), ...p.sections.flatMap((s) => s.blocks.map(blockText))].join(' '), href: base, where: r.kind === 'concept' ? `Reading: ${(p as Reading & { group?: string }).group ?? 'system design'}` : 'Reading: design walkthrough' });
       for (const s of p.sections) docs.push({ kind: 'Section', title: plain(s.title), also: [name], text: s.blocks.map(blockText).join(' '), href: `${base}/${encodeURIComponent(s.id)}`, where: `${name}: section`, from: name });
     }
-    // Pairing practice pages: one entry for the page, one for each of its parts (stages).
+    // Pairing practice pages: one entry for the page, one for each of its parts (stages). Pages written to the
+    // contract before 20 November 2026 lack some fields; they are read loosely until rewritten.
     for (const e of PRACTICES) {
       const p = e.page;
       const base = `#/p/${e.id}`;
       const name = plain(p.title);
+      const answers = (a: string | string[]) => (Array.isArray(a) ? a : [a]);
       docs.push({
         kind: 'Practice',
         title: name,
         also: ['pairing', 'java', ...p.parts.map((pt) => plain(pt.title))],
-        text: [p.summary, ...p.brief, ...p.ask.flatMap((a) => [a.q, a.why, a.assume]), ...p.followUps.flatMap((f) => [f.q, ...f.a]), ...p.mistakes].map(plain).join(' '),
+        text: [
+          p.summary,
+          ...(p.testing ? [p.testing.intro, ...p.testing.points] : []),
+          ...p.brief,
+          ...p.ask.map((a) => a.q),
+          ...p.parts.flatMap((pt) => [pt.title, pt.ask, pt.choice ?? '', ...(pt.verbal ?? [])]),
+          ...p.followUps.flatMap((f) => [f.q, ...answers(f.a)]),
+        ].map(plain).join(' '),
         href: base,
         where: `Pairing practice: about ${p.minutes} minutes to stage ${p.core}`,
       });
@@ -135,9 +144,9 @@ function build(): Promise<Doc[]> {
           kind: 'Practice',
           title: plain(pt.title),
           also: [name, ...pt.tests],
-          text: [pt.ask, ...pt.explain, ...(pt.lines ?? []).map((l) => `${l.code} ${l.note}`), pt.say, ...pt.pitfalls].map(plain).join(' '),
+          text: [pt.ask, pt.choice ?? '', ...(pt.verbal ?? []), pt.say].map(plain).join(' '),
           href: `${base}/${encodeURIComponent(pt.id)}`,
-          where: `${name}: stage ${pt.stage}`,
+          where: `${name}: ${pt.variant ? 'variant' : pt.stage > p.core ? `stretch stage ${pt.stage}` : `stage ${pt.stage}`}`,
           from: name,
         });
       }

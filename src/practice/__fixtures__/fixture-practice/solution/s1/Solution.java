@@ -50,6 +50,17 @@ public class Solution {
             return count;
         }
         // endregion
+
+        /** Sets the count back to zero. */
+        void reset() {
+            // TODO stage 3: start again from zero
+        }
+
+        /** How many more calls would be let through now. */
+        int remaining() {
+            // TODO stage 4: the calls left before the limit
+            return -1;
+        }
     }
 
     // ===== Tests: set STAGE to run more =====
@@ -63,6 +74,8 @@ public class Solution {
     public static void main(String[] args) {
         if (STAGE >= 1) stage1();
         if (STAGE >= 2) stage2();
+        if (STAGE >= 3) stage3();
+        if (STAGE >= 4) stage4();
         System.out.println(failed == 0 ? "ALL PASSED" : failed + " FAILED");
     }
 
@@ -107,6 +120,39 @@ public class Solution {
         check("a limit of zero refuses the first call",
                 () -> new Counter(0, new ListAudit()).hit("ann"), false);
         endStage(2);
+    }
+
+    // Stage 3: reset puts the count back to zero, and the limit applies
+    // again from there.
+    static void stage3() {
+        check("reset sets the count to zero", () -> {
+            var c = new Counter(3, new ListAudit());
+            c.hit("ann");
+            c.hit("bob");
+            c.reset();
+            return c.count();
+        }, 0);
+        check("after a reset the limit applies again", () -> {
+            var c = new Counter(1, new ListAudit());
+            c.hit("ann");
+            c.reset();
+            return c.hit("bob");
+        }, true);
+        endStage(3);
+    }
+
+    // Stage 4: remaining says how many more calls would be let through.
+    static void stage4() {
+        check("remaining starts at the limit",
+                () -> new Counter(3, new ListAudit()).remaining(), 3);
+        check("remaining falls with each hit", () -> {
+            var c = new Counter(3, new ListAudit());
+            c.hit("ann");
+            return c.remaining();
+        }, 2);
+        check("remaining is never below zero",
+                () -> new Counter(0, new ListAudit()).remaining(), 0);
+        endStage(4);
     }
 
     static void check(String name, Supplier<Object> run, Object want) {

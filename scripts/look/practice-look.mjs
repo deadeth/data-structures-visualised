@@ -1,8 +1,9 @@
 // node scripts/look/practice-look.mjs <out dir> [practice id]
 // Pairing practice pages at 1440x900 and 390x844, full page: the guide (#/p) and the fixture guide, then one page (the fixture in
 // development by default) with practice mode off, with it on, and with practice mode off, one follow-up open and
-// the first part's whole-file disclosure open. Also the first view with the clock running and the bar in place
-// part-way down the page. Prints page errors, whether the page scrolls sideways, code blocks and tables that
+// the first part's whole-file disclosure open. Then, as pictures of one section each: the first core stage, a stretch
+// stage closed and with its "Show the code and the run" open, and the variant closed and open. Also the first view with
+// the clock running and the bar in place part-way down the page. Prints page errors, whether the page scrolls sideways, code blocks and tables that
 // scroll inside their frame, and the smallest text found. Exits 1 on any page error or sideways scroll.
 import { createServer } from 'vite';
 import puppeteer from 'puppeteer-core';
@@ -41,6 +42,7 @@ const measure = (page) =>
       pageScrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
       codeScrolling: `${scrolling('.pp-pre')} of ${document.querySelectorAll('.pp-pre').length}`,
       tracesScrolling: scrolling('.pp-trace-wrap'),
+      sketches: [...document.querySelectorAll('.pp-sketch-pre')].filter((e) => e.getClientRects().length).map((e) => `${parseFloat(getComputedStyle(e).fontSize)}px${e.scrollWidth > e.clientWidth + 1 ? ' scrolls' : ''}`).join(', ') || 'none shown',
       smallest: `${smallest}px (${where})`,
       bar: Math.round(document.querySelector('.pp-bar')?.getBoundingClientRect().height ?? 0),
     };
@@ -90,6 +92,28 @@ for (const [w, hgt] of [[1440, 900], [390, 844]]) {
   await page.click('.pp-fu > summary');
   await page.click('.pp-whole > summary');
   await shot('page-open');
+
+  // One section at a time: a core stage, then a stretch stage and the variant, closed and open.
+  const shotEl = async (name, sel) => {
+    const el = await page.$(sel);
+    if (!el) return console.log(`${w} ${name}: no ${sel}`);
+    await pause(250);
+    const info = await measure(page);
+    if (info.pageScrolls) failed++;
+    const file = `${out}/${w}-${name}.png`;
+    await el.screenshot({ path: file });
+    console.log(`${w} ${name}: ${file}`);
+    console.log('   ', JSON.stringify(info));
+  };
+  await shotEl('core-stage', '.pp-part.is-core');
+  for (const kind of ['stretch', 'variant']) {
+    const sel = `.pp-part.is-${kind}`;
+    await shotEl(`${kind}-closed`, sel);
+    if (await page.$(`${sel} .pp-more > summary`)) {
+      await page.click(`${sel} .pp-more > summary`);
+      await shotEl(`${kind}-open`, sel);
+    }
+  }
 
   // The clock running, then the first view part-way down with the bar stuck to the top.
   await page.evaluate(() => [...document.querySelectorAll('.pp-clock button')].find((b) => /Start/.test(b.textContent)).click());

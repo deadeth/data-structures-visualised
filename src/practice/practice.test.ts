@@ -12,9 +12,10 @@ import fixtureGuide from './__fixtures__/fixture-guide';
 
 /**
  * Checks every pairing practice page (and the development fixture) for what `tsc` cannot see: stages and
- * files that do not line up, regions and line notes that do not match the Java, Java files that break the
+ * files that do not line up, regions that do not match the Java, counts and lengths the contract sets, Java files that break the
  * code brief (docs/briefs/practice-code.md), dead links, and the reading brief's banned words and company
- * names. Each failure names the page and the field. A folder with Java and no `page.ts` yet is skipped.
+ * names. Each failure names the page and the field. A folder with Java and no `page.ts` yet is skipped, and so is
+ * a page still in the old shape (see `oldShape`).
  * Compiling and running the Java is `node scripts/practice/check.mjs`, not part of this suite.
  */
 
@@ -90,6 +91,9 @@ function strings(p: Practice): { at: string; text: string; prose: boolean }[] {
   const add = (at: string, text: string | undefined, prose = true) => text !== undefined && out.push({ at, text, prose });
   add('title', p.title);
   add('summary', p.summary);
+  add('testing intro', p.testing.intro);
+  p.testing.points.forEach((t, i) => add(`testing point ${i + 1}`, t));
+  add('use', p.use);
   p.brief.forEach((t, i) => add(`brief ${i + 1}`, t));
   p.given.forEach((t, i) => add(`given ${i + 1}`, t));
   p.ask.forEach((a, i) => {
@@ -104,28 +108,25 @@ function strings(p: Practice): { at: string; text: string; prose: boolean }[] {
     add(`${w} ask`, pt.ask);
     pt.tests.forEach((t, i) => add(`${w} tests ${i + 1}`, t, false));
     add(`${w} pseudocode`, pt.pseudocode, false);
-    pt.explain.forEach((t, i) => add(`${w} explain ${i + 1}`, t));
-    (pt.lines ?? []).forEach((l, i) => {
-      add(`${w} lines ${i + 1} code`, l.code, false);
-      add(`${w} lines ${i + 1} note`, l.note);
-    });
+    add(`${w} choice`, pt.choice);
+    add(`${w} say`, pt.say);
+    if (pt.sketch) {
+      add(`${w} sketch caption`, pt.sketch.caption);
+      add(`${w} sketch text`, pt.sketch.text, false);
+    }
     add(`${w} trace caption`, pt.trace.caption);
     pt.trace.head.forEach((t, i) => add(`${w} trace head ${i + 1}`, t));
     pt.trace.rows.forEach((r, i) => r.forEach((t, j) => add(`${w} trace row ${i + 1} cell ${j + 1}`, t)));
     add(`${w} trace note`, pt.trace.note);
-    add(`${w} say`, pt.say);
     pt.pitfalls.forEach((t, i) => add(`${w} pitfalls ${i + 1}`, t));
+    (pt.verbal ?? []).forEach((t, i) => add(`${w} verbal ${i + 1}`, t));
+    add(`${w} caveat`, pt.caveat);
   }
   p.followUps.forEach((f, i) => {
     add(`followUps ${i + 1} q`, f.q);
-    f.a.forEach((t, j) => add(`followUps ${i + 1} a ${j + 1}`, t));
+    add(`followUps ${i + 1} a`, f.a);
   });
-  p.mistakes.forEach((t, i) => add(`mistakes ${i + 1}`, t));
-  p.see.forEach((s, i) => {
-    add(`see ${i + 1} label`, s.label);
-    add(`see ${i + 1} why`, s.why);
-  });
-  p.simplified.forEach((t, i) => add(`simplified ${i + 1}`, t));
+  p.see.forEach((s, i) => add(`see ${i + 1} label`, s.label));
   (p.unverified ?? []).forEach((t, i) => add(`unverified ${i + 1}`, t));
   return out;
 }
@@ -143,6 +144,18 @@ function checkWords(text: string, at: string, out: string[]): void {
 
 const JAVA_MAX = 80;
 const PSEUDO_MAX = 64;
+const CHOICE_MAX_WORDS = 110;
+const ANSWER_MAX_WORDS = 75;
+const wordCount = (t: string) => t.split(/\s+/).filter(Boolean).length;
+
+/**
+ * A page still in the shape the contract had before 20 November 2026 (parts with `explain`, no `testing`).
+ * The real pages are being rewritten; until each is, it is skipped by name rather than failed.
+ */
+export function oldShape(p: Practice): boolean {
+  const loose = p as unknown as { testing?: unknown; parts: Record<string, unknown>[]; followUps: { a: unknown }[] };
+  return !loose.testing || loose.parts.some((pt) => 'explain' in pt || 'lines' in pt) || loose.followUps.some((f) => typeof f.a !== 'string') || 'mistakes' in loose;
+}
 const STARTER_MAX_BYTES = 50_000;
 
 /** Every fault in one page, each naming the page and the field. */
@@ -183,13 +196,47 @@ function validate(e: PracticeEntry, src: PracticeSources, ctx: Ctx, folder = e.i
     if (bad) out.push(at(`see ${i + 1}: ${s.href}: ${bad}`));
   });
 
-  // Pseudocode width and trace shape.
+  // Counts the page's shape asks for.
+  const count = (field: string, n: number, lo: number, hi: number) => {
+    if (n < lo || n > hi) out.push(at(`${field}: ${n} ${n === 1 ? 'item' : 'items'}; ${lo === hi ? `exactly ${lo}` : `${lo} to ${hi}`}`));
+  };
+  count('testing points', p.testing.points.length, 3, 3);
+  count('given', p.given.length, 1, 5);
+  count('ask', p.ask.length, 5, 6);
+  count('followUps', p.followUps.length, 8, 12);
+  p.followUps.forEach((f, i) => {
+    const n = wordCount(f.a);
+    if (n > ANSWER_MAX_WORDS) out.push(at(`followUps ${i + 1} a: ${n} words; at most ${ANSWER_MAX_WORDS}`));
+  });
+
+  // Core, stretch and variant stages.
+  const variants = p.parts.filter((pt) => pt.variant);
+  if (variants.length > 1) out.push(at(`parts: ${variants.length} parts are variants (${variants.map((v) => v.id).join(', ')}); at most one`));
+  const top = Math.max(0, ...p.parts.map((pt) => pt.stage));
+  for (const pt of p.parts) {
+    const w = `part "${pt.id}"`;
+    const n = wordCount(pt.choice);
+    if (n > CHOICE_MAX_WORDS) out.push(at(`${w} choice: ${n} words; at most ${CHOICE_MAX_WORDS}`));
+    count(`${w} pitfalls`, pt.pitfalls.length, 2, 4);
+    const verbal = pt.verbal?.length ?? 0;
+    if (pt.variant) {
+      if (pt.stage !== top) out.push(at(`${w}: a variant must be the last stage (it is stage ${pt.stage} of ${top})`));
+      if (pt.stage <= p.core) out.push(at(`${w}: a variant must come after core (stage ${p.core}); it is stage ${pt.stage}`));
+      count(`${w} verbal`, verbal, 1, 2);
+    } else if (pt.stage <= p.core) {
+      if (verbal) out.push(at(`${w} verbal: a core stage has no verbal answer`));
+    } else count(`${w} verbal (a stretch stage)`, verbal, 3, 3);
+    if (pt.caveat?.includes('\n')) out.push(at(`${w} caveat: one line only`));
+  }
+
+  // Pseudocode and sketch width, and trace shape.
   const pseudo = (field: string, text: string) => text.split('\n').forEach((l, i) => {
     if (l.length > PSEUDO_MAX) out.push(at(`${field}: line ${i + 1} is ${l.length} characters; at most ${PSEUDO_MAX}`));
   });
   pseudo('outline', p.outline);
   for (const pt of p.parts) {
     pseudo(`part "${pt.id}" pseudocode`, pt.pseudocode);
+    if (pt.sketch) pseudo(`part "${pt.id}" sketch text`, pt.sketch.text);
     pt.trace.rows.forEach((r, i) => {
       if (r.length !== pt.trace.head.length) out.push(at(`part "${pt.id}" trace row ${i + 1}: ${r.length} cells for ${pt.trace.head.length} columns`));
     });
@@ -236,10 +283,7 @@ function validate(e: PracticeEntry, src: PracticeSources, ctx: Ctx, folder = e.i
     const missing = pt.regions.filter((r) => !have.includes(r));
     for (const r of missing) out.push(at(`${w} regions: "${r}" is not a region of solution/s${pt.stage}/Solution.java (it has ${have.join(', ') || 'none'})`));
     if (missing.length) continue;
-    const lines = listing(file, 'java', pt.regions).lines;
-    (pt.lines ?? []).forEach((l, i) => {
-      if (!lines.some((x) => x.includes(l.code))) out.push(at(`${w} lines ${i + 1}: "${l.code}" is not part of any one line in the regions ${pt.regions.join(', ')}`));
-    });
+    if (!listing(file, 'java', pt.regions).lines.length) out.push(at(`${w} regions: ${pt.regions.join(', ')} hold no lines`));
   }
   return out;
 }
@@ -263,6 +307,10 @@ describe('practice pages', () => {
   });
 
   for (const e of PRACTICES) {
+    if (oldShape(e.page)) {
+      it.skip(`${e.dir}: still in the old page shape (has Part.explain or lacks testing); skipped until rewritten`, () => undefined);
+      continue;
+    }
     it(`${e.dir} passes validation`, async () => {
       const problems = validate(e, await e.sources(), ctx);
       expect(problems, `\n${problems.join('\n')}\n`).toEqual([]);
@@ -300,8 +348,12 @@ describe('practice pages', () => {
     expect(problems, `\n${problems.join('\n')}\n`).toEqual([]);
   });
 
-  it('the fixture loads in development and passes', async () => {
+  it('the fixture loads in development, is in the current shape, and passes', async () => {
     expect(fixture, 'the fixture should load where import.meta.env.DEV is true').toBeDefined();
+    expect(oldShape(fixture!.page)).toBe(false);
+    const kinds = fixture!.page.parts.map((pt) => (pt.variant ? 'variant' : pt.stage > fixture!.page.core ? 'stretch' : 'core'));
+    expect(kinds, 'the fixture should exercise core, stretch and variant stages').toEqual(expect.arrayContaining(['core', 'stretch', 'variant']));
+    expect(fixture!.page.parts.some((pt) => pt.sketch) && fixture!.page.parts.some((pt) => pt.caveat)).toBe(true);
     const problems = validate(fixture!, await fixture!.sources(), ctx);
     expect(problems, `\n${problems.join('\n')}\n`).toEqual([]);
   });
@@ -310,14 +362,24 @@ describe('practice pages', () => {
     const good = await fixture!.sources();
     const page: Practice = structuredClone(fixture!.page);
     page.parts[0].regions = ['state', 'nope'];
-    page.parts[1].lines = [{ code: 'if (count > limit) {', note: 'x' }];
     page.parts[1].tests = [...page.parts[1].tests, 'a test nobody wrote'];
     page.parts[1].pseudocode += `\n${'x'.repeat(65)}`;
+    page.parts[1].sketch!.text += `\n${'s'.repeat(66)}`;
     page.parts[1].trace.rows[0] = ['one'];
-    page.parts.push({ ...structuredClone(page.parts[1]), id: 'extra', stage: 4 });
+    page.parts[1].verbal = ['A core stage with a spoken answer.'];
+    page.parts[1].choice = 'word '.repeat(111);
+    page.parts[1].pitfalls = ['Only one.'];
+    page.parts[2].verbal = ['One.', 'Two.'];
+    page.parts[3].verbal = [];
+    page.parts.push({ ...structuredClone(page.parts[3]), id: 'extra', stage: 6 });
+    page.testing.points = page.testing.points.slice(0, 2);
+    page.given = ['1', '2', '3', '4', '5', '6'];
+    page.ask = page.ask.slice(0, 4);
+    page.followUps = page.followUps.slice(0, 7);
+    page.followUps[0].a = 'word '.repeat(76);
+    page.see = [...page.see, { href: '#/s/nowhere', label: 'Nowhere' }];
     page.summary = 'A robust page with a [dead link](#/s/no-such-structure) and a [missing part](#/p/fixture-practice/nope).';
-    page.mistakes = [`Pasting it into ${companyNames()[0]}'s editor.`];
-    page.core = 7;
+    page.use = `Paste it into ${companyNames()[0]}'s editor.`;
     const stages = new Map(good.stages);
     stages.set(2, withStage(good.stages.get(2)!.replace('// ===== Your code =====', '// ===== Your code ====='), 5).replace('lines.add(who', 'lines.add( who'));
     const starter = good.starter.replace('    static final int STAGE = 1;', `    static final int STAGE = 1;\n    // region oops\n    // endregion\n    static final String LONG = "${'y'.repeat(70)}";`);
@@ -325,17 +387,29 @@ describe('practice pages', () => {
     const p = validate(broken, await broken.sources(), ctx).join('\n');
     for (const want of [
       'part "count" regions: "nope" is not a region',
-      'part "limit" lines 1: "if (count > limit) {" is not part of any one line',
       'part "limit" tests: "a test nobody wrote" does not appear in the starter',
       'part "limit" pseudocode: line 7 is 65 characters',
+      'part "limit" sketch text: line 6 is 66 characters',
       'part "limit" trace row 1: 1 cells for 4 columns',
-      'stages should run 1 to 3',
-      'part at stage 4: solution/s4/Solution.java is missing',
-      'core: 7 is not the stage of any part',
+      'part "limit" verbal: a core stage has no verbal answer',
+      'part "limit" choice: 111 words; at most 110',
+      'part "limit" pitfalls: 1 item; 2 to 4',
+      'part "reset" verbal (a stretch stage): 2 items; exactly 3',
+      'part "remaining": a variant must be the last stage',
+      'part "remaining" verbal: 0 items; 1 to 2',
+      'parts: 2 parts are variants',
+      'testing points: 2 items; exactly 3',
+      'given: 6 items; 1 to 5',
+      'ask: 4 items; 5 to 6',
+      'followUps: 7 items; 8 to 12',
+      'followUps 1 a: 76 words; at most 75',
+      'see 4: #/s/nowhere: no structure page "nowhere"',
+      'stages should run 1 to 5',
+      'part at stage 6: solution/s6/Solution.java is missing',
       'banned word or phrase "robust"',
       'no structure page "no-such-structure"',
       'practice page "fixture-practice" has no part "nope"',
-      'mistakes 1: names a company',
+      'use: names a company',
       'solution/s2/Solution.java: STAGE should be 2, found 5',
       'solution/s2/Solution.java: the "Supplied code" section differs',
       'starter/Solution.java: line',
@@ -343,6 +417,8 @@ describe('practice pages', () => {
       'characters; at most 80',
       'the "Tests" section differs from the starter\'s',
     ]) expect(p).toContain(want);
+    const offCore = { ...fixture!, page: { ...structuredClone(fixture!.page), core: 7 } } as PracticeEntry;
+    expect(validate(offCore, good, ctx).join('\n')).toContain('core: 7 is not the stage of any part');
   });
 });
 

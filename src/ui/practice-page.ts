@@ -14,7 +14,7 @@ import type { Guide, GuideBlock, Part, Practice, Trace } from '../practice/types
  * scrolls; it never draws the page again, so the clock and anything opened stay as they were.
  */
 
-/** Practice mode: each part's pseudocode and Java start folded behind a button. Off unless switched on. */
+/** Practice mode: each core stage's Java starts hidden behind a button. Off unless switched on. */
 export const HIDE_KEY = 'dsv.practice.hide';
 
 const read = (store: () => Storage, key: string): string | null => {
@@ -104,19 +104,22 @@ async function copyText(text: string): Promise<boolean> {
 
 const lineCount = (src: string) => src.replace(/\n+$/, '').split('\n').length;
 
-function seeKind(href: string): string {
-  if (href.startsWith('#/s/')) return 'Animated page';
-  if (/^#\/d\/[^/]+\/read/.test(href)) return 'Walkthrough';
-  if (href.startsWith('#/d/')) return 'Interactive design';
-  if (href.startsWith('#/c/')) return 'Reading';
-  if (href.startsWith('#/p/')) return 'Pairing practice';
-  return 'Page';
+/** How many stages of each kind a page has: core (up to `core`), stretch (after it) and variant. */
+export function stageKinds(p: Practice): { core: number; stretch: number; variant: number } {
+  const core = p.parts.filter((pt) => pt.stage <= p.core && !pt.variant).length;
+  const variant = p.parts.filter((pt) => pt.variant).length;
+  return { core, stretch: p.parts.length - core - variant, variant };
 }
 
-/** "About 40 minutes to stage 3 · 4 stages · Java 21" */
+/** "About 40 minutes · 3 core stages and 2 stretch stages · Java 21" */
 export function factsLine(p: Practice): string {
-  const n = p.parts.length;
-  return `About ${p.minutes} minutes to stage ${p.core} · ${n} ${n === 1 ? 'stage' : 'stages'} · Java 21`;
+  const k = stageKinds(p);
+  const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+  const bits = [n(k.core, 'core stage', 'core stages')];
+  if (k.stretch) bits.push(n(k.stretch, 'stretch stage', 'stretch stages'));
+  if (k.variant) bits.push(n(k.variant, 'variant', 'variants'));
+  const list = bits.length > 1 ? `${bits.slice(0, -1).join(', ')} and ${bits.at(-1)}` : bits[0];
+  return `About ${p.minutes} minutes · ${list} · Java 21`;
 }
 
 /** A table that is a real table on a wide screen and stacked cards on a phone (practice.css), its cells labelled by column. */
@@ -237,7 +240,7 @@ interface Reveal {
   /** The note shown in their place while hidden. */
   note: HTMLElement;
   open: boolean;
-  /** Words on the button: "pseudocode", "Java", "the plan". */
+  /** Words on the button: "the code". */
   what: string;
 }
 
@@ -385,82 +388,96 @@ function drawPage(host: HTMLElement, entry: PracticeEntry, src: PracticeSources,
       r.open = false;
       paintReveal(r);
     }
-    say(hide ? 'Practice mode on: pseudocode and Java are folded until you ask.' : 'Practice mode off: everything is shown.');
+    say(hide ? "Practice mode on: each core stage's Java is hidden until you ask." : 'Practice mode off: the Java is shown.');
   });
 
-  // ---- the head ----
+  // ---- the head: title, summary, facts, what is tested and how to use the page ----
+  // Pages written to the contract before 20 November 2026 lack `testing` and `use`; they draw without them.
+  const testing = (p as Partial<Practice>).testing;
   const head = h(
     'header.page-head.pp-head', null,
     h('p.pp-kicker', null, h('a', { href: '#/p' }, 'Pairing practice')),
     h('h1', { tabIndex: -1 }, p.title),
     h('p.lede', null, inline(p.summary)),
     h('p.pp-facts', null, factsLine(p)),
+    testing
+      ? h(
+          'section.pp-open', { 'aria-labelledby': 'pp-h-testing' },
+          h('h2.pp-open-h', { id: 'pp-h-testing' }, 'What this is testing'),
+          h('p', null, inline(testing.intro)),
+          h('ul.pp-list.pp-open-list', null, testing.points.map((t) => h('li', null, inline(t)))),
+        )
+      : null,
+    p.use ? h('section.pp-open', { 'aria-labelledby': 'pp-h-use' }, h('h2.pp-open-h', { id: 'pp-h-use' }, 'How to use this page'), h('p', null, inline(p.use))) : null,
   );
 
   // ---- the opening sections ----
   const section = (sid: string, title: string, ...children: (Node | null)[]) => h('section.pp-section', { id: `pp-${sid}`, 'aria-labelledby': `pp-h-${sid}` }, h('h2', { id: `pp-h-${sid}`, tabIndex: -1 }, title), ...children);
   const askId = nextId('pp-askcap');
-  const planFrame = codeFrame(p.outline.replace(/\n+$/, '').split('\n'), { lang: 'pseudo', label: 'The plan, in pseudocode' });
-  const planReveal = reveal('the plan', [planFrame]);
+  const outline = p.outline.replace(/\n+$/, '').split('\n');
   const opening = [
     section('brief', 'The brief', ...paras(p.brief)),
-    section('given', 'What you are given', h('ul.pp-list', null, p.given.map((t) => h('li', null, inline(t))))),
+    section('given', 'What the starter gives you', h('ul.pp-list', null, p.given.map((t) => h('li', null, inline(t))))),
     section(
       'ask', 'Ask first',
       h('p.pp-intro', { id: askId }, 'Before typing, ask these. If nobody answers, say the assumption aloud and carry on.'),
       stackTable(['Ask', 'Why it matters', 'If nobody answers, assume'], p.ask.map((a) => [a.q, a.why, a.assume]), askId, '.pp-ask-table'),
     ),
-    section('plan', 'The plan', planReveal.note, planReveal.button, planFrame),
+    section('plan', 'The whole solution as pseudocode', fold(`Show the pseudocode`, `${outline.length} lines`, () => codeFrame(outline, { lang: 'pseudo', label: 'The whole solution, in pseudocode' }))),
   ];
 
-  // ---- contents ----
+  // ---- the stages, by kind ----
   const parts = [...p.parts].sort((a, b) => a.stage - b.stage);
-  const tocLinks = new Map<string, HTMLAnchorElement>();
-  const tocList = h('ol.pp-toc-list', null, parts.map((pt) => {
-    const a = h(
-      'a', { href: `#/p/${id}/${encodeURIComponent(pt.id)}` },
-      h('span.pp-toc-n', null, `Stage ${pt.stage}`),
-      h('span.pp-toc-title', null, inline(pt.title)),
-      pt.stage === p.core ? h('span.pp-toc-core', null, `Stage ${pt.stage}: done here counts as finished`) : pt.stage > p.core ? h('span.pp-toc-ext', null, 'Extension') : null,
-    );
-    tocLinks.set(pt.id, a);
-    return h('li', { class: pt.stage === p.core ? 'is-core' : null }, a);
-  }));
-  const toc = h('nav.pp-toc', { 'aria-labelledby': 'pp-toc-h' }, h('p.pp-toc-h', { id: 'pp-toc-h' }, 'Stages'), tocList);
+  const kindOf = (pt: Part): Kind => (pt.variant ? 'variant' : pt.stage <= p.core ? 'core' : 'stretch');
+  const core = parts.filter((pt) => kindOf(pt) === 'core');
+  const stretch = parts.filter((pt) => kindOf(pt) === 'stretch');
+  const variant = parts.find((pt) => kindOf(pt) === 'variant');
 
-  // ---- the parts ----
+  // Places the address and the contents list can name: every part, and the last ten minutes.
+  const FU_ID = 'last-ten-minutes';
   const partEls = new Map<string, HTMLElement>();
-  const partSections = parts.map((pt) => {
-    const el = drawPart(pt, p, src, reveal, say);
+  const partSections = [...core, ...stretch].map((pt) => {
+    const el = drawPart(pt, kindOf(pt), p, src, reveal, say);
     partEls.set(pt.id, el);
     return el;
   });
 
-  // ---- the closing sections ----
-  const fuDetails: HTMLDetailsElement[] = p.followUps.map((f) => h('details.pp-fu', null, h('summary', null, h('span', null, inline(f.q))), h('div.pp-fu-a', null, paras(f.a))) as HTMLDetailsElement);
+  // ---- the last ten minutes ----
+  const answer = (a: string | string[]) => paras(Array.isArray(a) ? a : [a]);
+  const fuDetails: HTMLDetailsElement[] = p.followUps.map((f) => h('details.pp-fu', null, h('summary', null, h('span', null, inline(f.q))), h('div.pp-fu-a', null, answer(f.a))) as HTMLDetailsElement);
   const setAll = (open: boolean) => fuDetails.forEach((d) => (d.open = open));
-  const closing = [
-    section(
-      'follow-ups', 'What they ask next',
-      h('p.pp-fu-tools', null, h('button.btn.quiet', { type: 'button', onclick: () => setAll(true) }, 'Open all'), h('button.btn.quiet', { type: 'button', onclick: () => setAll(false) }, 'Close all')),
-      h('div.pp-fus', null, fuDetails),
-    ),
-    section('mistakes', 'Where the time goes', h('ul.pp-list', null, p.mistakes.map((t) => h('li', null, inline(t))))),
-    p.see.length
-      ? section('see', 'See it move', h('ul.rd-see', { 'aria-label': 'Pages that show the mechanism' }, p.see.map((s) => h('li', null, h('a.rd-see-card', { href: s.href }, h('span.rd-see-kind', null, seeKind(s.href)), h('span.rd-see-label', null, s.label), h('span.rd-see-why', null, inline(s.why)))))))
-      : null,
-    section('simplified', 'What this page leaves out', h('ul.pp-list', null, p.simplified.map((t) => h('li', null, inline(t))))),
-    p.unverified?.length
-      ? h(
-          'section.rd-unverified.pp-unverified', { 'aria-labelledby': 'pp-unverified-h' },
-          h('h2', { id: 'pp-unverified-h' }, 'Not checked against a source'),
-          h('p', null, 'The writer could not check these against a source. Treat them as likely, not certain.'),
-          h('ul', null, p.unverified.map((u) => h('li', null, inline(u)))),
-        )
-      : null,
-  ];
+  const fuSection = section(
+    FU_ID, 'The last ten minutes',
+    h('p.pp-intro', null, 'What they ask once the code works, and what this solution leaves out. Answer each in about twenty seconds.'),
+    h('p.pp-fu-tools', null, h('button.btn.quiet', { type: 'button', onclick: () => setAll(true) }, 'Open all'), h('button.btn.quiet', { type: 'button', onclick: () => setAll(false) }, 'Close all')),
+    h('div.pp-fus', null, fuDetails),
+  );
+  partEls.set(FU_ID, fuSection);
 
-  const body = h('div.pp-body', null, ...opening, h('div.pp-parts', null, partSections), ...closing);
+  const variantEl = variant ? drawPart(variant, 'variant', p, src, reveal, say) : null;
+  if (variant && variantEl) partEls.set(variant.id, variantEl);
+
+  const foot = p.see.length
+    ? h('nav.pp-see', { 'aria-labelledby': 'pp-see-h' }, h('span.pp-see-h', { id: 'pp-see-h' }, 'Related pages'), h('ul', null, p.see.map((s) => h('li', null, h('a', { href: s.href }, s.label)))))
+    : null;
+
+  // ---- contents ----
+  const tocLinks = new Map<string, HTMLAnchorElement>();
+  const tocItem = (key: string, label: (Node | string)[], cls: string | null, ...rest: (Node | string | null)[]) => {
+    const a = h('a', { href: `#/p/${id}/${encodeURIComponent(key)}` }, ...label, ...rest);
+    tocLinks.set(key, a);
+    return h('li', { class: cls }, a);
+  };
+  const tocList = h(
+    'ol.pp-toc-list', null,
+    ...core.map((pt) => tocItem(pt.id, [h('span.pp-toc-n', null, `Stage ${pt.stage}`), h('span.pp-toc-title', null, inline(pt.title))], pt.stage === p.core ? 'is-core' : null, pt.stage === p.core ? h('span.pp-toc-core', null, `Stage ${pt.stage}: done here counts as finished`) : null)),
+    ...stretch.map((pt) => tocItem(pt.id, [h('span.pp-toc-n', null, `Stage ${pt.stage}`), h('span.pp-toc-title', null, inline(pt.title))], 'is-light', h('span.pp-toc-ext', null, 'Stretch: say it, code it if there is time'))),
+    tocItem(FU_ID, [h('span.pp-toc-n', null, ''), h('span.pp-toc-title', null, 'The last ten minutes')], 'is-light'),
+    ...(variant ? [tocItem(variant.id, [h('span.pp-toc-n', null, ''), h('span.pp-toc-title', null, inline(variant.title))], 'is-light', h('span.pp-toc-ext', null, 'Variant'))] : []),
+  );
+  const toc = h('nav.pp-toc', { 'aria-labelledby': 'pp-toc-h' }, h('p.pp-toc-h', { id: 'pp-toc-h' }, 'On this page'), tocList);
+
+  const body = h('div.pp-body', null, ...opening, h('div.pp-parts', null, partSections), fuSection, variantEl, foot);
   const article = h('article.pp', null, head, bar, mini, h('div.pp-layout', null, toc, body));
   toolsBtn.addEventListener('click', () => {
     bar.scrollIntoView({ block: 'start' });
@@ -500,7 +517,9 @@ function drawPage(host: HTMLElement, entry: PracticeEntry, src: PracticeSources,
   const onScroll = () => {
     const line = (phone.matches ? 56 : bar.getBoundingClientRect().height) + 80;
     let at = '';
-    for (const [pid, el] of partEls) if (el.getBoundingClientRect().top < line) at = pid;
+    // At the foot of the page the last sections can never reach the line: mark the lowest one in view.
+    const atFoot = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
+    for (const [pid, el] of partEls) if (el.getBoundingClientRect().top < (atFoot ? innerHeight * 0.6 : line)) at = pid;
     const last = [...partEls.values()].at(-1);
     if (last && last.getBoundingClientRect().bottom < line) at = '';
     setMark(at);
@@ -526,6 +545,7 @@ function drawPage(host: HTMLElement, entry: PracticeEntry, src: PracticeSources,
       return;
     }
     el.scrollIntoView({ block: 'start' });
+    // A stretch stage or the variant lands on its section with its code still folded.
     el.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
     setMark(pid!);
   };
@@ -540,15 +560,44 @@ function drawPage(host: HTMLElement, entry: PracticeEntry, src: PracticeSources,
 }
 
 type RevealFn = (what: string, targets: HTMLElement[]) => { button: HTMLElement; note: HTMLElement };
+type Kind = 'core' | 'stretch' | 'variant';
 
-function drawPart(pt: Part, p: Practice, src: PracticeSources, reveal: RevealFn, say: (t: string) => void): HTMLElement {
+/**
+ * A disclosure: a real `<details>`, closed, whose content is built the first time it opens. `label` is what the
+ * summary says; `count` a quieter note beside it, such as "41 lines".
+ */
+function fold(label: string, count: string | null, build: () => HTMLElement | HTMLElement[], cls = ''): HTMLDetailsElement {
+  const d = h(`details.pp-fold${cls}`, null, h('summary', null, h('span.pp-fold-t', null, label), count ? h('span.pp-fold-n', null, count) : null)) as HTMLDetailsElement;
+  let built = false;
+  d.addEventListener('toggle', () => {
+    if (!d.open || built) return;
+    built = true;
+    const made = build();
+    d.append(...(Array.isArray(made) ? made : [made]));
+  });
+  return d;
+}
+
+/** A small picture in plain characters: never wraps, scrolls inside its frame only if it must. */
+function sketchFigure(sk: { caption: string; text: string }): HTMLElement {
+  const capId = nextId('pp-skcap');
+  return h(
+    'figure.pp-sketch', { 'aria-labelledby': capId },
+    h('figcaption.pp-sketch-cap', { id: capId }, inline(sk.caption), h('span.pp-scroll-hint', null, 'Scrolls sideways')),
+    scrollRegion(h('pre.pp-sketch-pre', null, sk.text.replace(/\n+$/, '')), plain(sk.caption)),
+  );
+}
+
+/**
+ * One stage. A core stage shows its five things: what is asked, the code, the design choice, a run, the pitfalls.
+ * A stretch stage and the variant lead with what to say and fold the five things away.
+ */
+function drawPart(pt: Part, kind: Kind, p: Practice, src: PracticeSources, reveal: RevealFn, say: (t: string) => void): HTMLElement {
   const hid = `pp-h-part-${pt.id}`;
-  const sub = (title: string) => h('h3.pp-h3', null, title);
-  const stageNote = pt.stage === p.core ? 'Core: done here counts as finished' : pt.stage > p.core ? 'Extension' : null;
-
-  // Pseudocode.
-  const pseudo = codeFrame(pt.pseudocode.replace(/\n+$/, '').split('\n'), { lang: 'pseudo', label: `Stage ${pt.stage} pseudocode` });
-  const pseudoReveal = reveal('pseudocode', [pseudo]);
+  const stageName = kind === 'variant' ? 'The variant' : `Stage ${pt.stage}`;
+  // Each of the five headings carries the stage, so a reader part-way down still knows where they are.
+  const thing = (title: string, ...children: (Node | null)[]) =>
+    h('div.pp-thing', null, h('h3.pp-h3', null, h('span.pp-h3-stage', null, stageName), h('span.pp-h3-t', null, title)), ...children);
 
   // The Java this stage adds, from the stage file's regions.
   const file = src.stages.get(pt.stage);
@@ -569,48 +618,75 @@ function drawPart(pt: Part, p: Practice, src: PracticeSources, reveal: RevealFn,
         flash(copy, ok);
         say(ok ? `Stage ${pt.stage} Java copied: ${lines!.length} lines.` : 'This browser blocked copying. Select the code instead.');
       });
-      const frame = codeFrame(lines, { lang: 'java', label: `Stage ${pt.stage} Java`, title: [`What stage ${pt.stage} adds or changes`], tools: [copy] });
-
-      // The whole file at this stage, region markers removed, built the first time it is opened.
-      const whole = h('details.pp-whole', null, h('summary', null, h('span.pp-whole-t', null, 'The whole file at this stage'), h('span.pp-whole-n', null, `${lineCount(stripRegions(file))} lines`))) as HTMLDetailsElement;
-      let built = false;
-      whole.addEventListener('toggle', () => {
-        if (!whole.open || built) return;
-        built = true;
-        const all = stripRegions(file).replace(/\n+$/, '');
-        const copyAll = h('button.btn.pp-copy', { type: 'button', 'aria-label': `Copy the whole file at stage ${pt.stage}` }, 'Copy') as HTMLButtonElement;
-        copyAll.addEventListener('click', async () => {
-          const ok = await copyText(`${all}\n`);
-          flash(copyAll, ok);
-          say(ok ? `The stage ${pt.stage} file copied: ${lineCount(all)} lines.` : 'This browser blocked copying. Select the code instead.');
-        });
-        whole.append(codeFrame(all.split('\n'), { lang: 'java', label: `Solution.java at stage ${pt.stage}`, title: ['Solution.java', h('span.pp-code-sub', null, ` · after stage ${pt.stage}`)], tools: [copyAll] }));
-      });
-      javaEl = h('div.pp-java', null, frame, whole);
+      javaEl = codeFrame(lines, { lang: 'java', label: `Stage ${pt.stage} Java`, title: [`What stage ${pt.stage} adds or changes`], tools: [copy] });
     }
   }
 
-  // Notes on single lines go with the Java: in practice mode they show when it does.
-  const lineNotes = pt.lines?.length
-    ? h(
-        'div.pp-lines-box', null,
-        sub('Line by line'),
-        h('dl.pp-lines', null, pt.lines.flatMap((l) => [h('dt', null, scrollRegion(h('code.pp-line-code', null, ...javaLine(l.code)), 'Line of Java')), h('dd', null, inline(l.note))])),
-      )
-    : null;
-  const javaReveal = reveal('Java', [javaEl!, ...(lineNotes ? [lineNotes] : [])]);
+  // Practice mode hides the Java of a core stage only; anything folded is hidden until opened anyway.
+  const javaBits: (Node | null)[] = [javaEl!];
+  if (kind === 'core') {
+    const r = reveal('the code', [javaEl!]);
+    javaBits.unshift(r.note, r.button);
+  }
 
+  const pseudoLines = pt.pseudocode.replace(/\n+$/, '').split('\n');
+  const folds = h(
+    'div.pp-folds', null,
+    fold('Pseudocode for this stage', `${pseudoLines.length} lines`, () => codeFrame(pseudoLines, { lang: 'pseudo', label: `Stage ${pt.stage} pseudocode` })),
+    file
+      ? fold('The whole file at this stage', `${lineCount(stripRegions(file))} lines`, () => {
+          const all = stripRegions(file).replace(/\n+$/, '');
+          const copyAll = h('button.btn.pp-copy', { type: 'button', 'aria-label': `Copy the whole file at stage ${pt.stage}` }, 'Copy') as HTMLButtonElement;
+          copyAll.addEventListener('click', async () => {
+            const ok = await copyText(`${all}\n`);
+            flash(copyAll, ok);
+            say(ok ? `The stage ${pt.stage} file copied: ${lineCount(all)} lines.` : 'This browser blocked copying. Select the code instead.');
+          });
+          return codeFrame(all.split('\n'), { lang: 'java', label: `Solution.java at stage ${pt.stage}`, title: ['Solution.java', h('span.pp-code-sub', null, ` · after stage ${pt.stage}`)], tools: [copyAll] });
+        }, '.pp-whole')
+      : null,
+  );
+
+  const five = () =>
+    h(
+      'div.pp-things', null,
+      thing(
+        'What is asked',
+        h('blockquote.pp-ask', null, h('p.pp-ask-who', null, 'The interviewer says'), h('p', null, inline(pt.ask))),
+        h('p.pp-tests-h', null, `Tests this stage adds (${pt.tests.length})`),
+        h('ul.pp-test-list', null, pt.tests.map((t) => h('li', null, t))),
+      ),
+      thing('The code', pt.sketch ? sketchFigure(pt.sketch) : null, ...javaBits, folds),
+      thing(
+        'The design choice',
+        h('p', null, inline(pt.choice ?? '')),
+        h('aside.pp-say', { 'aria-label': 'Say it aloud' }, h('p.pp-say-who', null, 'Say it aloud'), h('p', null, inline(pt.say))),
+      ),
+      thing('A run', traceTable(pt.trace)),
+      pt.pitfalls.length ? thing('Pitfalls', h('ul.pp-list', null, pt.pitfalls.map((t) => h('li', null, inline(t))))) : null,
+    );
+
+  const kicker =
+    kind === 'core'
+      ? h('p.pp-stage', null, h('span.pp-stage-n', null, `Stage ${pt.stage}`), pt.stage === p.core ? h('span.pp-stage-note', null, 'Core: done here counts as finished') : null)
+      : h('p.pp-stage', null, h('span.pp-stage-n', null, kind === 'stretch' ? `Stretch · Stage ${pt.stage}` : 'Variant'), kind === 'variant' ? h('span.pp-stage-note', null, 'Another framing of the same task') : null);
+  const head = h('header.pp-part-head', null, kicker, h('h2', { id: hid, tabIndex: -1 }, inline(pt.title)));
+
+  if (kind === 'core') return h('section.pp-part.is-core', { id: `pp-part-${pt.id}`, 'aria-labelledby': hid }, head, five());
+
+  const verbal = pt.verbal ?? [];
+  const sayHid = nextId('pp-verbal-h');
   return h(
-    'section.pp-part', { id: `pp-part-${pt.id}`, 'aria-labelledby': hid },
-    h('header.pp-part-head', null, h('p.pp-stage', null, h('span.pp-stage-n', null, `Stage ${pt.stage}`), stageNote ? h('span.pp-stage-note', null, stageNote) : null), h('h2', { id: hid, tabIndex: -1 }, inline(pt.title))),
-    h('blockquote.pp-ask', null, h('p.pp-ask-who', null, 'The interviewer says'), h('p', null, inline(pt.ask))),
-    h('div.pp-tests', null, sub('Tests this stage adds'), h('ul.pp-test-list', null, pt.tests.map((t) => h('li', null, t)))),
-    h('div.pp-block', null, sub('Pseudocode'), pseudoReveal.note, pseudoReveal.button, pseudo),
-    h('div.pp-block', null, sub(`Java`), javaReveal.note, javaReveal.button, javaEl!),
-    h('div.pp-block', null, sub('Why it is written this way'), ...paras(pt.explain)),
-    lineNotes,
-    h('div.pp-block', null, sub('A run'), traceTable(pt.trace)),
-    h('aside.pp-say', { 'aria-label': 'Say it while you type' }, h('p.pp-say-who', null, 'Say it while you type'), h('p', null, inline(pt.say))),
-    pt.pitfalls.length ? h('div.pp-block', null, sub('Pitfalls'), h('ul.pp-list', null, pt.pitfalls.map((t) => h('li', null, inline(t))))) : null,
+    `section.pp-part.is-${kind}`, { id: `pp-part-${pt.id}`, 'aria-labelledby': hid },
+    head,
+    verbal.length
+      ? h(
+          'div.pp-verbal', { role: 'group', 'aria-labelledby': sayHid },
+          h('p.pp-verbal-h', { id: sayHid }, kind === 'stretch' ? 'If there is no time to code it, say this' : 'The takeaway'),
+          verbal.length === 1 ? h('p', null, inline(verbal[0])) : h('ul.pp-list', null, verbal.map((t) => h('li', null, inline(t)))),
+        )
+      : null,
+    pt.caveat ? h('p.pp-caveat', null, h('span.pp-caveat-who', null, 'Caveat'), ' ', inline(pt.caveat)) : null,
+    fold('Show the code and the run', null, five, '.pp-more'),
   );
 }

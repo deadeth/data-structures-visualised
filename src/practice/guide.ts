@@ -40,7 +40,7 @@ const guide: Guide = {
           p: 'Each test prints a line starting `PASS` or `FAIL`, and a failure says what it expected and what it got. Each stage ends with a count such as `Stage 1: 4/6 passed`. The last line is `ALL PASSED`, or the number that failed.',
         },
         {
-          p: 'From your second run at a task, switch on **Hide the code until I ask**. It folds the pseudocode and the Java away until you ask for them.',
+          p: "From your second run at a task, switch on **Hide the code until I ask**. It folds each core stage's Java away until you ask for it.",
         },
       ],
     },
@@ -115,7 +115,7 @@ const guide: Guide = {
       title: 'What these pages are not',
       blocks: [
         {
-          p: "The briefs are written for practice, and a real brief will differ. Each solution is what fits in forty minutes, and each page lists what it leaves out. Every Java file was compiled and run on JDK 21 with every stage's tests. The follow-up answers about production systems are the writers' own knowledge, flagged on each page where unchecked.",
+          p: "The briefs are written for practice, and a real brief will differ. Each solution is what fits in forty minutes, and each page's last ten minutes say what it leaves out. Every Java file was compiled and run on JDK 21 with every stage's tests. The answers about production systems are the writers' own knowledge and were not checked against a source.",
         },
       ],
     },

@@ -31,9 +31,17 @@ export interface Trace {
   note?: string;
 }
 
-/** One stage of the task: a requirement, the code that meets it, and why it is written that way. */
+/**
+ * One stage of the task: a requirement, the code that meets it, and the one decision it
+ * turns on. On the page a stage has five things and no more: what is asked and its tests,
+ * the code, the design choice, a traced run, and the pitfalls.
+ *
+ * A stage up to the page's `core` is a core stage, shown in full. A later stage is a
+ * stretch: it opens with a spoken answer (`verbal`) and keeps the rest folded away. A
+ * stage marked `variant` is another framing of the same task; it is shown last, folded.
+ */
 export interface Part {
-  /** Used in the address (`#/p/<page>/<part>`) and the contents list. */
+  /** Used in the address (`#/p/<page>/<part>`) and the contents list. Never renamed. */
   id: string;
   title: string;
   /** 1 for the first stage. Stages run 1, 2, 3 with no gaps, one part each. */
@@ -42,53 +50,76 @@ export interface Part {
   ask: string;
   /** The tests this stage adds, by the exact names the harness prints. */
   tests: string[];
-  /** This stage's logic in plain steps. No Java syntax. */
-  pseudocode: string;
   /**
    * Regions of `solution/s<stage>/Solution.java` that this stage adds or changes, in
    * reading order. A region is marked `// region name` ... `// endregion` in that file.
    */
   regions: string[];
-  /** Why it is written this way: a few short paragraphs. */
-  explain: string[];
-  /** Notes on single lines. `code` is an exact fragment of one line in the regions shown. */
-  lines?: { code: string; note: string }[];
+  /** This stage's logic in plain steps. No Java syntax. Shown folded under the code. */
+  pseudocode: string;
+  /**
+   * The one decision this stage turns on and why it goes this way: a single short
+   * paragraph, at most 110 words. Name the idiom or the boundary where it matters.
+   */
+  choice: string;
+  /** One sentence to say aloud while writing this stage. Shown under the choice. */
+  say: string;
+  /** A small picture in plain characters, shown before the code. Lines of at most 64. */
+  sketch?: { caption: string; text: string };
   /** A run of this stage's code, taken from the real program's output. */
   trace: Trace;
-  /** One or two sentences to say aloud while writing this stage. */
-  say: string;
-  /** The mistakes this stage invites. Plain sentences. */
+  /** The mistakes this stage invites: two to four plain sentences. */
   pitfalls: string[];
+  /**
+   * For a stretch stage: the answer to give aloud if there is no time to code it, as
+   * exactly three short sentences. For a variant: the one or two sentences to take away.
+   * Not used on core stages.
+   */
+  verbal?: string[];
+  /** Another framing of the same task, not a next step. Shown last on the page, folded. */
+  variant?: boolean;
+  /** One line of warning that belongs with this stage, such as what its tests cannot show. */
+  caveat?: string;
 }
 
 export interface Practice {
   /** The folder name. */
   id: string;
   title: string;
-  /** One or two sentences under the title, also used by search, the sidebar and the home page. */
+  /** One sentence under the title: what to build. Also used by search, the sidebar and the home page. */
   summary: string;
   /** A fair time, in minutes, to reach `core` with its tests passing. */
   minutes: number;
-  /** The stage that counts as "done" in a timed session. Later stages are extensions. */
+  /** The stage that counts as "done" in a timed session. Later stages are stretches. */
   core: number;
+  /**
+   * What the task is testing: one or two sentences, then exactly three points, each a
+   * plain sentence (not a bold term and an explanation).
+   */
+  testing: { intro: string; points: string[] };
+  /** How to use the page: one or two sentences on what to drill and what only to talk through. */
+  use: string;
   /** The task as it would be given at the start, in a few short paragraphs. */
   brief: string[];
-  /** What the starter file already contains, so the reader knows what not to write. */
+  /** What the starter file already contains, so the reader knows what not to write. At most five short items. */
   given: string[];
-  /** Questions to ask before writing code. `assume` is what to say you will assume if nobody answers. */
+  /** Five or six questions to ask before writing code. `assume` is what to say you will assume if nobody answers. */
   ask: { q: string; why: string; assume: string }[];
-  /** The whole solution in plain steps, at most about 25 lines. */
+  /** The whole solution in plain steps, at most about 25 lines. Shown folded. */
   outline: string;
   parts: Part[];
-  /** What an interviewer asks next, with an answer short enough to say. */
-  followUps: { q: string; a: string[] }[];
-  /** How people lose time on this task. Plain sentences. */
-  mistakes: string[];
-  /** Other pages on this site that show the mechanism. */
-  see: { href: string; label: string; why: string }[];
-  /** What this page leaves out or makes simpler than production code. */
-  simplified: string[];
-  /** Facts the writer could not check against a source. Shown at the foot of the page. */
+  /**
+   * The last ten minutes: what an interviewer asks once the code works, and what the
+   * solution leaves out compared with production code, as one list. Each answer is two
+   * or three sentences, short enough to say.
+   */
+  followUps: { q: string; a: string }[];
+  /** Other pages on this site that show the mechanism. One line of links at the foot. */
+  see: { href: string; label: string }[];
+  /**
+   * Facts the writer could not check against a source. Kept here for whoever maintains
+   * the page; not shown to the reader.
+   */
   unverified?: string[];
 }
 

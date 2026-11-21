@@ -73,7 +73,9 @@ public class Solution {
         private final int maxFailures;
         private final long windowMillis;
         private final long cooldownMillis;
-        private final Map<String, Breaker> breakers = new HashMap<>();
+        // region concurrent-map
+        private final Map<String, Breaker> breakers = new ConcurrentHashMap<>();
+        // endregion
 
         WebClient(Remote remote, Clock clock) {
             this(remote, clock, 3, Duration.ofMinutes(10),
@@ -105,39 +107,10 @@ public class Solution {
             return response;
         }
 
-        // region replay
+        // TODO stage 5: one ALLOWED, BLOCKED or INVALID for each line.
         public List<String> replay(List<String> lines) {
-            List<String> results = new ArrayList<>();
-            for (String line : lines) {
-                results.add(replayLine(line));
-            }
-            return results;
+            throw new UnsupportedOperationException("stage 5");
         }
-        // endregion
-
-        // region replay-line
-        /** The same breaker as execute(), with the line's time and answer. */
-        private String replayLine(String line) {
-            String[] parts = line.trim().split("\\s+");
-            if (parts.length != 3) {
-                return "INVALID";
-            }
-            long at;
-            int status;
-            try {
-                at = Long.parseLong(parts[0]);
-                status = Integer.parseInt(parts[2]);
-            } catch (NumberFormatException e) {
-                return "INVALID";
-            }
-            Breaker breaker = breakerFor(parts[1]);
-            if (!breaker.allow(at)) {
-                return "BLOCKED";
-            }
-            breaker.record(at, status >= 500);
-            return "ALLOWED";
-        }
-        // endregion
 
         private Breaker breakerFor(String service) {
             return breakers.computeIfAbsent(service, s -> new Breaker());
@@ -151,7 +124,10 @@ public class Solution {
             private State state = State.CLOSED;
             private long openedAt;
 
-            boolean allow(long now) {
+            // region allow-locked
+            // One lock per service guards each decision. The remote call
+            // itself happens outside it.
+            synchronized boolean allow(long now) {
                 if (state == State.CLOSED) {
                     return true;
                 }
@@ -161,8 +137,10 @@ public class Solution {
                 }
                 return false;
             }
+            // endregion
 
-            void record(long now, boolean failed) {
+            // region record-locked
+            synchronized void record(long now, boolean failed) {
                 if (state == State.HALF_OPEN) {
                     if (failed) {
                         open(now);
@@ -172,7 +150,8 @@ public class Solution {
                     }
                     return;
                 }
-                if (!failed) {
+                // Ignore late answers from calls let through before it opened.
+                if (state != State.CLOSED || !failed) {
                     return;
                 }
                 failures.addLast(now);
@@ -183,6 +162,7 @@ public class Solution {
                     open(now);
                 }
             }
+            // endregion
 
             private void open(long now) {
                 state = State.OPEN;
@@ -284,36 +264,10 @@ public class Solution {
         endStage(3);
     }
 
-    // Stage 4. Same rules, but time comes in the input. Each line is
-    // "timestampMillis service statusCode", what the service would answer
-    // then. Say ALLOWED or BLOCKED per line, using the same breaker. A line
-    // that cannot be read gives INVALID and changes nothing.
-    static void stage4() {
-        test("replay blocks after the trip and keeps services apart", () -> {
-            var t = new Env();
-            expect(List.of("ALLOWED", "ALLOWED", "ALLOWED", "ALLOWED",
-                    "BLOCKED"), t.client.replay(List.of("0 B 500",
-                    "1000 B 500", "2000 B 502", "3000 C 200", "4000 B 200")));
-            expect(0, t.remote.calls("B"));
-        });
-        test("replay applies the window and the cooldown", () -> expect(
-                List.of("ALLOWED", "ALLOWED", "ALLOWED", "ALLOWED",
-                        "BLOCKED", "ALLOWED", "ALLOWED"),
-                new Env().client.replay(List.of("0 B 500", "60000 B 500",
-                        "600000 B 500", "600001 B 500", "900000 B 200",
-                        "900001 B 200", "900002 B 500"))));
-        test("unreadable lines are invalid and change nothing", () -> expect(
-                List.of("ALLOWED", "ALLOWED", "INVALID", "INVALID",
-                        "INVALID", "INVALID", "ALLOWED", "BLOCKED"),
-                new Env().client.replay(List.of("0 B 500", "1 B 500", "",
-                        "2 B", "x B 500", "3 B 500 x", "4 B 500", "5 B 200"))));
-        endStage(4);
-    }
-
-    // Stage 5. Many threads call execute at once. No failure may be lost.
+    // Stage 4. Many threads call execute at once. No failure may be lost.
     // When the cooldown ends exactly one trial goes out; the rest stay
     // blocked until it reports. A slow call must not hold up the others.
-    static void stage5() {
+    static void stage4() {
         test("no failure is lost under contention", () -> {
             for (int round = 0; round < 16; round++) {
                 var t = new Env(4000);
@@ -356,6 +310,32 @@ public class Solution {
             t.gate.countDown();
             expect(true, ok && await(slow));
         });
+        endStage(4);
+    }
+
+    // Stage 5. Same rules, but time comes in the input. Each line is
+    // "timestampMillis service statusCode", what the service would answer
+    // then. Say ALLOWED or BLOCKED per line, using the same breaker. A line
+    // that cannot be read gives INVALID and changes nothing.
+    static void stage5() {
+        test("replay blocks after the trip and keeps services apart", () -> {
+            var t = new Env();
+            expect(List.of("ALLOWED", "ALLOWED", "ALLOWED", "ALLOWED",
+                    "BLOCKED"), t.client.replay(List.of("0 B 500",
+                    "1000 B 500", "2000 B 502", "3000 C 200", "4000 B 200")));
+            expect(0, t.remote.calls("B"));
+        });
+        test("replay applies the window and the cooldown", () -> expect(
+                List.of("ALLOWED", "ALLOWED", "ALLOWED", "ALLOWED",
+                        "BLOCKED", "ALLOWED", "ALLOWED"),
+                new Env().client.replay(List.of("0 B 500", "60000 B 500",
+                        "600000 B 500", "600001 B 500", "900000 B 200",
+                        "900001 B 200", "900002 B 500"))));
+        test("unreadable lines are invalid and change nothing", () -> expect(
+                List.of("ALLOWED", "ALLOWED", "INVALID", "INVALID",
+                        "INVALID", "INVALID", "ALLOWED", "BLOCKED"),
+                new Env().client.replay(List.of("0 B 500", "1 B 500", "",
+                        "2 B", "x B 500", "3 B 500 x", "4 B 500", "5 B 200"))));
         endStage(5);
     }
 

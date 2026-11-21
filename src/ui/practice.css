@@ -25,9 +25,43 @@
 }
 
 .pp-facts {
-  margin-top: 10px;
+  margin-top: 8px;
   font: 600 0.95rem/1.4 var(--sans-data);
   color: var(--ink-2);
+}
+
+/* ---- the opening: what is tested and how to use the page, kept compact so it sits above the fold ---- */
+
+.pp-open {
+  margin-top: 14px;
+  line-height: 1.55;
+}
+
+.pp-open + .pp-open {
+  margin-top: 10px;
+}
+
+.pp .pp-open-h {
+  margin: 0 0 2px;
+  font-size: 1rem;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+
+.pp-open-list {
+  margin-top: 4px;
+}
+
+.pp-open-list li + li {
+  margin-top: 2px;
+}
+
+.pp-open code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: #e8ecf2;
+  padding: 0.08em 0.32em;
+  border-radius: 4px;
 }
 
 /* ---- the tool bar: always in reach, never over the words it scrolls past ---- */
@@ -236,6 +270,10 @@
 .pp-toc-core {
   font-weight: 650;
   color: var(--ink);
+}
+
+.pp-toc-list li.is-light .pp-toc-title {
+  font-weight: 500;
 }
 
 .pp-toc-list li.is-core a {
@@ -499,7 +537,8 @@
   display: inline;
 }
 
-.pp-trace-box:has(.pp-trace-wrap[role='region']) .pp-scroll-hint {
+.pp-trace-box:has(.pp-trace-wrap[role='region']) .pp-scroll-hint,
+.pp-sketch:has(.pp-sketch-pre[role='region']) .pp-scroll-hint {
   display: block;
   margin-top: 4px;
   font-size: 0.86rem;
@@ -524,6 +563,7 @@
 
 /* While it scrolls, a shadow at the right edge says there is more. */
 .pp-pre[role='region'],
+.pp-sketch-pre[role='region'],
 .pp-trace-wrap[role='region'] {
   background:
     linear-gradient(to right, var(--surface) 30%, rgb(255 255 255 / 0)) left / 24px 100% no-repeat local,
@@ -547,37 +587,95 @@
   border-width: 1px;
 }
 
-.pp-whole {
-  margin: -6px 0 16px;
+/* ---- disclosures: a real <details>, a plus that turns to a minus, a ring when focused ---- */
+
+.pp-folds {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin: -4px 0 4px;
 }
 
-.pp-whole > summary {
+.pp-fold {
+  align-self: stretch;
+}
+
+.pp-fold > summary {
   display: inline-flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 8px;
   min-height: 40px;
-  padding: 9px 4px 0;
+  padding: 9px 6px 0 2px;
   font-weight: 650;
   cursor: pointer;
+  list-style: none;
+  border-radius: 4px;
 }
 
-.pp-whole-t {
+.pp-fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.pp-fold > summary::before {
+  content: '+';
+  flex: none;
+  width: 1em;
+  font: 700 1rem var(--mono);
+  color: var(--ink-2);
+}
+
+.pp-fold[open] > summary::before {
+  content: '\2212';
+}
+
+.pp-fold-t {
   text-decoration: underline;
   text-decoration-color: var(--rule-strong);
   text-underline-offset: 0.2em;
 }
 
-.pp-whole > summary:hover .pp-whole-t {
+.pp-fold > summary:hover .pp-fold-t {
   text-decoration-color: currentColor;
 }
 
-.pp-whole-n {
+.pp-fold > summary:focus-visible,
+.pp-fu > summary:focus-visible {
+  outline: 3px solid var(--path);
+  outline-offset: 2px;
+}
+
+.pp-fold-n {
   font: 400 0.9rem var(--sans-data);
   color: var(--ink-2);
 }
 
-.pp-whole[open] > .pp-code {
-  margin-top: 4px;
+.pp-fold[open] > .pp-code {
+  margin-top: 6px;
+}
+
+/* The stretch and variant fold: a plain bordered button, so it reads as the way in to the rest. */
+.pp-fold.pp-more {
+  margin-top: 14px;
+}
+
+.pp-fold.pp-more > summary {
+  padding: 8px 14px 8px 10px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+.pp-fold.pp-more > summary:hover {
+  border-color: var(--ink);
+}
+
+.pp-fold.pp-more > summary .pp-fold-t {
+  text-decoration: none;
+}
+
+.pp-fold.pp-more[open] > summary {
+  margin-bottom: 4px;
 }
 
 /* ---- practice mode ---- */
@@ -607,6 +705,99 @@
   margin-top: 34px;
 }
 
+/* A core stage's five things hang off one rule down the left, so they read as one unit. */
+.pp-part.is-core .pp-things {
+  margin-top: 6px;
+  padding-left: 18px;
+  border-left: 2px solid var(--rule);
+}
+
+.pp-thing + .pp-thing {
+  margin-top: 26px;
+}
+
+.pp-thing > p + p {
+  margin-top: 10px;
+}
+
+/* Stretch stages and the variant: lighter, so the eye goes to the core. */
+.pp-part.is-stretch,
+.pp-part.is-variant {
+  border-top: 1px solid var(--rule-strong);
+  padding-top: 16px;
+}
+
+.pp-part.is-stretch h2,
+.pp-part.is-variant h2 {
+  font-size: 1.3rem;
+}
+
+.pp-part.is-stretch .pp-stage-n,
+.pp-part.is-variant .pp-stage-n {
+  color: var(--ink-2);
+}
+
+.pp-part.is-variant {
+  margin-top: 34px;
+}
+
+.pp-more .pp-things {
+  padding: 4px 0 4px 16px;
+  border-left: 2px solid var(--rule);
+}
+
+.pp-verbal {
+  margin-top: 8px;
+}
+
+.pp-body .pp-verbal-h {
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+
+.pp-body .pp-caveat {
+  margin-top: 10px;
+  font-size: 0.95rem;
+  color: var(--ink-2);
+}
+
+.pp-caveat-who {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* ---- the foot: related pages on one line ---- */
+
+.pp-see {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  margin-top: 40px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+  font-size: 0.95rem;
+}
+
+.pp-see-h {
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.pp-see ul {
+  display: contents;
+}
+
+.pp-see li + li::before {
+  content: '·';
+  margin-right: 14px;
+  color: var(--ink-3);
+}
+
+.pp-see li {
+  display: inline;
+}
+
 .pp-part-head h2 {
   margin-top: 4px;
 }
@@ -631,8 +822,57 @@
 }
 
 .pp-h3 {
-  font-size: 1.08rem;
-  margin: 22px 0 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  font-size: 1.12rem;
+  margin: 0 0 8px;
+}
+
+.pp-h3-stage {
+  font: 650 0.8rem var(--sans-data);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.pp-body .pp-tests-h {
+  margin: 12px 0 4px;
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--ink-2);
+}
+
+/* The sketch: plain characters that never wrap, at code size, scrolling inside its frame only if it must. */
+.pp-sketch {
+  margin: 4px 0 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.pp-body .pp-sketch-cap {
+  background: #f8fafc;
+  padding: 8px 12px;
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--rule);
+}
+
+.pp-sketch-pre {
+  margin: 0;
+  padding: 10px 14px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  font: 400 0.8125rem/1.45 var(--mono);
+  white-space: pre;
+}
+
+.pp-sketch-pre:focus-visible {
+  outline-offset: -3px;
 }
 
 .pp-ask {
@@ -669,70 +909,6 @@
   content: 'TEST ';
   font-weight: 700;
   color: var(--ink-3);
-}
-
-.pp-lines {
-  display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: 0;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-s);
-  background: var(--surface);
-  overflow: hidden;
-}
-
-.pp-lines dt,
-.pp-lines dd {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--rule);
-}
-
-.pp-lines dt {
-  max-width: 24rem;
-  background: #f8fafc;
-  border-right: 1px solid var(--rule);
-}
-
-.pp-lines dd {
-  line-height: 1.5;
-  font-size: 0.97rem;
-}
-
-.pp-lines > :nth-last-child(-n + 2) {
-  border-bottom: 0;
-}
-
-.pp-body .pp-line-code {
-  display: block;
-  overflow-x: auto;
-  white-space: pre;
-  font: 400 0.8125rem/1.6 var(--mono);
-  background: none;
-  padding: 0;
-  overflow-wrap: normal;
-}
-
-@media (max-width: 599px) {
-  .pp-lines {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .pp-lines dt {
-    max-width: none;
-    border-right: 0;
-    border-bottom: 0;
-    padding-bottom: 4px;
-  }
-
-  .pp-lines > :nth-last-child(2) {
-    border-bottom: 0;
-  }
-
-  /* One line of code may wrap on a phone, rather than hide its end. */
-  .pp-body .pp-line-code {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
 }
 
 /* The trace: its caption outside the frame that scrolls, so a phone shows it whole. */
@@ -836,7 +1012,7 @@
 }
 
 .pp-say {
-  margin: 22px 0 6px;
+  margin: 12px 0 6px;
   padding: 12px 16px;
   border: 1px dashed var(--rule-strong);
   border-radius: var(--radius-s);
@@ -900,10 +1076,6 @@
 
 .pp-fu-a {
   padding: 0 14px 12px calc(14px + 1em + 10px);
-}
-
-.pp-unverified {
-  margin-top: 36px;
 }
 
 /* ---- the guide ---------------------------------------------------------------- */
@@ -1058,6 +1230,18 @@
   .pp-ask,
   .pp-say {
     padding: 10px 12px;
+  }
+
+  .pp-part.is-core .pp-things {
+    padding-left: 10px;
+  }
+
+  .pp-sketch-pre {
+    padding: 10px 12px;
+  }
+
+  .pp-more .pp-things {
+    padding-left: 10px;
   }
 }
 

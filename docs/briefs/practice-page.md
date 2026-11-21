@@ -20,29 +20,45 @@ So the page has two jobs. Teach him to write this code himself, a stage at a tim
 
 He does not need Java syntax explained. He does need the idiom he may have forgotten named at the moment it is used (`computeIfAbsent`, `ArrayDeque`, a record, `BigDecimal.setScale`), in one clause.
 
+## The shape of a page
+
+The reader drills the questions and the core stages until they feel natural, and only talks through the rest. The page is built for that. Top to bottom:
+
+1. Opening: title, one-sentence `summary`, what the task is testing (`testing`), how to use the page (`use`), then the brief and what the starter gives.
+2. Ask first: five or six questions.
+3. One section for each core stage (stages 1 to `core`), each with exactly five things: what is asked and its tests, the code, the design choice, a traced run, the pitfalls.
+4. Stretch stages (after `core`): each opens with a spoken answer of three sentences, with its code and the rest folded away.
+5. The last ten minutes: one list of questions and short answers, covering both what an interviewer asks next and what the solution leaves out.
+6. A variant, if the page has one: another framing of the same task, folded, with one takeaway.
+
+Earlier versions of these pages had ten subsections a stage, separate "what they ask next", "where the time goes" and "what this page leaves out" sections, and a list of unchecked facts. Those are gone. Say each thing once, in the place it is used.
+
 ## What goes where
 
-- `summary`: what the task is and what it is really testing, in one or two sentences.
-- `brief`: the task as given at the start. Short. Only the opening requirement; later requirements belong to the parts.
-- `given`: what the starter already has, so he does not rewrite it.
-- `ask`: five to seven questions worth asking before typing. For each: why the answer changes the code, and the assumption to state aloud if the interviewer says "your call". Order them as he would ask them. The first two or three should be the ones that matter most; he will not have time for seven.
-- `outline`: the finished solution in plain steps. Read it aloud: if it sounds like Java, rewrite it.
-- `parts`: one per stage, in stage order. For each:
+- `summary`: one sentence saying what to build, with the task's own numbers.
+- `testing`: `intro` is one or two sentences on what the task is really for: the code is short (give the measured number of lines he writes by the core stage; count them in the stage file, do not guess), and what counts is how he handles what the brief leaves out, where he puts the state, and how he works against the clock. Then exactly three `points`, each one plain sentence naming one thing being watched and what it looks like on this task (for the circuit breaker: asking what a failure is and whether the window slides before typing; testing exact millisecond boundaries with the supplied clock and no sleeping; putting the state in a small class early so that one service becoming many is a two-line change). Do not write them as a bold term followed by an explanation. Do not claim to know how any employer marks.
+- `use`: one or two sentences. Drill "Ask first" and the core stages until they feel natural. Treat the stretch stages and the last ten minutes as things to say, not to code up front.
+- `brief`: the task as given at the start. Short. Only the opening requirement.
+- `given`: at most five short items on what the starter already has, so he does not rewrite it. One line each.
+- `ask`: five or six questions, most important first. For each: why the answer changes the code (one or two sentences), and the assumption to state aloud.
+- `outline`: the finished solution in plain steps, about 20 lines. It is shown folded.
+- `parts`: one per stage, in stage order. For every part:
   - `ask`: the new requirement in the interviewer's voice, one or two sentences.
-  - `tests`: the names from the facts file, exactly.
-  - `pseudocode`: this stage's logic only, in plain steps, lines at most 64 characters. Indent with two spaces. No braces, no types, no semicolons.
-  - `regions`: the region names from the facts file, in the order he should read them.
-  - `explain`: three to five short paragraphs. Start with the decision this stage turns on (which data structure, where the state lives, what the boundary does) and why this choice and not the obvious alternative. Then what changed since the stage before. Give costs as numbers where there are any (memory per key, work per call).
-  - `lines`: two to four single lines worth a note: the boundary comparison, the line that is easy to get backwards, the idiom. `code` must be an exact fragment of one line in the regions you listed; copy it from the stage file, do not retype it.
-  - `trace`: the run from the facts file as a table. Keep the engineer's real output; you may rename columns and shorten cell text, but change no value. Six to ten rows. The caption says what to notice. Say in `note` which test it matches, if it does.
-  - `say`: what to say aloud while writing this stage, in his voice, one or two sentences. It should name the decision, not narrate the typing.
-  - `pitfalls`: two to four mistakes this stage invites, each one sentence saying what goes wrong and what it looks like when it does.
-- `followUps`: eight to ten questions an interviewer asks once the code works, hardest last. Each answer is two to four short sentences he could say in thirty seconds: the position first, then the reason, then what it costs.
-- `mistakes`: four to six ways people lose time on this task. Concrete: "Writing the per-service map before one service works" beats "over-engineering".
-- `see`: links to this site's animated pages that show the mechanism, where one exists. Use only ids you have checked exist in `src/catalog.ts` (structures, `#/s/<id>`) or `src/reading/concepts/` (`#/c/<id>`).
-- `simplified`: what the solution leaves out compared with production code. The site's rule is to say on the page what is simplified.
-- `unverified`: anything in your words that is a fact about a product, a library default or common practice and that you have not checked. Mechanics you can read off the code are not unverified.
-- `minutes` and `core`: from the facts file.
+  - `tests`: the names from the starter, exactly.
+  - `regions`: the region names in that stage's file, in reading order.
+  - `pseudocode`: this stage's logic only, in plain steps, lines at most 64 characters, two-space indent, no braces, types or semicolons. It is shown folded under the code.
+  - `choice`: the one decision the stage turns on, as a single paragraph of at most 110 words. State the choice, why this and not the obvious alternative, and the boundary or idiom that is easy to get wrong (name the comparison exactly as the code has it). This replaces the old explanation and line notes: keep the best of both and cut the rest.
+  - `say`: one sentence to say aloud while writing the stage, in his voice.
+  - `sketch`: only where a small picture helps him hold the whole thing in his head (a state machine, a window on a timeline). Plain characters, lines at most 64, drawn so that every arrow has one start and one end. Most stages have none.
+  - `trace`: the table from a real run. Six to ten rows. The caption says what to notice.
+  - `pitfalls`: two to four, each one sentence saying what goes wrong and what it looks like when it does.
+  - For a stretch stage (after `core`), also `verbal`: exactly three short sentences that answer the requirement aloud, for when there is no time to code it. They must be true of the code in that stage's file.
+  - `caveat`: one line, only where the stage needs a warning the reader would otherwise be misled without, such as a threading test that passes on wrong code most of the time. Give the measured figure.
+  - `variant: true` with a one- or two-sentence `verbal`: only for a part that is another framing of the task, not a next step.
+- `followUps`: ten to twelve questions for the last ten minutes, hardest last. Each answer is two or three sentences he could say in twenty seconds: the position first, then the reason or the cost. Fold what the solution leaves out into this list as questions ("What would you change before this went to production?", "What happens if a call takes longer than the cooldown?") so that nothing a reader should know is lost, and nothing is said twice.
+- `see`: links to this site's pages that show the mechanism, label only. Use only ids you have checked exist in `src/catalog.ts` (structures, `#/s/<id>`), `src/reading/concepts/` (`#/c/<id>`) or `src/practice/` (`#/p/<id>`).
+- `unverified`: keep the existing list, trimmed to what still applies to the words on the page. It is not shown to the reader; it is the record for whoever maintains the page.
+- `minutes` and `core`: unchanged.
 
 ## Accuracy
 
