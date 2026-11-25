@@ -1260,3 +1260,74 @@
     color: var(--ink-2);
   }
 }
+
+/* ---- the tutorial link on a practice page ---- */
+
+.pp-tut {
+  margin-top: 12px;
+  line-height: 1.5;
+}
+
+.pp-tut-link {
+  font-weight: 700;
+}
+
+.pp-tut-note {
+  color: var(--ink-2);
+}
+
+/* ---- the tutorial (#/p/<id>/guide): one long article, prose at a reading measure, code in its own frames ---- */
+
+.pp-g {
+  --pp-bar-h: 0px;
+}
+
+.pp-g-lede {
+  font-size: 1rem;
+}
+
+.pp-g-body > .pp-section > :is(p, ul, ol, h2, h3),
+.pp-g-back {
+  max-width: 70ch;
+}
+
+.pp-g-body .pp-list + p,
+.pp-g-body p + .pp-list,
+.pp-g-body .pp-list + .pp-list {
+  margin-top: 12px;
+}
+
+.pp .pp-g-h3 {
+  margin: 24px 0 8px;
+  font-size: 1.15rem;
+  line-height: 1.3;
+  scroll-margin-top: 12px;
+}
+
+.pp .pp-g-h3:focus {
+  outline: none;
+}
+
+.pp .pp-g-h3:focus-visible {
+  outline: 3px solid var(--path);
+}
+
+.pp-g-body .pp-code {
+  margin: 12px 0 14px;
+}
+
+.pp-g-toc .pp-toc-list a {
+  grid-template-columns: 2em minmax(0, 1fr);
+}
+
+@media (min-width: 1400px) {
+  .pp-g-toc .pp-toc-list a {
+    grid-template-columns: 1.8em minmax(0, 1fr);
+  }
+}
+
+.pp-g-back {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+}

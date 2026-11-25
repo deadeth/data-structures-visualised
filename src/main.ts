@@ -251,6 +251,8 @@ let shown = '';
 let readingMod: typeof import('./ui/reading-page') | null = null;
 /** The practice page module once loaded, so a change of part on the page shown scrolls instead of drawing it again. */
 let practiceMod: typeof import('./ui/practice-page') | null = null;
+/** The practice tutorial module once loaded, so a change of section in the tutorial on screen scrolls instead of drawing it again. */
+let tutorialMod: typeof import('./ui/practice-guide') | null = null;
 
 async function route(typing = false): Promise<void> {
   // A locked design's address: wait for the quiet unlock first, so an open tab never flashes the form.
@@ -273,8 +275,14 @@ async function route(typing = false): Promise<void> {
     routing = false;
     return;
   }
+  // A practice page's tutorial (`/p/<id>/guide`), opened at a section (`/p/<id>/guide/<n>`) or not.
+  const pg = /^\/p\/([a-z0-9-]+)\/guide(?:\/([0-9.]+))?$/.exec(path);
+  if (pg && tutorialMod && !typing && teardown && tutorialMod.goToSection(pg[1], pg[2])) {
+    routing = false;
+    return;
+  }
   // A pairing practice address: the guide (`/p`), a page (`/p/<id>`), or a page at one part (`/p/<id>/<part>`).
-  const pm = /^\/p(?:\/([a-z0-9-]+)(?:\/([^/]+))?)?$/.exec(path);
+  const pm = pg ? null : /^\/p(?:\/([a-z0-9-]+)(?:\/([^/]+))?)?$/.exec(path);
   const pmPart = pm?.[2] ? decodeURIComponent(pm[2]) : undefined;
   if (pm?.[1] && practiceMod && !typing && teardown && practiceMod.goToPart(pm[1], pmPart)) {
     routing = false;
@@ -340,6 +348,13 @@ async function route(typing = false): Promise<void> {
       readingMod = r;
       document.title = `${r.readingTitle(readKey) ?? 'Page not found'} | Data structures, visualised`;
       return r.mountReading(main, readKey, readSection);
+    });
+  } else if (pg) {
+    document.title = 'Pairing practice | Data structures, visualised';
+    mount = import('./ui/practice-guide').then(async (pt) => {
+      tutorialMod = pt;
+      document.title = `${(await pt.tutorialTitle(pg[1])) ?? 'Page not found'} | Data structures, visualised`;
+      return pt.mountTutorial(main, pg[1], pg[2]);
     });
   } else if (pm) {
     document.title = 'Pairing practice | Data structures, visualised';

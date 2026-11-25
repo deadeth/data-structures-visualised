@@ -3,7 +3,7 @@ import { h, scrollRegion, tableRoles } from '../core/dom';
 import { listing, tokenise } from '../core/code';
 import { inline } from './inline';
 import { plain } from '../reading';
-import { FIXTURE_ID, GUIDE, PRACTICES, loadPractice, type PracticeEntry, type PracticeSources } from '../practice';
+import { FIXTURE_ID, GUIDE, PRACTICES, TUTORIAL_PART, loadPractice, type PracticeEntry, type PracticeSources } from '../practice';
 import { proseCell, stripRegions } from '../practice/java';
 import { CLOCK_KEY, IDLE, clockText, elapsed, overBy, parseClock, spoken, start, stop, type ClockState } from '../practice/clock';
 import type { Guide, GuideBlock, Part, Practice, Trace } from '../practice/types';
@@ -51,7 +51,7 @@ function javaLine(text: string): (Node | string)[] {
  * A block of code in a frame of its own. Lines never wrap: the frame scrolls sideways, and while it does it
  * is a named region with a tab stop and says so in its header.
  */
-function codeFrame(lines: string[], o: { lang: 'java' | 'pseudo'; label: string; title?: (Node | string)[]; tools?: HTMLElement[] }): HTMLElement {
+export function codeFrame(lines: string[], o: { lang: 'java' | 'pseudo'; label: string; title?: (Node | string)[]; tools?: HTMLElement[] }): HTMLElement {
   const code = h('code', null);
   lines.forEach((l, i) => {
     if (i) code.append('\n');
@@ -388,8 +388,16 @@ function drawPage(host: HTMLElement, entry: PracticeEntry, src: PracticeSources,
       r.open = false;
       paintReveal(r);
     }
+    paintTutorial();
     say(hide ? "Practice mode on: each core stage's Java is hidden until you ask." : 'Practice mode off: the Java is shown.');
   });
+
+  // ---- the tutorial: a long article at `#/p/<id>/guide`, linked here when the page has one ----
+  // It shows the whole solution, so the link says so, and says it more firmly in practice mode.
+  const tutorialNote = h('span.pp-tut-note');
+  const paintTutorial = () => (tutorialNote.textContent = hide ? 'It shows the full solution: read it after your run.' : 'A step-by-step article. It shows the full solution.');
+  const tutorialLink = entry.hasTutorial ? h('p.pp-tut', null, h('a.pp-tut-link', { href: `#/p/${id}/${TUTORIAL_PART}` }, 'Read the tutorial'), ' ', tutorialNote) : null;
+  paintTutorial();
 
   // ---- the head: title, summary, facts, what is tested and how to use the page ----
   // Pages written to the contract before 20 November 2026 lack `testing` and `use`; they draw without them.
@@ -409,6 +417,7 @@ function drawPage(host: HTMLElement, entry: PracticeEntry, src: PracticeSources,
         )
       : null,
     p.use ? h('section.pp-open', { 'aria-labelledby': 'pp-h-use' }, h('h2.pp-open-h', { id: 'pp-h-use' }, 'How to use this page'), h('p', null, inline(p.use))) : null,
+    tutorialLink,
   );
 
   // ---- the opening sections ----
@@ -474,6 +483,7 @@ function drawPage(host: HTMLElement, entry: PracticeEntry, src: PracticeSources,
     ...stretch.map((pt) => tocItem(pt.id, [h('span.pp-toc-n', null, `Stage ${pt.stage}`), h('span.pp-toc-title', null, inline(pt.title))], 'is-light', h('span.pp-toc-ext', null, 'Stretch: say it, code it if there is time'))),
     tocItem(FU_ID, [h('span.pp-toc-n', null, ''), h('span.pp-toc-title', null, 'The last ten minutes')], 'is-light'),
     ...(variant ? [tocItem(variant.id, [h('span.pp-toc-n', null, ''), h('span.pp-toc-title', null, inline(variant.title))], 'is-light', h('span.pp-toc-ext', null, 'Variant'))] : []),
+    ...(entry.hasTutorial ? [tocItem(TUTORIAL_PART, [h('span.pp-toc-n', null, ''), h('span.pp-toc-title', null, 'Read the tutorial')], 'is-light', h('span.pp-toc-ext', null, 'Shows the full solution'))] : []),
   );
   const toc = h('nav.pp-toc', { 'aria-labelledby': 'pp-toc-h' }, h('p.pp-toc-h', { id: 'pp-toc-h' }, 'On this page'), tocList);
 

@@ -7,6 +7,7 @@ import { READING_FILES, plain } from '../reading';
 import type { Block, Reading } from '../reading/types';
 import { loadCourse } from '../course';
 import { PRACTICES } from '../practice';
+import { parseArticle, plainOf, sectionsOf, type ArticleBlock } from '../practice/article';
 
 interface Doc {
   kind: 'Term' | 'Component' | 'Connection' | 'Tour step' | 'Decision' | 'Interview question' | 'Structure' | 'Reading' | 'Walkthrough' | 'Section' | 'Course' | 'Course module' | 'Practice';
@@ -150,6 +151,18 @@ function build(): Promise<Doc[]> {
           from: name,
         });
       }
+    }
+    // Each page's tutorial, where it has one: the article, and one entry for each numbered section. The Markdown is
+    // fetched here, the first time someone searches, never with the site.
+    for (const e of PRACTICES.filter((x) => x.hasTutorial)) {
+      const a = parseArticle(await e.tutorial().catch(() => '')).article;
+      if (!a) continue;
+      const base = `#/p/${e.id}/guide`;
+      const title = plainOf(a.title);
+      const words = (bs: ArticleBlock[]) => bs.map((b) => (b.kind === 'code' ? '' : b.kind === 'list' ? b.items.map(plainOf).join(' ') : plainOf(b.text))).join(' ');
+      const secs = sectionsOf(a);
+      docs.push({ kind: 'Practice', title, also: ['tutorial', 'article', plain(e.page.title), ...secs.map((x) => x.title)], text: words(a.blocks), href: base, where: `Pairing practice: tutorial for ${plain(e.page.title)}` });
+      for (const x of secs) docs.push({ kind: 'Practice', title: `${x.number}. ${x.title}`, also: [title], text: words(x.blocks), href: `${base}/${x.number}`, where: `${title}: section`, from: title });
     }
     // The course and its modules, once the course is written. A module is found by its items' titles too.
     const course = await loadCourse().catch(() => null);

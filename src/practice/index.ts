@@ -12,6 +12,11 @@ import type { Guide, Practice } from './types';
 const pageFiles = import.meta.glob<{ default?: Practice }>('./*/page.ts', { eager: true });
 const guideFiles = import.meta.glob<{ default?: Guide }>('./guide.ts', { eager: true });
 const javaFiles = import.meta.glob<string>(['./*/starter/Solution.java', './*/solution/*/Solution.java'], { query: '?raw', import: 'default' });
+/**
+ * Each page's tutorial, `src/practice/<id>/guide.md`, optional. Like the Java, each is its own small chunk fetched
+ * as text only when asked for; the glob's keys alone say which pages have one, without loading any.
+ */
+const tutorialFiles = import.meta.glob<string>('./*/guide.md', { query: '?raw', import: 'default' });
 
 /** The development fixture's id. It opens at `#/p/fixture-practice` in development only. */
 export const FIXTURE_ID = 'fixture-practice';
@@ -35,12 +40,19 @@ export interface PracticeEntry {
   dir: string;
   /** The Java, fetched on first call and kept. */
   sources(): Promise<PracticeSources>;
+  /** Whether the page has a tutorial (`guide.md`), known without loading it. */
+  hasTutorial: boolean;
+  /** The tutorial's Markdown, fetched on first call and kept; '' when the page has none. */
+  tutorial(): Promise<string>;
 }
+
+/** The address segment of a page's tutorial, `#/p/<id>/guide`. No part may take this id. */
+export const TUTORIAL_PART = 'guide';
 
 type Loaders = Record<string, () => Promise<string>>;
 
 /** One entry from a page and the Java loaders of its folder (paths as the glob gives them). */
-function makeEntry(id: string, page: Practice, java: Loaders, dir: string): PracticeEntry {
+function makeEntry(id: string, page: Practice, java: Loaders, dir: string, tutorials: Loaders = {}): PracticeEntry {
   const mine = Object.entries(java).flatMap(([path, load]) => {
     const p = javaPath(path);
     return p && p.id === id ? [{ stage: p.stage, load }] : [];
@@ -48,6 +60,8 @@ function makeEntry(id: string, page: Practice, java: Loaders, dir: string): Prac
   const starter = mine.find((f) => f.stage === 'starter');
   const stages = mine.filter((f): f is { stage: number; load: () => Promise<string> } => f.stage !== 'starter').sort((a, b) => a.stage - b.stage);
   let loaded: Promise<PracticeSources> | null = null;
+  const tutorialLoad = Object.entries(tutorials).find(([path]) => folderOf(path.replace(/^\.\/__fixtures__\//, './')) === id)?.[1];
+  let tutorialText: Promise<string> | null = null;
   return {
     id,
     page,
@@ -59,6 +73,8 @@ function makeEntry(id: string, page: Practice, java: Loaders, dir: string): Prac
         const [st, ...rest] = await Promise.all([starter ? starter.load() : Promise.resolve(''), ...stages.map((s) => s.load())]);
         return { starter: st, stages: new Map(stages.map((s, i) => [s.stage, rest[i]])) };
       })()),
+    hasTutorial: !!tutorialLoad,
+    tutorial: () => (tutorialText ??= tutorialLoad ? tutorialLoad() : Promise.resolve('')),
   };
 }
 
@@ -74,7 +90,7 @@ const rank = (id: string) => {
 
 /** Every listed page: the guide's order first, then the rest by title. Never the fixture. */
 export const PRACTICES: PracticeEntry[] = Object.entries(pageFiles)
-  .flatMap(([path, m]) => (m.default ? [makeEntry(folderOf(path), m.default, javaFiles, `src/practice/${folderOf(path)}`)] : []))
+  .flatMap(([path, m]) => (m.default ? [makeEntry(folderOf(path), m.default, javaFiles, `src/practice/${folderOf(path)}`, tutorialFiles)] : []))
   .sort((a, b) => rank(a.id) - rank(b.id) || a.page.title.localeCompare(b.page.title));
 
 /** Folders that hold Java, with or without a `page.ts`: the shape tests skip those without one. */
@@ -92,11 +108,12 @@ export async function loadPractice(id: string): Promise<PracticeEntry | undefine
   if (found || !import.meta.env.DEV) return found;
   const pages = import.meta.glob<{ default?: Practice }>('./__fixtures__/*/page.ts');
   const java = import.meta.glob<string>(['./__fixtures__/*/starter/Solution.java', './__fixtures__/*/solution/*/Solution.java'], { query: '?raw', import: 'default' });
+  const tutorials = import.meta.glob<string>('./__fixtures__/*/guide.md', { query: '?raw', import: 'default' });
   const path = `./__fixtures__/${id}/page.ts`;
   const load = pages[path];
   if (!load) return undefined;
   const page = (await load()).default;
-  return page ? makeEntry(id, page, java, `src/practice/__fixtures__/${id}`) : undefined;
+  return page ? makeEntry(id, page, java, `src/practice/__fixtures__/${id}`, tutorials) : undefined;
 }
 
 /** The title for the window and the sidebar. */

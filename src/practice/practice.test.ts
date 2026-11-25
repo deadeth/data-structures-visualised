@@ -5,7 +5,8 @@ import { DESIGNS } from '../designs';
 import { LOCKED_IDS } from '../locked/manifest';
 import { READING_FILES } from '../reading';
 import { CLOCK_KEY, IDLE, clockText, elapsed, mmss, overBy, parseClock, spoken, start, stop } from './clock';
-import { FIXTURE_ID, GUIDE, JAVA_FOLDERS, PRACTICES, loadPractice, type PracticeEntry, type PracticeSources } from './index';
+import { FIXTURE_ID, GUIDE, JAVA_FOLDERS, PRACTICES, TUTORIAL_PART, loadPractice, type PracticeEntry, type PracticeSources } from './index';
+import { numberingProblems, parseArticle, type Inline } from './article';
 import { BANNERS, isRegionMarker, proseCell, javaPath, javaSections, stageOf, stagesInTests, stripRegions, testsWithoutStage, withStage, type JavaSections } from './java';
 import type { Practice } from './types';
 import fixtureGuide from './__fixtures__/fixture-guide';
@@ -143,6 +144,7 @@ function checkWords(text: string, at: string, out: string[]): void {
 }
 
 const JAVA_MAX = 80;
+const TRACE_MAX = 120;
 const PSEUDO_MAX = 64;
 const CHOICE_MAX_WORDS = 110;
 const ANSWER_MAX_WORDS = 75;
@@ -172,6 +174,8 @@ function validate(e: PracticeEntry, src: PracticeSources, ctx: Ctx, folder = e.i
     if (ids.has(pt.id)) out.push(at(`parts: part id "${pt.id}" is used twice`));
     ids.add(pt.id);
     if (!/^[a-z0-9-]+$/.test(pt.id)) out.push(at(`part "${pt.id}": id should be lower case letters, digits and hyphens`));
+    // `#/p/<id>/guide` is the tutorial and `#/p/<id>/last-ten-minutes` a section: a part with either id would never be reached.
+    if (pt.id === TUTORIAL_PART || pt.id === 'last-ten-minutes') out.push(at(`part "${pt.id}": the id "${pt.id}" is a reserved address on practice pages`));
   }
   const stages = p.parts.map((pt) => pt.stage).sort((a, b) => a - b);
   stages.forEach((s, i) => {
@@ -417,8 +421,142 @@ describe('practice pages', () => {
       'characters; at most 80',
       'the "Tests" section differs from the starter\'s',
     ]) expect(p).toContain(want);
+    for (const reserved of [TUTORIAL_PART, 'last-ten-minutes']) {
+      const renamed = structuredClone(fixture!.page);
+      renamed.parts[0].id = reserved;
+      expect(validate({ ...fixture!, page: renamed } as PracticeEntry, good, ctx).join('\n')).toContain(`part "${reserved}": the id "${reserved}" is a reserved address`);
+    }
     const offCore = { ...fixture!, page: { ...structuredClone(fixture!.page), core: 7 } } as PracticeEntry;
     expect(validate(offCore, good, ctx).join('\n')).toContain('core: 7 is not the stage of any part');
+  });
+});
+
+// ---- tutorials (`guide.md`) -----------------------------------------------------------------------
+
+const EM_DASH = '\u2014';
+/** The site's own address: a tutorial links out, never back into the site by its full URL. */
+const SITE = /deadeth\.github\.io/i;
+
+/** Every fault in one tutorial: parsing, numbering, Java taken from the page's solution files, widths, words and links. */
+function tutorialProblems(md: string, src: PracticeSources, name: string): string[] {
+  const out: string[] = [];
+  const at = (m: string) => `${name}/guide.md: ${m}`;
+  md.split('\n').forEach((l, i) => {
+    if (l.includes(EM_DASH)) out.push(at(`line ${i + 1} has an em dash`));
+  });
+  const { article, errors } = parseArticle(md);
+  for (const e of errors) out.push(at(`line ${e.line}: ${e.message}`));
+  if (!article) return out;
+  for (const p of numberingProblems(article)) out.push(at(p));
+
+  // Java blocks: each line from a solution file, as written there apart from its indentation.
+  const known = new Set([...src.stages.values()].flatMap((t) => t.replace(/\r\n/g, '\n').split('\n').map((l) => l.trim())));
+  // Prose: the title, headings, paragraphs and list items, as Markdown for the word checks.
+  const prose: { line: number; nodes: Inline[] }[] = [{ line: 1, nodes: article.title }];
+  for (const b of article.blocks) {
+    if (b.kind === 'code') {
+      b.lines.forEach((l, i) => {
+        const n = b.line + 1 + i;
+        // A bare fence holds a picture or real program output, which is not ours to re-wrap: it gets
+        // a wider limit and scrolls sideways inside its frame.
+        const max = b.lang === 'java' ? JAVA_MAX : TRACE_MAX;
+        if (l.length > max) out.push(at(`line ${n}: code line is ${l.length} characters; at most ${max}`));
+        if (b.lang !== 'java' || !l.trim()) return;
+        const t = l.trim();
+        if (t === '...' || t === '// ...') out.push(at(`line ${n}: a java block may not elide code with "${t}"`));
+        else if (isRegionMarker(l)) out.push(at(`line ${n}: a java block may not show a region marker`));
+        else if (!known.has(t)) out.push(at(`line ${n}: "${t}" is in no solution/s<n>/Solution.java of this page`));
+      });
+    } else if (b.kind === 'list') b.items.forEach((it) => prose.push({ line: b.line, nodes: it }));
+    else prose.push({ line: b.line, nodes: b.text });
+  }
+  const markdown = (nodes: Inline[]): string => nodes.map((n) => (n.t === 'text' ? n.text : n.t === 'code' ? `\`${n.text}\`` : n.t === 'bold' ? `**${markdown(n.children)}**` : `[${markdown(n.children)}](${n.href})`)).join('');
+  const links = (nodes: Inline[]): string[] => nodes.flatMap((n) => (n.t === 'link' ? [n.href, ...links(n.children)] : n.t === 'bold' ? links(n.children) : []));
+  for (const { line, nodes } of prose) {
+    checkWords(markdown(nodes), at(`line ${line}`), out);
+    for (const href of links(nodes)) {
+      if (!href.startsWith('https://')) out.push(at(`line ${line}: link ${href} should be https://`));
+      else if (SITE.test(href)) out.push(at(`line ${line}: link ${href} points at this site`));
+    }
+  }
+  // Code may name a company too.
+  for (const b of article.blocks) if (b.kind === 'code') {
+    const co = COMPANIES.exec(b.lines.join('\n'));
+    if (co) out.push(at(`line ${b.line}: code block names a company ("${co[0]}")`));
+  }
+  return out;
+}
+
+describe('practice tutorials', () => {
+  const tutorialPaths = Object.keys(import.meta.glob('./*/guide.md'));
+
+  it('belong to listed pages', () => {
+    for (const path of tutorialPaths) expect(PRACTICES.map((e) => e.id), `${path} has no page.ts beside it`).toContain(path.split('/')[1]);
+  });
+
+  it('the fixture has one, and it uses every element of the subset', async () => {
+    expect(fixture!.hasTutorial).toBe(true);
+    const a = parseArticle(await fixture!.tutorial()).article!;
+    const kinds = new Set(a.blocks.map((b) => (b.kind === 'heading' ? `h${b.level}` : b.kind === 'code' ? `code-${b.lang ?? 'bare'}` : b.kind === 'list' ? (b.ordered ? 'ol' : 'ul') : 'p')));
+    expect([...kinds].sort()).toEqual(['code-bare', 'code-java', 'h2', 'h3', 'ol', 'p', 'ul']);
+    const inl = (nodes: Inline[]): string[] => nodes.flatMap((n) => [n.t, ...(n.t === 'bold' || n.t === 'link' ? inl(n.children) : [])]);
+    const all = new Set(a.blocks.flatMap((b) => (b.kind === 'paragraph' ? inl(b.text) : b.kind === 'list' ? b.items.flatMap(inl) : [])));
+    expect([...all].sort()).toEqual(['bold', 'code', 'link', 'text']);
+  });
+
+  for (const e of [...PRACTICES, { id: FIXTURE_ID } as PracticeEntry]) {
+    it(`${e.id}: its tutorial, if written, parses and keeps the rules`, async () => {
+      const entry = e.id === FIXTURE_ID ? fixture! : e;
+      if (!entry.hasTutorial) return;
+      const problems = tutorialProblems(await entry.tutorial(), await entry.sources(), entry.dir);
+      expect(problems, `\n${problems.join('\n')}\n`).toEqual([]);
+    });
+  }
+
+  it('a broken tutorial fails on every fault it holds', async () => {
+    const src = await fixture!.sources();
+    const md = [
+      '# A Robust Title',
+      '',
+      '## 1. Start',
+      '',
+      `A dash ${EM_DASH} here, a [plain link](http://example.org), a [site link](https://deadeth.github.io/data-structures-visualised/#/p) and ${companyNames()[0]}.`,
+      '',
+      '### 1.2. Skipped',
+      '',
+      '```java',
+      '    int count() {',
+      '    ...',
+      '    // ...',
+      '    // region hit',
+      '    int invented = 42;',
+      '```',
+      '',
+      '```',
+      'x'.repeat(121),
+      '```',
+      '',
+      '## 3. The End',
+    ].join('\n');
+    const p = tutorialProblems(md, src, 'broken').join('\n');
+    for (const want of [
+      'line 5 has an em dash',
+      'banned word or phrase "robust"',
+      'should be "Overview"',
+      'should be "Conclusion"',
+      'sub-section "1.2" should be 1.1',
+      'section "3" should be 2',
+      'line 11: a java block may not elide code with "..."',
+      'line 12: a java block may not elide code with "// ..."',
+      'line 13: a java block may not show a region marker',
+      'line 14: "int invented = 42;" is in no solution',
+      'line 18: code line is 121 characters',
+      'link http://example.org should be https://',
+      'points at this site',
+      'names a company',
+    ]) expect(p).toContain(want);
+    expect(p).not.toContain('line 10:');
+    expect(tutorialProblems('# T\n\n<div>', src, 'html').join()).toContain('line 3: HTML');
   });
 });
 

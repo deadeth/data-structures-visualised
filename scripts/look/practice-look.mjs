@@ -3,7 +3,8 @@
 // development by default) with practice mode off, with it on, and with practice mode off, one follow-up open and
 // the first part's whole-file disclosure open. Then, as pictures of one section each: the first core stage, a stretch
 // stage closed and with its "Show the code and the run" open, and the variant closed and open. Also the first view with
-// the clock running and the bar in place part-way down the page. Prints page errors, whether the page scrolls sideways, code blocks and tables that
+// the clock running and the bar in place part-way down the page; then the page's tutorial (#/p/<id>/guide), if it has
+// one, full page and after a jump from its contents list. Prints page errors, whether the page scrolls sideways, code blocks and tables that
 // scroll inside their frame, and the smallest text found. Exits 1 on any page error or sideways scroll.
 import { createServer } from 'vite';
 import puppeteer from 'puppeteer-core';
@@ -137,6 +138,30 @@ for (const [w, hgt] of [[1440, 900], [390, 844]]) {
   await page.reload({ waitUntil: 'networkidle0' });
   await pause(400);
   console.log(`   after reload the clock reads ${await page.$eval('.pp-time', (e) => e.textContent)}`);
+
+  // The tutorial (#/p/<id>/guide), when the page links one: full page, then a jump from its contents list.
+  await open(`p/${id}`);
+  if (await page.$('.pp-tut-link')) {
+    await open(`p/${id}/guide`);
+    await shot('tutorial');
+    const codes = await page.evaluate(() => [...document.querySelectorAll('.pp-g .pp-pre')].map((e) => `${e.classList.contains('java') ? 'java' : 'bare'}${e.scrollWidth > e.clientWidth + 1 ? ' scrolls' : ''}`).join(', '));
+    const h1s = await page.$$eval('h1', (l) => l.length);
+    console.log(`   tutorial: ${h1s} h1; code blocks: ${codes}`);
+    const links = await page.$$('.pp-g-toc a');
+    if (links.length > 1) {
+      await links[links.length - 1].click();
+      await pause(400);
+      const jump = await page.evaluate(() => {
+        const n = location.hash.split('/').pop();
+        const h2 = document.getElementById(`pp-g-h-${n}`);
+        return { hash: location.hash, headingTop: Math.round(h2?.getBoundingClientRect().top ?? -1), focused: document.activeElement?.id, h1: document.querySelector('h1')?.textContent };
+      });
+      console.log(`   contents jump: ${JSON.stringify(jump)}`);
+      await shot('tutorial-jump', false);
+    }
+  } else console.log(`   ${id} has no tutorial`);
+  await open(`p/${id === 'fixture-practice' ? 'no-such-page' : 'fixture-practice-nope'}/guide`);
+  console.log(`   tutorial of an unknown page: ${await page.$eval('h1', (e) => e.textContent)} | ${await page.title()}`);
 
   await open('p/no-such-page');
   console.log(`   unknown id: ${await page.$eval('h1', (e) => e.textContent)} | ${await page.title()}`);
