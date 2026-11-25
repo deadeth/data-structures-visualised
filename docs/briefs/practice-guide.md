@@ -141,3 +141,80 @@ Markdown file may be any length; do not hard-wrap paragraphs.
 The file path and its word count; the sections; which stage file each code
 block came from; the commands you ran for any trace; anything in the article
 you could not check against the code or `page.ts`.
+
+---
+
+# The tutorial house style (set by the owner on 25 November 2026)
+
+The owner rewrote the circuit breaker tutorial himself and asked for every
+tutorial to match it. His article is the exemplar. Read it in full before you
+write a word, and match it:
+
+`/home/claude/pairing-practice/guides/circuit-breaker.md`
+
+Do not edit that file. Where this page and the exemplar disagree, the exemplar
+wins, apart from the three "house rules" at the end.
+
+## What his style does that the first drafts did not
+
+- It explains more. Sentences are fuller and joined up, and each one says why
+  as well as what: "We check `breaker.allow()` before invoking `remote.call()`,
+  ensuring blocked requests never hit the downstream service." The first drafts
+  were clipped; his reads like a patient colleague talking it through.
+- It leads the reader: "Let's review the exact requirements:", "Notice that...",
+  "Again, the `>=` operator is critical:", "Why store timestamps instead of a
+  simple integer counter? Because...". Use these freely, as he does.
+- Under the title there is one italic line saying what the tutorial is, ending
+  "Back to the practice page: <the practice page's short name>."
+- A horizontal rule (`---`) stands before every `##` section.
+- The Overview ends its first paragraph on what the finished thing does, then
+  gives the parts as a numbered list, one line each, with the optional ones
+  marked in italics: *(optional stretch)*, *(optional variant)*. It closes with
+  a sentence on what the reader will have at the end.
+- Requirements are bullets that open with a bold label and a colon:
+  "**Sliding window:** The ten-minute window slides continuously. ...".
+- Wherever two or three points hang off one piece of code, they are bullets
+  with bold labels ("**Boundary operator (`>=`):** ...").
+- Traced runs are Markdown tables with a header row, values in backticks, and
+  a sentence before saying what the run is and one after saying what to notice.
+  Only pictures (a state machine, a timeline) and short "this means that" lines
+  stay in fenced blocks, fenced as ```text.
+- Code blocks are ```java, each with a sentence before and an explanation
+  after. The explanation names the test that would fail if the code were
+  written the other way, with the test name in backticks, often in brackets at
+  the end of the sentence.
+- "Common Mistakes" is a numbered list. Each item is a bold statement of the
+  mistake, then what goes wrong, then "failing `TestClass.testMethod`".
+- "What to Say Out Loud" opens with one sentence, then bullets, each a whole
+  quoted sentence in italics, in the first person ("I'll ..."): the questions
+  to ask first, then the design points to narrate.
+- "Taking It Further" has numbered `###` sub-sections whose headings are
+  questions, each answered in one short paragraph.
+- The Conclusion is a single paragraph.
+- Headings are in title case. Optional parts say so in the heading:
+  "Part 4: Many Threads (Optional Stretch)".
+
+## The Markdown you may use
+
+Exactly what the exemplar uses: one `#` title; the italic line under it; `---`
+before each `##`; numbered `##` and `###` headings; paragraphs; ordered lists;
+bullet lists (`*` or `-`); `**bold**`; `*italic*`; `` `inline code` ``;
+```java and ```text fences; pipe tables with a header row. No images, HTML,
+block quotes, nested lists, footnotes or links.
+
+## House rules that still hold (the exemplar is the owner's own text; yours follows these)
+
+1. Every line in a ```java block appears, apart from leading indentation, in
+   one of that problem's `solution/s<n>/Solution.java` files. No invented code,
+   no "..." lines, no region markers. Lines at most 80 characters.
+2. Every trace comes from a real run. If you turn an existing trace into a
+   table, carry the values across exactly and change none of them.
+3. Words: British spelling. No em dashes in text you write (use commas, colons
+   or brackets). None of these words: delve, dive into, navigate (figurative),
+   underscore, bolster, foster, harness, leverage, unpack, shed light on, pave
+   the way, pivotal, groundbreaking, cutting-edge, transformative,
+   game-changing, innovative, robust, comprehensive, seamless, intricate,
+   nuanced, vibrant, multifaceted, holistic, testament, landscape, realm. Name
+   no company and say nothing about where the task comes from. State no
+   product fact (a library's defaults, a version) that the source material
+   does not give.

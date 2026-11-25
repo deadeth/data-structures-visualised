@@ -1,68 +1,94 @@
 # Building a Circuit Breaker in Plain Java
 
+*This tutorial walks through building a complete circuit breaker step by step. Back to the practice page: Circuit breaker.*
+
+---
+
 ## 1. Overview
 
-In this tutorial, we'll build a circuit breaker around a small web client in plain Java 21. It stops calling a service that keeps failing, then sends one call to see whether it has recovered.
+In this tutorial, we'll build a circuit breaker around a lightweight web client using plain Java 21. When a downstream service starts failing repeatedly, the circuit breaker will temporarily stop sending requests to it, wait for a cooldown period, and then send a single trial request to check if the service has recovered.
 
-We'll work in five parts: count failures and open, cool down and send one trial, keep one breaker for each service, then two optional parts, threads and a `replay` method. These are the practice page's stages 1 to 5, and the tests we name are methods of the JUnit classes in the practice project.
+We'll build the solution incrementally across five parts:
 
-By the end, we'll be able to write the three core parts in a pair-programming interview and explain each comparison in them.
+1. Counting failures in a sliding window and tripping the breaker.
+2. Adding a cooldown period and a single trial request.
+3. Isolating state with one breaker per downstream service.
+4. Making the implementation thread-safe *(optional stretch)*.
+5. Replaying historical request data where timestamps arrive as input *(optional variant)*.
+
+These five parts correspond directly to stages 1 through 5 of the practice project, and the JUnit test methods referenced throughout match the test classes in that repository. By the end, we'll have a clean, interview-ready implementation of the core mechanics and a solid grasp of every boundary condition involved.
+
+---
 
 ## 2. The Problem
 
-Service A calls two downstream services, B and C, through one `WebClient`. We implement `execute()` so that **three failures within ten minutes mean no calls to that service for the next five minutes**. The rules:
+Suppose Service A communicates with two downstream services, B and C, through a shared `WebClient`. Our goal is to implement `execute()` so that if a service fails **three times within ten minutes**, we stop calling it for the next **five minutes**.
 
-- A status of 500 or more, or an exception from the remote, is a failure. A 4xx is not. An exception is counted and rethrown unchanged.
-- The ten minutes slide: a failure exactly ten minutes old no longer counts, and a success in between resets nothing.
-- A blocked call never reaches the remote. It returns `Response.BLOCKED` (status 503, `blocked` flag set) and changes nothing.
-- Five minutes or more after opening (exactly five counts), one call goes through as a trial. If it isn't a failure, the breaker closes and forgets the old failures. If it fails, the five minutes start again from the trial.
+Let's review the exact requirements:
 
-The starter supplies `Request`, `Response`, a simulated `Remote` and a fake `Clock` that moves only when a test says so. `WebClient` already holds `maxFailures` (3), `windowMillis` (600000) and `cooldownMillis` (300000). A few tests set other values, so we use the fields.
+* **What counts as a failure:** Any HTTP status of `500` or higher, or any exception thrown by the remote call. `4xx` responses are client errors and do not count as failures. If an exception is thrown, we record the failure and rethrow the exception unchanged.
+* **Sliding window:** The ten-minute window slides continuously. A failure that is *exactly* ten minutes old no longer counts, and a successful call in between does not reset the failure history.
+* **Blocked calls:** When the breaker is open, blocked calls never reach the remote service. They immediately return `Response.BLOCKED` (status `503` with the `blocked` flag set) and do not modify any breaker state.
+* **Recovery trial:** Once five minutes or more have passed since opening (an *exact* five-minute elapsed time counts), a single call is allowed through as a trial. If it succeeds (i.e., is not a failure), the breaker closes and clears the old failure history. If it fails, the five-minute cooldown restarts from the time of the trial.
 
-Here is the starter's example, with every call to B and times in milliseconds:
+The starter project provides `Request`, `Response`, a simulated `Remote`, and a controllable `Clock` for deterministic testing. `WebClient` already defines `maxFailures` (`3`), `windowMillis` (`600000`), and `cooldownMillis` (`300000`). Since a few tests override these defaults, we'll always reference the fields rather than hardcoding values.
+
+Here is how a sample sequence of calls to Service B behaves (with timestamps in milliseconds):
+
+```text
+     0  remote answers 500  ->  500 returned, 1 failure
+     0  remote answers 500  ->  500 returned, 2 failures
+     0  remote answers 500  ->  500 returned, 3 failures: open at 0
+299999  remote not called   ->  BLOCKED
+300000  remote answers 200  ->  200, the trial: closed, failures gone
+300000  remote answers 200  ->  200
 
 ```
-       0  remote answers 500  ->  500 returned, 1 failure
-       0  remote answers 500  ->  500 returned, 2 failures
-       0  remote answers 500  ->  500 returned, 3 failures: open at 0
-  299999  remote not called   ->  BLOCKED
-  300000  remote answers 200  ->  200, the trial: closed, failures gone
-  300000  remote answers 200  ->  200
-```
+
+---
 
 ## 3. The Design
 
-All the state for one service goes in a small inner class, `Breaker`. `allow(now)` says whether a call may go, and `record(now, failed)` takes in the outcome of one that went. **The breaker is handed the time and never reads the clock**, which makes Part 5 almost free.
+To keep the code modular, we'll encapsulate all state for a single downstream service inside a small inner class called `Breaker`. It exposes just two methods:
 
-From Part 2 it has three states:
+* `allow(now)` — decides whether a request is permitted to proceed.
+* `record(now, failed)` — records the outcome of a request that was allowed through.
 
-```
+Notice that `Breaker` receives the current timestamp as a parameter instead of reading `Clock` directly. Keeping time as an explicit input makes the class easier to reason about—and makes Part 5 almost effortless.
+
+Starting in Part 2, the breaker operates as a three-state machine:
+
+```text
             third failure            first call 5 min or
             inside 10 min            more after opening
   CLOSED ------------------> OPEN ------------------------> HALF_OPEN
     ^                         ^                              |    |
     |                         +------- trial fails ----------+    |
     +------------------ trial is not a failure -------------------+
-```
-
-There's no timer: the move to `HALF_OPEN` happens when a call arrives, not when five minutes pass.
-
-Both time rules compare an age with `>=`:
 
 ```
-a failure has left the window when   now - failureTime >= windowMillis
-the next call is the trial when      now - openedAt    >= cooldownMillis
+
+There is no background timer or scheduled task here. The transition from `OPEN` to `HALF_OPEN` happens lazily when a new request arrives and checks the elapsed time.
+
+Both time-based rules compare an elapsed age using `>=`:
+
+```text
+Failure expires from window:  now - failureTime >= windowMillis
+Next call becomes the trial:  now - openedAt    >= cooldownMillis
+
 ```
 
-Our breaker is simplified: it measures no failure rate, it has no timeouts (the simulated remote answers at once), and it lives in one process.
+For simplicity, this breaker does not calculate failure percentages, does not enforce request timeouts (our simulated remote responds immediately), and runs in a single JVM process.
+
+---
 
 ## 4. Part 1: Counting Failures
 
-Part 1 lets calls through and opens the breaker on the third failure within ten minutes. It stays open until Part 2. `Part1CountAndTripTest` checks it.
+In Part 1, we'll allow calls through until three failures occur within the ten-minute window, at which point the breaker opens and stays open. This behavior is verified by `Part1CountAndTripTest`.
 
 ### 4.1. The Call Path
 
-Here's `execute()` after Part 1, with one `Breaker` in a field named `breaker`:
+With a single `Breaker` stored in a field named `breaker`, our initial `execute()` method looks like this:
 
 ```java
 public Response execute(Request request) {
@@ -79,25 +105,27 @@ public Response execute(Request request) {
     breaker.record(clock.millis(), response.status() >= 500);
     return response;
 }
+
 ```
 
-We ask before we call, so a blocked call never reaches the remote. An exception is recorded, then rethrown as it came (`exceptionRethrownUnchanged`).
+We check `breaker.allow()` before invoking `remote.call()`, ensuring blocked requests never hit the downstream service. If the remote throws a `RuntimeException`, we record the failure and rethrow the original exception untouched (verified by `exceptionRethrownUnchanged`).
 
-With `>= 400` as the failure test, three 404s from one caller's bad input would block everyone, and `fourHundredsPassThrough` fails.
+Also, note the `>= 500` check. If we mistakenly used `>= 400`, three `404` responses caused by a single client's bad input would trip the breaker for everyone, causing `fourHundredsPassThrough` to fail.
 
 ### 4.2. The Sliding Window
 
-The breaker holds the time of each recent failure, and a flag:
+Inside `Breaker`, we store the timestamps of recent failures in a `Deque` alongside a boolean flag:
 
 ```java
 /** Times of recent failures, oldest first. */
 private final Deque<Long> failures = new ArrayDeque<>();
 private boolean open;
+
 ```
 
-We keep times, not a count, because the oldest failure has to drop out by itself. With a counter, failures at minutes 0, 9 and 18 read as 3, though no ten minutes held more than 2 (`windowSlides`).
+Why store timestamps instead of a simple integer counter? Because old failures must expire individually as time moves forward. With a plain counter, failures at minutes 0, 9, and 18 would add up to 3—even though no ten-minute window ever contained more than 2 failures (`windowSlides`).
 
-The counting happens in `record()`:
+Here is how `record()` maintains the sliding window:
 
 ```java
 void record(long now, boolean failed) {
@@ -112,52 +140,53 @@ void record(long now, boolean failed) {
         open = true;
     }
 }
-```
-
-**The loop uses `>=`, so a failure whose age is exactly `windowMillis` is removed before we count.** With `>` it would still count, and `failureExactlyTenMinutesOldDropsOut` gets BLOCKED where it expects a 500.
-
-Clearing the deque on a success would make the rule "three in a row", which `successInBetweenResetsNothing` catches.
-
-Here is the Part 1 code with two failures at time 0, then four calls at exactly ten minutes (`-` means the remote wasn't called):
 
 ```
-time     to  remote   returned  state after          failure times after
-0        B   500      500       closed               [0]
-0        B   500      500       closed               [0, 0]
-600000   B   500      500       closed               [600000]
-600000   B   500      500       closed               [600000, 600000]
-600000   B   500      500       open                 [600000, 600000, 600000]
-600000   B   -        BLOCKED   open                 [600000, 600000, 600000]
-```
 
-At 600000 both early failures are exactly 600000 old and leave together, so it takes three new failures to open. At 599999 they would still count (`failureJustInsideTheWindowCounts`).
+Two details are worth highlighting here:
+
+* **Boundary operator (`>=`):** Using `>=` ensures a failure that is *exactly* `windowMillis` old is evicted before we check the size. Using `>` would keep it in the deque, causing `failureExactlyTenMinutesOldDropsOut` to return `BLOCKED` instead of `500`.
+* **No reset on success:** Returning early when `!failed` leaves the deque intact. Clearing it on a success would turn the rule into "three failures in a row," which `successInBetweenResetsNothing` explicitly guards against.
+
+Let's trace this logic with two failures at time `0`, followed by four calls at exactly ten minutes (`600000` ms). A `-` indicates the remote was not called:
+
+| Time | Service | Remote | Returned | State After | Failure Times After |
+| --- | --- | --- | --- | --- | --- |
+| `0` | B | `500` | `500` | closed | `[0]` |
+| `0` | B | `500` | `500` | closed | `[0, 0]` |
+| `600000` | B | `500` | `500` | closed | `[600000]` |
+| `600000` | B | `500` | `500` | closed | `[600000, 600000]` |
+| `600000` | B | `500` | `500` | open | `[600000, 600000, 600000]` |
+| `600000` | B | `-` | `BLOCKED` | open | `[600000, 600000, 600000]` |
+
+At `600000`, both failures from time `0` are exactly `600000` ms old and drop out together, so it takes three fresh failures to trip the breaker. Had the third call arrived at `599999`, those earlier failures would still be inside the window (`failureJustInsideTheWindowCounts`).
+
+---
 
 ## 5. Part 2: Cooling Down, Then One Trial
 
-Part 2 adds recovery: five minutes or more after opening, one call goes through as a trial. `Part2CooldownAndTrialTest` checks it.
+Next, let's add recovery logic: once five minutes have elapsed after opening, we allow a single trial call through. `Part2CooldownAndTrialTest` verifies this stage.
 
 ### 5.1. Three States
 
-The flag becomes an enum, declared in `WebClient`:
+First, let's replace the `boolean open` flag with a `State` enum declared inside `WebClient`:
 
 ```java
 private enum State { CLOSED, OPEN, HALF_OPEN }
+
 ```
 
-`HALF_OPEN` means one trial is out. Two booleans would allow a fourth, meaningless combination.
-
-The breaker also remembers when it opened:
+Using an enum instead of two separate booleans prevents invalid state combinations. We also add a field to track when the breaker opened:
 
 ```java
 private State state = State.CLOSED;
 private long openedAt;
-```
 
-The cooldown is measured from `openedAt`.
+```
 
 ### 5.2. Choosing the Trial
 
-Now `allow()` takes the time:
+Now `allow()` accepts the current timestamp so it can evaluate the cooldown:
 
 ```java
 boolean allow(long now) {
@@ -170,17 +199,18 @@ boolean allow(long now) {
     }
     return false;
 }
+
 ```
 
-**The breaker goes half-open inside `allow`, as it hands out the trial and before the remote is called.** A call that arrives while the trial is out finds `HALF_OPEN` and gets `false`.
+Notice that the breaker transitions to `HALF_OPEN` *inside* `allow()`, before the remote call even starts. Any subsequent call that arrives while the trial is in flight sees `HALF_OPEN` and is immediately rejected.
 
-With `>=`, a call at 299999 is blocked and a call at 300000 is the trial. With `>`, ten of the thirteen tests in the class fail, `trialAtExactlyFiveMinutesClosesOnSuccess` among them.
+Again, the `>=` operator is critical: a call at `299999` is blocked, while a call at `300000` becomes the trial. Switching to `>` breaks ten of the thirteen tests in `Part2CooldownAndTrialTest`, including `trialAtExactlyFiveMinutesClosesOnSuccess`.
 
-The `false` path changes no field, so blocked calls can't restart the five minutes. `execute()` now passes `clock.millis()` to `allow`.
+Finally, when `allow()` returns `false`, it modifies no state—ensuring blocked requests never accidentally reset the cooldown timer. We'll also update `execute()` to pass `clock.millis()` into `breaker.allow()`.
 
-### 5.3. What the Trial's Answer Does
+### 5.3. Handling the Trial Outcome
 
-`record()` gains a branch at the top. The rest is the Part 1 code, with `open = true` replaced by `open(now)`:
+In `record()`, we add a `HALF_OPEN` branch at the top. The rest of the method remains identical to Part 1, except we replace `open = true` with a helper call `open(now)`:
 
 ```java
 if (state == State.HALF_OPEN) {
@@ -192,113 +222,121 @@ if (state == State.HALF_OPEN) {
     }
     return;
 }
+
 ```
 
-A trial that isn't a failure closes the breaker and clears the failure times. Without the clear, the three failures that opened the breaker can be only five minutes old, still inside the ten, so one new failure makes four in the window and opens it again (`recoveryForgetsEarlierFailures`).
+If the trial succeeds, we close the breaker and clear the `failures` deque. Skipping `failures.clear()` introduces a subtle bug: the three failures that originally tripped the breaker might only be five minutes old (still within the ten-minute window), meaning a single new failure would immediately trip the breaker again (`recoveryForgetsEarlierFailures`).
 
-A failed trial calls a small helper:
+If the trial fails, we call our `open(now)` helper:
 
 ```java
 private void open(long now) {
     state = State.OPEN;
     openedAt = now;
 }
-```
-
-Because the helper sets `openedAt` again, the next five minutes run from the trial, not from the first opening. If we set only the state, the old `openedAt` would already be past the cooldown, every later call would be another trial, and `failedTrialOpensForAnotherCooldown` fails.
-
-Here's the Part 2 code with a trial that fails, then one that succeeds:
 
 ```
-time     to  remote   returned  state after          failure times after
-0        B   500      500       CLOSED               [0]
-0        B   500      500       CLOSED               [0, 0]
-0        B   500      500       OPEN since 0         [0, 0, 0]
-299999   B   -        BLOCKED   OPEN since 0         [0, 0, 0]
-300000   B   500      500       OPEN since 300000    [0, 0, 0]
-599999   B   -        BLOCKED   OPEN since 300000    [0, 0, 0]
-600000   B   200      200       CLOSED               []
-600000   B   200      200       CLOSED               []
-```
 
-The trial at 300000 fails and moves the opening time, so 599999 is still blocked. `HALF_OPEN` never shows: with one thread, the trial's answer is recorded before the next call.
+Updating `openedAt` ensures the new five-minute cooldown starts from the failed trial rather than the original opening time. If we only reset `state` without updating `openedAt`, the old timestamp would already be past the cooldown, turning every subsequent request into another trial (`failedTrialOpensForAnotherCooldown`).
+
+Let's trace a scenario where the first trial fails and the second succeeds:
+
+| Time | Service | Remote | Returned | State After | Failure Times After |
+| --- | --- | --- | --- | --- | --- |
+| `0` | B | `500` | `500` | `CLOSED` | `[0]` |
+| `0` | B | `500` | `500` | `CLOSED` | `[0, 0]` |
+| `0` | B | `500` | `500` | `OPEN` since `0` | `[0, 0, 0]` |
+| `299999` | B | `-` | `BLOCKED` | `OPEN` since `0` | `[0, 0, 0]` |
+| `300000` | B | `500` | `500` | `OPEN` since `300000` | `[0, 0, 0]` |
+| `599999` | B | `-` | `BLOCKED` | `OPEN` since `300000` | `[0, 0, 0]` |
+| `600000` | B | `200` | `200` | `CLOSED` | `[]` |
+| `600000` | B | `200` | `200` | `CLOSED` | `[]` |
+
+Because the trial at `300000` fails and updates `openedAt`, the call at `599999` is still blocked. You'll notice `HALF_OPEN` never appears in the "State After" column—on a single thread, the trial's outcome is recorded before the next request begins.
+
+---
 
 ## 6. Part 3: One Breaker for Each Service
 
-Part 3 keeps B and C apart, each with its own failures and its own five minutes. `Part3PerServiceTest` checks it, and `Breaker` doesn't change.
+In Part 3, we isolate downstream services so that failures in Service B don't block calls to Service C (`Part3PerServiceTest`).
 
-The field becomes a map:
+Because all state already lives inside `Breaker`, the class itself doesn't need to change at all. We simply replace the single `breaker` field in `WebClient` with a `Map`:
 
 ```java
 private final Map<String, Breaker> breakers = new HashMap<>();
+
 ```
 
-Each service name gets one whole breaker.
-
-A helper finds the breaker for a name, or makes a closed one and stores it:
+Next, we add a small helper that looks up the breaker for a given service, creating and storing a new closed one if it doesn't exist yet:
 
 ```java
 private Breaker breakerFor(String service) {
     return breakers.computeIfAbsent(service, s -> new Breaker());
 }
+
 ```
 
-`computeIfAbsent` does the lookup and the insert in one call.
-
-Then `execute()` gains a first line:
+Then we add a single line at the top of `execute()`:
 
 ```java
 Breaker breaker = breakerFor(request.service());
+
 ```
 
-The local variable has the old field's name, so the rest of `execute()` compiles as it stands. The key is the service, not the path (`pathsOfOneServiceShareABreaker`).
+Because the local variable shares the same name as the old field, the rest of `execute()` works without modification. Note that we key the map by `request.service()`, not the request path—all endpoints belonging to the same service share one breaker (`pathsOfOneServiceShareABreaker`).
+
+---
 
 ## 7. Part 4: Many Threads (Optional Stretch)
 
-Part 4 is optional: many threads call `execute()` at once (`Part4ThreadSafetyTest`).
+In a real web client, multiple threads will call `execute()` concurrently. `Part4ThreadSafetyTest` exercises this scenario.
 
-### 7.1. Lock the Decisions, Not the Call
+### 7.1. Lock the Decisions, Not the Remote Call
 
-The map becomes a concurrent one:
+First, let's switch to a `ConcurrentHashMap`:
 
 ```java
 private final Map<String, Breaker> breakers = new ConcurrentHashMap<>();
+
 ```
 
-With `computeIfAbsent`, two threads that ask for B get the same breaker.
+Using `computeIfAbsent()` on a `ConcurrentHashMap` guarantees that two threads requesting Service B for the first time will receive the exact same `Breaker` instance.
 
-We also mark `allow` and `record` as `synchronized`. That locks one `Breaker`, so B and C never wait for each other, and each decision is a single step.
+Next, we mark both `allow()` and `record()` as `synchronized`. Because the lock is on the individual `Breaker` instance, calls to Service B and Service C never contend with one another, and each state transition happens atomically.
 
-`execute()` itself takes no lock: `allow` takes the lock and lets it go, the remote call runs with no lock held, and `record` takes it again. **If we held the lock across the remote call, every caller for that service would queue behind the slowest call, including the callers we mean to block at once.**
+Crucially, we do **not** synchronize `execute()` itself. Instead, `allow()` acquires and releases the lock, `remote.call()` executes completely lock-free, and `record()` acquires the lock again to update the state. If we held the lock across the network call, every thread calling that service—even threads that should be immediately rejected as `BLOCKED`—would pile up behind a slow remote response.
 
-With `synchronized` on `execute()` the counting is still right, but `exactlyOneTrialAfterTheCooldown` and `slowCallDoesNotHoldUpTheNext` fail: the 19 threads that should come back BLOCKED wait behind the trial.
+In fact, putting `synchronized` on `execute()` still counts failures accurately, but it causes `exactlyOneTrialAfterTheCooldown` and `slowCallDoesNotHoldUpTheNext` to fail because 19 threads that should return `BLOCKED` immediately end up waiting on the trial call.
 
-The short lock is safe because the trial is chosen inside `allow`: reading `OPEN` and writing `HALF_OPEN` are one step, so only one thread gets `true`.
+Because `allow()` checks `OPEN` and transitions to `HALF_OPEN` inside a single synchronized block, only one thread can ever win the trial.
 
-### 7.2. Answers That Arrive Late
+### 7.2. Handling Late-Arriving Responses
 
-Letting go of the lock means the state can change while a call is out, so `record` gains a guard after the trial branch:
+Releasing the lock during the remote call introduces a new edge case: the breaker's state can change while a request is still in flight. To handle this, we add a guard in `record()` right after the `HALF_OPEN` branch:
 
 ```java
 // Ignore late answers from calls let through before it opened.
 if (state != State.CLOSED || !failed) {
     return;
 }
+
 ```
 
-An answer that arrives while the breaker is open came from a call that set off before it opened. Without the guard, a late failure would restart the five minutes (`lateFailureWhileOpenIsIgnored`).
+If a response arrives while the breaker is already `OPEN`, it must belong to a request that started before the breaker tripped. Without this guard, a late failure would reset `openedAt` and extend the cooldown (`lateFailureWhileOpenIsIgnored`).
 
 ### 7.3. What the Tests Don't Prove
 
-There's a known gap. With `synchronized` removed from `allow` alone, we ran the class 20 times on a 2-CPU machine, each run repeating every test 10 times, and all 20 runs were green.
+There is an important caveat with concurrency testing: passing tests do not guarantee thread safety. Even after removing `synchronized` from `allow()`, running `Part4ThreadSafetyTest` 20 times on a 2-CPU machine (with each test repeated 10 times) produced 20 green runs.
 
-So a green Part 4 does not prove thread safety. The race needs two threads to read `OPEN` before either writes `HALF_OPEN`, and the case for that lock has to be made in words.
+Triggering the race requires two threads to read `OPEN` before either writes `HALF_OPEN`, which is rare under light contention. In an interview or code review, you have to justify that lock by reasoning about the interleaving, not just pointing at a green test suite.
+
+---
 
 ## 8. Part 5: Time Arrives as Data (Optional Variant)
 
-Part 5 is optional too. `replay(lines)` takes lines of the form `timestampMillis service statusCode` and answers ALLOWED, BLOCKED or INVALID for each, never calling the remote (`Part5ReplayTest`).
+In Part 5, we add a `replay(lines)` method that processes log lines formatted as `timestampMillis service statusCode` and returns `ALLOWED`, `BLOCKED`, or `INVALID` for each line—without ever calling `remote` (`Part5ReplayTest`).
 
-A helper, `replayLine`, returns INVALID unless the line splits into exactly three pieces and the first and third are whole numbers. Only then does it touch a breaker:
+A helper method, `replayLine()`, validates that the line splits into exactly three tokens and that the first and third parse as numbers (returning `INVALID` otherwise). Once validated, it delegates directly to the breaker:
 
 ```java
 Breaker breaker = breakerFor(parts[1]);
@@ -307,65 +345,75 @@ if (!breaker.allow(at)) {
 }
 breaker.record(at, status >= 500);
 return "ALLOWED";
-```
-
-This is `execute()` with the line's time in place of the clock and its status in place of the remote, so no rule is written twice.
-
-Here's a real run:
 
 ```
-line           result   B's state after      B's failure times after
-0 B 500        ALLOWED  CLOSED               [0]
-60000 B 500    ALLOWED  CLOSED               [0, 60000]
-600000 B 500   ALLOWED  CLOSED               [60000, 600000]
-600001 B 500   ALLOWED  OPEN since 600001    [60000, 600000, 600001]
-900000 B 200   BLOCKED  OPEN since 600001    [60000, 600000, 600001]
-x B 500        INVALID  OPEN since 600001    [60000, 600000, 600001]
-900001 B 200   ALLOWED  CLOSED               []
-900002 B 500   ALLOWED  CLOSED               [900002]
-```
 
-The line that opens the breaker is itself ALLOWED, and the bad line changes nothing. `replay` assumes the lines are in time order, and nothing checks that.
+Because `Breaker` takes the timestamp as an argument rather than reading `Clock`, `replayLine()` mirrors `execute()` almost line for line—swapping the clock for `at` and the remote call for `status`—without duplicating any circuit breaker logic.
+
+Here is a trace of a sample replay run:
+
+| Input Line | Result | B's State After | B's Failure Times After |
+| --- | --- | --- | --- |
+| `0 B 500` | `ALLOWED` | `CLOSED` | `[0]` |
+| `60000 B 500` | `ALLOWED` | `CLOSED` | `[0, 60000]` |
+| `600000 B 500` | `ALLOWED` | `CLOSED` | `[60000, 600000]` |
+| `600001 B 500` | `ALLOWED` | `OPEN` since `600001` | `[60000, 600000, 600001]` |
+| `900000 B 200` | `BLOCKED` | `OPEN` since `600001` | `[60000, 600000, 600001]` |
+| `x B 500` | `INVALID` | `OPEN` since `600001` | `[60000, 600000, 600001]` |
+| `900001 B 200` | `ALLOWED` | `CLOSED` | `[]` |
+| `900002 B 500` | `ALLOWED` | `CLOSED` | `[900002]` |
+
+Notice that the line that trips the breaker is itself `ALLOWED`, and the malformed line (`x B 500`) leaves the state untouched. Note also that `replay()` assumes the input lines are already sorted chronologically.
+
+---
 
 ## 9. Common Mistakes
 
-Each was made in the reference code, and the named test failed:
+While building the reference implementation, each of the following mistakes broke a specific test:
 
-1. Never dropping old failures, as a plain counter does: `Part1CountAndTripTest.windowSlides`.
-2. `>` in the window loop, so a failure exactly ten minutes old still counts: `Part1CountAndTripTest.failureExactlyTenMinutesOldDropsOut`.
-3. `>` at the cooldown, so the call at exactly five minutes is blocked: `Part2CooldownAndTrialTest.trialAtExactlyFiveMinutesClosesOnSuccess`.
-4. No `failures.clear()` after a good trial, so one new failure reopens the breaker: `Part2CooldownAndTrialTest.recoveryForgetsEarlierFailures`.
-5. Setting the state after a failed trial but not `openedAt`: `Part2CooldownAndTrialTest.failedTrialOpensForAnotherCooldown`.
+1. **Using a plain counter instead of timestamps:** Old failures never expire, failing `Part1CountAndTripTest.windowSlides`.
+2. **Using `>` instead of `>=` in the window eviction loop:** A failure exactly ten minutes old is still counted, failing `Part1CountAndTripTest.failureExactlyTenMinutesOldDropsOut`.
+3. **Using `>` instead of `>=` for the cooldown check:** A call arriving at exactly five minutes is blocked instead of becoming the trial, failing `Part2CooldownAndTrialTest.trialAtExactlyFiveMinutesClosesOnSuccess`.
+4. **Forgetting `failures.clear()` after a successful trial:** Old failures remain in the deque, so a single new failure immediately reopens the breaker, failing `Part2CooldownAndTrialTest.recoveryForgetsEarlierFailures`.
+5. **Resetting `state` to `OPEN` on a failed trial without updating `openedAt`:** The old cooldown is already expired, so every subsequent call becomes a trial, failing `Part2CooldownAndTrialTest.failedTrialOpensForAnotherCooldown`.
+
+---
 
 ## 10. What to Say Out Loud
 
-Three questions first, then three reasons:
+If you're implementing this in a pair-programming interview, it helps to clarify requirements upfront and narrate your key design choices. Here are three questions to ask first, followed by three design points to explain as you code:
 
-- "What counts as a failure? I'll assume a 5xx or an exception, not a 4xx."
-- "Do the ten minutes slide? Then I need the time of each failure, not a counter."
-- "Exactly ten minutes old: in or out? Exactly five minutes after opening: blocked or let through? Each answer is one operator."
-- "State goes in a small `Breaker` class that is given the time, so many services need only a map."
-- "The breaker goes half-open as it hands out the trial, so nobody else gets through while it's out."
-- "With threads I'd lock each decision, never the remote call, or a slow service holds up even the calls I'm blocking."
+* *"What counts as a failure? I'll assume a 5xx status or an exception, and treat 4xx responses as client errors."*
+* *"Does the ten-minute window slide? If so, I'll store failure timestamps in a deque rather than using a counter."*
+* *"For the exact boundaries—ten minutes old and five minutes after opening—are those inclusive or exclusive? Each answer maps directly to a single comparison operator."*
+* *"I'll encapsulate the state in a small `Breaker` class that accepts the timestamp as a parameter. That makes supporting multiple services as simple as adding a `Map`."*
+* *"I'm transitioning to `HALF_OPEN` inside `allow()` as I hand out the trial, so no other request can slip through while the trial is in flight."*
+* *"For thread safety, I'll synchronize the state transitions (`allow` and `record`), never the remote call itself—otherwise a slow downstream service would stall even the calls we're trying to block."*
+
+---
 
 ## 11. Taking It Further
 
-### 11.1. Why Not Throw When Blocked?
+If you want to discuss production hardening or edge cases beyond the starter project, here are four areas worth considering.
 
-Being blocked is expected while a service is down, so callers handle it like any other answer. The `blocked` flag tells our refusal apart from a real 503.
+### 11.1. Why Return `Response.BLOCKED` Instead of Throwing?
 
-### 11.2. What if the Trial Never Answers?
+When a downstream service is down, being blocked is an expected, routine outcome rather than an exceptional error. Returning a `Response` lets callers handle it uniformly alongside normal HTTP responses, while the `blocked` flag distinguishes a local refusal from a genuine `503` returned by the remote server.
 
-The breaker stays half-open and blocks every later call, because only the trial's answer moves it on. A real client needs a timeout on every call.
+### 11.2. What If the Trial Never Answers?
 
-### 11.3. What About a Late Answer Mid-Trial?
+In our simplified implementation, if the trial request hangs forever, the breaker stays stuck in `HALF_OPEN` and blocks all future traffic indefinitely. In production, every outbound call needs a strict timeout so the trial always resolves to either a success or a failure.
 
-Our code gets this wrong: in `HALF_OPEN`, `record` takes the next answer to arrive as the trial's, whoever sent it. No test covers it. The fix is a permit from `allow` that marks the trial.
+### 11.3. What About a Late Response Arriving Mid-Trial?
+
+There is a subtle concurrency bug in our `HALF_OPEN` handling that no test currently covers: if an old, slow request from before the breaker opened finishes *while* a trial is in flight, `record()` will mistake that late response for the trial's outcome. The clean fix is to have `allow()` return a permit (or token) that tags whether the caller is the trial, and pass that permit into `record()`.
 
 ### 11.4. Where Do Retries Go?
 
-We'd put the retry outside the breaker, so every attempt is counted and a blocked answer ends the loop at once. Retries also need backoff and a budget.
+Retries belong *outside* the circuit breaker. Placing them outside ensures every failed attempt is counted toward the failure threshold, and a `Response.BLOCKED` immediately terminates the retry loop rather than hammering a downed service. In production, retries should also use exponential backoff and a retry budget.
+
+---
 
 ## 12. Conclusion
 
-In this tutorial, we built a circuit breaker as a three-state machine in one small class, with a map to give each service its own breaker. The ideas worth keeping from Parts 1 to 3 are failure times in place of a count, both boundaries written as an age compared with `>=`, and a breaker that is handed its time. With threads, we lock each decision but never the remote call.
+In this tutorial, we built a circuit breaker from scratch in plain Java 21 using a compact three-state machine and a per-service `Map`. The core takeaways from Parts 1 through 3 are storing failure timestamps in a `Deque` instead of a counter, expressing both time boundaries as elapsed ages compared with `>=`, and passing time into the breaker rather than coupling it to a clock. Finally, when adding concurrency, we lock only the state decisions—never the remote call itself.

@@ -433,17 +433,16 @@ describe('practice pages', () => {
 
 // ---- tutorials (`guide.md`) -----------------------------------------------------------------------
 
-const EM_DASH = '\u2014';
 /** The site's own address: a tutorial links out, never back into the site by its full URL. */
 const SITE = /deadeth\.github\.io/i;
 
-/** Every fault in one tutorial: parsing, numbering, Java taken from the page's solution files, widths, words and links. */
+/**
+ * Every fault in one tutorial: parsing, numbering, Java taken from the page's solution files, widths, table
+ * shapes, words and links. Em dashes are allowed: the owner writes them.
+ */
 function tutorialProblems(md: string, src: PracticeSources, name: string): string[] {
   const out: string[] = [];
   const at = (m: string) => `${name}/guide.md: ${m}`;
-  md.split('\n').forEach((l, i) => {
-    if (l.includes(EM_DASH)) out.push(at(`line ${i + 1} has an em dash`));
-  });
   const { article, errors } = parseArticle(md);
   for (const e of errors) out.push(at(`line ${e.line}: ${e.message}`));
   if (!article) return out;
@@ -451,12 +450,13 @@ function tutorialProblems(md: string, src: PracticeSources, name: string): strin
 
   // Java blocks: each line from a solution file, as written there apart from its indentation.
   const known = new Set([...src.stages.values()].flatMap((t) => t.replace(/\r\n/g, '\n').split('\n').map((l) => l.trim())));
-  // Prose: the title, headings, paragraphs and list items, as Markdown for the word checks.
+  // Prose: the title, standfirst, headings, paragraphs, list items and table cells, as Markdown for the word checks.
   const prose: { line: number; nodes: Inline[] }[] = [{ line: 1, nodes: article.title }];
+  if (article.standfirst) prose.push({ line: md.split('\n').findIndex((l, i) => i > 0 && l.trim()) + 1, nodes: article.standfirst });
   for (const b of article.blocks) {
     if (b.kind === 'code') {
       b.lines.forEach((l, i) => {
-        const n = b.line + 1 + i;
+        const n = b.first + i;
         // A bare fence holds a picture or real program output, which is not ours to re-wrap: it gets
         // a wider limit and scrolls sideways inside its frame.
         const max = b.lang === 'java' ? JAVA_MAX : TRACE_MAX;
@@ -468,10 +468,20 @@ function tutorialProblems(md: string, src: PracticeSources, name: string): strin
         else if (!known.has(t)) out.push(at(`line ${n}: "${t}" is in no solution/s<n>/Solution.java of this page`));
       });
     } else if (b.kind === 'list') b.items.forEach((it) => prose.push({ line: b.line, nodes: it }));
-    else prose.push({ line: b.line, nodes: b.text });
+    else if (b.kind === 'table') {
+      // Every row has the header's number of cells, and there is at least one row under the header.
+      if (!b.rows.length) out.push(at(`line ${b.line}: a table has no rows under its header`));
+      b.rows.forEach((r, i) => {
+        if (r.length !== b.head.length) out.push(at(`line ${b.line + 2 + i}: a table row has ${r.length} cells; its header has ${b.head.length}`));
+      });
+      for (const c of [b.head, ...b.rows].flat()) prose.push({ line: b.line, nodes: c });
+    } else if (b.kind !== 'rule') prose.push({ line: b.line, nodes: b.text });
   }
-  const markdown = (nodes: Inline[]): string => nodes.map((n) => (n.t === 'text' ? n.text : n.t === 'code' ? `\`${n.text}\`` : n.t === 'bold' ? `**${markdown(n.children)}**` : `[${markdown(n.children)}](${n.href})`)).join('');
-  const links = (nodes: Inline[]): string[] => nodes.flatMap((n) => (n.t === 'link' ? [n.href, ...links(n.children)] : n.t === 'bold' ? links(n.children) : []));
+  const markdown = (nodes: Inline[]): string =>
+    nodes
+      .map((n) => (n.t === 'text' ? n.text : n.t === 'code' ? `\`${n.text}\`` : n.t === 'bold' ? `**${markdown(n.children)}**` : n.t === 'em' ? `*${markdown(n.children)}*` : `[${markdown(n.children)}](${n.href})`))
+      .join('');
+  const links = (nodes: Inline[]): string[] => nodes.flatMap((n) => (n.t === 'link' ? [n.href, ...links(n.children)] : n.t === 'bold' || n.t === 'em' ? links(n.children) : []));
   for (const { line, nodes } of prose) {
     checkWords(markdown(nodes), at(`line ${line}`), out);
     for (const href of links(nodes)) {
@@ -497,11 +507,19 @@ describe('practice tutorials', () => {
   it('the fixture has one, and it uses every element of the subset', async () => {
     expect(fixture!.hasTutorial).toBe(true);
     const a = parseArticle(await fixture!.tutorial()).article!;
-    const kinds = new Set(a.blocks.map((b) => (b.kind === 'heading' ? `h${b.level}` : b.kind === 'code' ? `code-${b.lang ?? 'bare'}` : b.kind === 'list' ? (b.ordered ? 'ol' : 'ul') : 'p')));
-    expect([...kinds].sort()).toEqual(['code-bare', 'code-java', 'h2', 'h3', 'ol', 'p', 'ul']);
-    const inl = (nodes: Inline[]): string[] => nodes.flatMap((n) => [n.t, ...(n.t === 'bold' || n.t === 'link' ? inl(n.children) : [])]);
-    const all = new Set(a.blocks.flatMap((b) => (b.kind === 'paragraph' ? inl(b.text) : b.kind === 'list' ? b.items.flatMap(inl) : [])));
-    expect([...all].sort()).toEqual(['bold', 'code', 'link', 'text']);
+    expect(a.standfirst).toBeDefined();
+    const kinds = new Set(
+      a.blocks.map((b) =>
+        b.kind === 'heading' ? `h${b.level}` : b.kind === 'code' ? `code-${b.lang ?? 'bare'}` : b.kind === 'list' ? (b.ordered ? 'ol' : 'ul') : b.kind === 'rule' ? `rule-${b.shown ? 'shown' : 'hidden'}` : b.kind === 'table' ? 'table' : 'p',
+      ),
+    );
+    expect([...kinds].sort()).toEqual(['code-bare', 'code-java', 'h2', 'h3', 'ol', 'p', 'rule-hidden', 'rule-shown', 'table', 'ul']);
+    const md = await fixture!.tutorial();
+    expect(md).toContain('```text');
+    expect(md).toMatch(/^\* /m);
+    const inl = (nodes: Inline[]): string[] => nodes.flatMap((n) => [n.t, ...(n.t === 'bold' || n.t === 'em' || n.t === 'link' ? inl(n.children) : [])]);
+    const all = new Set(a.blocks.flatMap((b) => (b.kind === 'paragraph' ? inl(b.text) : b.kind === 'list' ? b.items.flatMap(inl) : b.kind === 'table' ? [b.head, ...b.rows].flat().flatMap(inl) : [])));
+    expect([...all].sort()).toEqual(['bold', 'code', 'em', 'link', 'text']);
   });
 
   for (const e of [...PRACTICES, { id: FIXTURE_ID } as PracticeEntry]) {
@@ -518,9 +536,11 @@ describe('practice tutorials', () => {
     const md = [
       '# A Robust Title',
       '',
+      '*We leverage this standfirst. Back to the practice page: Fixture.*',
+      '',
       '## 1. Start',
       '',
-      `A dash ${EM_DASH} here, a [plain link](http://example.org), a [site link](https://deadeth.github.io/data-structures-visualised/#/p) and ${companyNames()[0]}.`,
+      `A dash \u2014 here, a [plain link](http://example.org), a [site link](https://deadeth.github.io/data-structures-visualised/#/p) and ${companyNames()[0]}.`,
       '',
       '### 1.2. Skipped',
       '',
@@ -532,30 +552,45 @@ describe('practice tutorials', () => {
       '    int invented = 42;',
       '```',
       '',
-      '```',
+      '```text',
+      '',
       'x'.repeat(121),
       '```',
+      '',
+      '| A | B |',
+      '| --- | --- |',
+      '| 1 | 2 | 3 |',
+      '| only one |',
+      '| *seamless* | `x` |',
+      '',
+      '| Lonely | Header |',
+      '| --- | --- |',
       '',
       '## 3. The End',
     ].join('\n');
     const p = tutorialProblems(md, src, 'broken').join('\n');
     for (const want of [
-      'line 5 has an em dash',
-      'banned word or phrase "robust"',
+      'line 1: banned word or phrase "robust"',
+      'line 3: banned word or phrase "leverage',
       'should be "Overview"',
       'should be "Conclusion"',
       'sub-section "1.2" should be 1.1',
       'section "3" should be 2',
-      'line 11: a java block may not elide code with "..."',
-      'line 12: a java block may not elide code with "// ..."',
-      'line 13: a java block may not show a region marker',
-      'line 14: "int invented = 42;" is in no solution',
-      'line 18: code line is 121 characters',
+      'line 13: a java block may not elide code with "..."',
+      'line 14: a java block may not elide code with "// ..."',
+      'line 15: a java block may not show a region marker',
+      'line 16: "int invented = 42;" is in no solution',
+      'line 21: code line is 121 characters',
+      'line 26: a table row has 3 cells; its header has 2',
+      'line 27: a table row has 1 cells; its header has 2',
+      'line 24: banned word or phrase "seamless"',
+      'line 30: a table has no rows under its header',
       'link http://example.org should be https://',
       'points at this site',
       'names a company',
     ]) expect(p).toContain(want);
-    expect(p).not.toContain('line 10:');
+    expect(p).not.toContain('line 12:');
+    expect(p).not.toContain('em dash');
     expect(tutorialProblems('# T\n\n<div>', src, 'html').join()).toContain('line 3: HTML');
   });
 });

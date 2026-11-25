@@ -4,7 +4,8 @@
 // the first part's whole-file disclosure open. Then, as pictures of one section each: the first core stage, a stretch
 // stage closed and with its "Show the code and the run" open, and the variant closed and open. Also the first view with
 // the clock running and the bar in place part-way down the page; then the page's tutorial (#/p/<id>/guide), if it has
-// one, full page and after a jump from its contents list. Prints page errors, whether the page scrolls sideways, code blocks and tables that
+// one, full page and after a jump from its contents list, with its standfirst link, rules drawn, tables (and which
+// scroll) and any stray * or | left as text. Prints page errors, whether the page scrolls sideways, code blocks and tables that
 // scroll inside their frame, and the smallest text found. Exits 1 on any page error or sideways scroll.
 import { createServer } from 'vite';
 import puppeteer from 'puppeteer-core';
@@ -147,6 +148,25 @@ for (const [w, hgt] of [[1440, 900], [390, 844]]) {
     const codes = await page.evaluate(() => [...document.querySelectorAll('.pp-g .pp-pre')].map((e) => `${e.classList.contains('java') ? 'java' : 'bare'}${e.scrollWidth > e.clientWidth + 1 ? ' scrolls' : ''}`).join(', '));
     const h1s = await page.$$eval('h1', (l) => l.length);
     console.log(`   tutorial: ${h1s} h1; code blocks: ${codes}`);
+    // The writer's own markup: standfirst, rules, tables, and no stray * or | left as text outside code.
+    const extra = await page.evaluate(() => {
+      const art = document.querySelector('.pp-g');
+      const sf = art.querySelector('.pp-g-standfirst a');
+      const tables = [...art.querySelectorAll('.pp-g-table-box .pp-trace-wrap')];
+      const stray = [];
+      const walker = document.createTreeWalker(art.querySelector('.pp-g-body'), NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (n.parentElement.closest('code, pre')) continue;
+        if (/[*|]/.test(n.textContent)) stray.push(n.textContent.trim().slice(0, 40));
+      }
+      return {
+        standfirst: sf ? `${sf.textContent} -> ${sf.getAttribute('href')}` : art.querySelector('.pp-g-standfirst') ? 'no link' : 'none (default line)',
+        rules: art.querySelectorAll('hr.pp-g-rule').length,
+        tables: `${tables.length}, ${tables.filter((e) => e.scrollWidth > e.clientWidth + 1).length} scroll inside their frame`,
+        stray: stray.slice(0, 5),
+      };
+    });
+    console.log(`   tutorial markup: ${JSON.stringify(extra)}`);
     const links = await page.$$('.pp-g-toc a');
     if (links.length > 1) {
       await links[links.length - 1].click();

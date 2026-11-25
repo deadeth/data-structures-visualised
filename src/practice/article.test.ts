@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { numberingProblems, parseArticle, plainOf, sectionsOf, type ArticleError } from './article';
+import { linkBack, numberingProblems, parseArticle, plainOf, sectionsOf, tableCells, type ArticleError } from './article';
 
 const ok = (src: string) => {
   const r = parseArticle(src);
@@ -57,7 +57,7 @@ describe('tutorial article parser', () => {
     ]);
     expect(ol.kind === 'list' && ol.ordered && ol.items.map(plainOf)).toEqual(['first', 'second runs on here']);
     expect(ul.kind === 'list' && !ul.ordered && ul.items.map(plainOf)).toEqual(['a', 'b']);
-    expect(java).toMatchObject({ kind: 'code', lang: 'java', lines: ['    int x = 1;', ''] });
+    expect(java).toMatchObject({ kind: 'code', lang: 'java', lines: ['    int x = 1;'], first: 18 });
     expect(bare).toMatchObject({ kind: 'code', lang: null, lines: ['a -> b'] });
     expect(sectionsOf(a).map((s) => [s.number, s.title, s.blocks.length])).toEqual([['1', 'Overview', 7], ['2', 'Conclusion', 2]]);
     expect(numberingProblems(a)).toEqual([]);
@@ -80,9 +80,13 @@ describe('tutorial article parser', () => {
       ['# T\n\n#### Deep', 3, /#### headings/],
       ['# T\n\n## Overview', 3, /numbered "## 1. Title"/],
       ['# T\n\n### 1. Sub', 3, /numbered "### 1.1. Title"/],
-      ['# T\n\n| a | b |\n|---|---|', 3, /tables/],
+      ['# T\n\n| a | b |\n| c | d |', 3, /separator row/],
+      ['# T\n\n| a | b |', 3, /separator row/],
+      ['# T\n\n| a | b |\n| --- |\n| 1 | 2 |', 4, /separator row has 1 cells/],
+      ['# T\n\n| a |\n| --- |\n| 1 |\nText', 6, /followed by a blank line/],
       ['# T\n\n> quoted', 3, /block quotes/],
-      ['# T\n\n---', 3, /horizontal rules/],
+      ['# T\n\nText\n***', 4, /rule needs a blank line/],
+      ['# T\n\nText\n---', 4, /underlined headings/],
       ['# T\n\n<div>x</div>', 3, /HTML/],
       ['# T\n\nSome <b>bold</b>.', 3, /HTML/],
       ['# T\n\n![alt](https://x.org/a.png)', 3, /images/],
@@ -90,9 +94,12 @@ describe('tutorial article parser', () => {
       ['# T\n\n[^1]: the note', 3, /footnotes/],
       ['# T\n\n- a\n  - nested', 4, /nested/],
       ['# T\n\n```python\nx\n```', 3, /fence language "python"/],
+      ['# T\n\n```txt\nx\n```', 3, /fence language "txt"/],
       ['# T\n\n```java\nx', 3, /not closed/],
       ['# T\n\n~~~\nx\n~~~', 3, /fence must start/],
-      ['# T\n\nSome *italic* text.', 3, /single \*/],
+      ['# T\n\nSome * stray star.', 3, /\* \(italics\) is not closed/],
+      ['# T\n\nSome *open italics.', 3, /\* \(italics\) is not closed/],
+      ['# T\n\n- a\n\n  * nested star', 5, /nested/],
       ['# T\n\nSome _italic_ text.', 3, /italics/],
       ['# T\n\nAn `open code span.', 3, /` is not closed/],
       ['# T\n\nAn **open bold.', 3, /\*\* is not closed/],
@@ -106,6 +113,78 @@ describe('tutorial article parser', () => {
       expect(e.some((x) => x.line === line && re.test(x.message)), `${JSON.stringify(src)} -> ${JSON.stringify(e)}`).toBe(true);
       expect(parseArticle(src).article).toBeUndefined();
     }
+  });
+
+  it('reads a standfirst, rules, italics, star bullets, text fences and tables', () => {
+    const a = ok(
+      [
+        '# T',
+        '',
+        '*A standfirst with `code`. Back to the practice page: Circuit breaker.*',
+        '',
+        '---',
+        '',
+        '## 1. Overview',
+        '',
+        '1. Making it safe *(optional stretch)*.',
+        '',
+        '* **What counts as a failure:** a *5xx* or **`>=` (bold `code`)**.',
+        '* *"Quoted, with `code` and **bold** inside."*',
+        '',
+        'Before a rule.',
+        '',
+        '---',
+        '',
+        '```text',
+        '',
+        'a -> b',
+        '',
+        '```',
+        '',
+        '| Time | Note | Empty |',
+        '| :--- | ---: | --- |',
+        '| `0` | *it* opens, with a \\| pipe | |',
+        '| `1` | `a|b` | x |',
+        '',
+        '---',
+        '',
+        '## 2. Conclusion',
+        '',
+        '---',
+      ].join('\n'),
+    );
+    expect(a.standfirst && plainOf(a.standfirst)).toBe('A standfirst with code. Back to the practice page: Circuit breaker.');
+    expect(a.blocks.map((b) => (b.kind === 'rule' ? `rule:${b.shown}` : b.kind))).toEqual([
+      'rule:false', 'heading', 'list', 'list', 'paragraph', 'rule:true', 'code', 'table', 'rule:false', 'heading', 'rule:false',
+    ]);
+    const [, , ol, ul, , , code, table] = a.blocks;
+    expect(ol.kind === 'list' && ol.items[0]).toEqual([{ t: 'text', text: 'Making it safe ' }, { t: 'em', children: [{ t: 'text', text: '(optional stretch)' }] }, { t: 'text', text: '.' }]);
+    expect(ul.kind === 'list' && !ul.ordered && ul.items[0].map((n) => n.t)).toEqual(['bold', 'text', 'em', 'text', 'bold', 'text']);
+    expect(ul.kind === 'list' && ul.items[0][4]).toEqual({ t: 'bold', children: [{ t: 'code', text: '>=' }, { t: 'text', text: ' (bold ' }, { t: 'code', text: 'code' }, { t: 'text', text: ')' }] });
+    expect(ul.kind === 'list' && ul.items[1][0].t === 'em' && ul.items[1][0].children.map((n) => n.t)).toEqual(['text', 'code', 'text', 'bold', 'text']);
+    expect(code).toMatchObject({ kind: 'code', lang: null, lines: ['a -> b'], first: 20 });
+    expect(table.kind === 'table' && table.head.map(plainOf)).toEqual(['Time', 'Note', 'Empty']);
+    expect(table.kind === 'table' && table.rows.map((r) => r.map(plainOf))).toEqual([['0', 'it opens, with a | pipe', ''], ['1', 'a|b', 'x']]);
+    expect(numberingProblems(a)).toEqual([]);
+    expect(sectionsOf(a).map((s) => s.title)).toEqual(['Overview', 'Conclusion']);
+    // No standfirst unless the first paragraph is all italics.
+    expect(ok('# T\n\n*Half* italic.\n\n## 1. Overview\n').standfirst).toBeUndefined();
+  });
+
+  it('splits table rows at pipes outside code', () => {
+    expect(tableCells('| a | `b|c` | d \\| e |')).toEqual(['a', '`b|c`', 'd | e']);
+    expect(tableCells('|  |x|')).toEqual(['', 'x']);
+  });
+
+  it('links the standfirst back to the practice page, keeping the words', () => {
+    const sf = ok('# T\n\n*Builds it. Back to the practice page: Circuit breaker.*\n').standfirst!;
+    expect(linkBack(sf, '#/p/circuit-breaker')).toEqual([
+      { t: 'text', text: 'Builds it. Back to the practice page: ' },
+      { t: 'link', href: '#/p/circuit-breaker', children: [{ t: 'text', text: 'Circuit breaker' }] },
+      { t: 'text', text: '.' },
+    ]);
+    const plainSf = ok('# T\n\n*Nothing to link here.*\n').standfirst!;
+    expect(linkBack(plainSf, '#/p/x')).toBe(plainSf);
   });
 
   it('finds gaps and wrong names in the numbering', () => {

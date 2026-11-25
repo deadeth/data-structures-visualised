@@ -1,7 +1,7 @@
 import './practice.css';
-import { h } from '../core/dom';
+import { h, scrollRegion, tableRoles } from '../core/dom';
 import { loadPractice, type PracticeEntry } from '../practice';
-import { parseArticle, plainOf, sectionsOf, type Article, type ArticleBlock, type Inline } from '../practice/article';
+import { linkBack, parseArticle, plainOf, sectionsOf, type Article, type ArticleBlock, type Inline } from '../practice/article';
 import { codeFrame } from './practice-page';
 
 /**
@@ -15,13 +15,40 @@ function inlineNodes(nodes: Inline[]): (Node | string)[] {
     if (n.t === 'text') return n.text;
     if (n.t === 'code') return h('code', null, n.text);
     if (n.t === 'bold') return h('strong', null, inlineNodes(n.children));
+    if (n.t === 'em') return h('em', null, inlineNodes(n.children));
     return h('a', { href: n.href, rel: 'noopener' }, inlineNodes(n.children));
   });
 }
 
 const anchor = (id: string, number: string) => `#/p/${id}/guide/${number}`;
 
-function block(b: ArticleBlock, section: string): HTMLElement {
+/** A cell of words (not values): it may wrap. Code in it never counts, and never breaks. */
+const wordy = (c: Inline[]): boolean => {
+  const words = (ns: Inline[]): string => ns.map((n) => (n.t === 'text' ? n.text : n.t === 'code' ? ' ' : words(n.children))).join('');
+  const t = words(c).trim();
+  return t.length > 22 && /\s/.test(t);
+};
+
+/** A table: a real table that scrolls sideways inside its own frame when it must, never the page. */
+function table(b: Extract<ArticleBlock, { kind: 'table' }>, section: string, k: number): HTMLElement {
+  const label = `Table ${k} in section ${section}`;
+  const cell = (c: Inline[] | undefined, i: number) => {
+    const nodes = c ?? [];
+    return h(i === 0 ? 'th' : 'td', { scope: i === 0 ? 'row' : null, class: wordy(nodes) ? 'prose' : null }, inlineNodes(nodes));
+  };
+  const t = tableRoles(
+    h(
+      `table.pp-trace.pp-g-table${b.head.length >= 7 ? '.many' : ''}`, { 'aria-label': label },
+      h('thead', null, h('tr', null, b.head.map((c) => h('th', { scope: 'col' }, inlineNodes(c))))),
+      h('tbody', null, b.rows.map((r) => h('tr', null, b.head.map((_, i) => cell(r[i], i))))),
+    ) as HTMLTableElement,
+  );
+  return h('div.pp-trace-box.pp-g-table-box', null, h('div.pp-g-table-head', null, h('span.pp-scroll-hint', null, 'Scrolls sideways')), scrollRegion(h('div.pp-trace-wrap', null, t), label));
+}
+
+function block(b: ArticleBlock, section: string, k: number): HTMLElement | null {
+  if (b.kind === 'rule') return b.shown ? h('hr.pp-g-rule', null) : null;
+  if (b.kind === 'table') return table(b, section, k);
   if (b.kind === 'heading') {
     const label = [`${b.number}. `, ...inlineNodes(b.text)];
     return b.level === 2
@@ -34,9 +61,13 @@ function block(b: ArticleBlock, section: string): HTMLElement {
       ? h('ol.pp-list.ordered', { start: b.start === 1 ? null : b.start }, b.items.map((it) => h('li', null, inlineNodes(it))))
       : h('ul.pp-list', null, b.items.map((it) => h('li', null, inlineNodes(it))));
   }
-  const lines = [...b.lines];
-  while (lines.length && !lines.at(-1)!.trim()) lines.pop();
-  return codeFrame(lines, { lang: b.lang === 'java' ? 'java' : 'pseudo', label: `${b.lang === 'java' ? 'Java' : 'Code'} in section ${section}` });
+  return codeFrame(b.lines, { lang: b.lang === 'java' ? 'java' : 'pseudo', label: `${b.lang === 'java' ? 'Java' : 'Code'} in section ${section}` });
+}
+
+/** Each block with its table's number in the section (1, 2 ...), for the label of a table that scrolls. */
+function tableNumbers(bs: ArticleBlock[]): [ArticleBlock, number][] {
+  let k = 0;
+  return bs.map((b) => [b, b.kind === 'table' ? ++k : 0]);
 }
 
 let current: { id: string; go: (n?: string) => void } | null = null;
@@ -86,13 +117,16 @@ function draw(host: HTMLElement, entry: PracticeEntry, a: Article, n?: string): 
     'header.page-head.pp-head', null,
     h('p.pp-kicker', null, h('a', { href: '#/p' }, 'Pairing practice'), ' · Tutorial'),
     h('h1', { tabIndex: -1 }, inlineNodes(a.title)),
-    h('p.lede.pp-g-lede', null, 'An article that builds the whole solution step by step, so it shows the full solution. Back to the practice page: ', h('a', { href: `#/p/${id}` }, entry.page.title), '.'),
+    // The writer's standfirst where there is one, its pointer back made a link; otherwise the page's own line.
+    a.standfirst
+      ? h('p.lede.pp-g-lede.pp-g-standfirst', null, h('em', null, inlineNodes(linkBack(a.standfirst, `#/p/${id}`))))
+      : h('p.lede.pp-g-lede', null, 'An article that builds the whole solution step by step, so it shows the full solution. Back to the practice page: ', h('a', { href: `#/p/${id}` }, entry.page.title), '.'),
   );
 
   // Each ## section in its own <section>, so the contents list and the address can name it.
   const targets = new Map<string, HTMLElement>();
   const sectionEls = sections.map((s) => {
-    const el = h('section.pp-section.pp-g-section', { id: `pp-g-${s.number}`, 'aria-labelledby': `pp-g-h-${s.number}` }, s.blocks.map((b) => block(b, s.number)));
+    const el = h('section.pp-section.pp-g-section', { id: `pp-g-${s.number}`, 'aria-labelledby': `pp-g-h-${s.number}` }, tableNumbers(s.blocks).map(([b, k]) => block(b, s.number, k)));
     targets.set(s.number, el);
     for (const h3 of el.querySelectorAll<HTMLElement>('h3[data-number]')) targets.set(h3.dataset.number!, h3);
     return el;

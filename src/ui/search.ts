@@ -159,9 +159,14 @@ function build(): Promise<Doc[]> {
       if (!a) continue;
       const base = `#/p/${e.id}/guide`;
       const title = plainOf(a.title);
-      const words = (bs: ArticleBlock[]) => bs.map((b) => (b.kind === 'code' ? '' : b.kind === 'list' ? b.items.map(plainOf).join(' ') : plainOf(b.text))).join(' ');
+      const words = (bs: ArticleBlock[]) =>
+        bs
+          .map((b) =>
+            b.kind === 'code' || b.kind === 'rule' ? '' : b.kind === 'list' ? b.items.map(plainOf).join(' ') : b.kind === 'table' ? [b.head, ...b.rows].flat().map(plainOf).join(' ') : plainOf(b.text),
+          )
+          .join(' ');
       const secs = sectionsOf(a);
-      docs.push({ kind: 'Practice', title, also: ['tutorial', 'article', plain(e.page.title), ...secs.map((x) => x.title)], text: words(a.blocks), href: base, where: `Pairing practice: tutorial for ${plain(e.page.title)}` });
+      docs.push({ kind: 'Practice', title, also: ['tutorial', 'article', plain(e.page.title), ...secs.map((x) => x.title)], text: `${a.standfirst ? plainOf(a.standfirst) : ''} ${words(a.blocks)}`, href: base, where: `Pairing practice: tutorial for ${plain(e.page.title)}` });
       for (const x of secs) docs.push({ kind: 'Practice', title: `${x.number}. ${x.title}`, also: [title], text: words(x.blocks), href: `${base}/${x.number}`, where: `${title}: section`, from: title });
     }
     // The course and its modules, once the course is written. A module is found by its items' titles too.

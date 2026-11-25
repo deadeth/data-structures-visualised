@@ -1331,3 +1331,41 @@
   padding-top: 16px;
   border-top: 1px solid var(--rule);
 }
+
+/* The writer's standfirst: a quiet intro line under the title, italic because he wrote it so. */
+.pp-g-standfirst {
+  max-width: 70ch;
+  color: var(--ink-2);
+}
+
+/* A rule inside a section. Rules before a section are not drawn: the section's own divider is there. */
+.pp-g-rule {
+  margin: 24px 0;
+  border: 0;
+  border-top: 1px solid var(--rule);
+}
+
+/* A table in the article: the trace's frame and cells, its sideways cue in a head drawn only while it scrolls. */
+.pp-g-table-box {
+  margin: 12px 0 16px;
+}
+
+.pp-g-table-head {
+  display: none;
+}
+
+.pp-g-table-box:has(.pp-trace-wrap[role='region']) .pp-g-table-head {
+  display: block;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--rule);
+  background: #f0f3f7;
+  font-size: 0.86rem;
+}
+
+.pp-g-table-box:has(.pp-trace-wrap[role='region']) .pp-g-table-head .pp-scroll-hint {
+  margin-top: 0;
+}
+
+.pp-body .pp-g-table code {
+  white-space: nowrap;
+}
